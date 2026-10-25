@@ -21,10 +21,12 @@ Find machines by their SSH host key fingerprint and update `~/.ssh/config`.
 
 This will:
 1. Create `~/.regroup-config/` directory
-2. Initialize a git repository
+2. Initialize a git repository with automatic configuration:
+   - `receive.denyCurrentBranch` set to `updateInstead` (allows pushing to checked-out branches)
+   - `pull.rebase` set to `true` (maintains linear history)
 3. Create `settings.json` with defaults
 4. Create `devices/<hostname>.json` with auto-detected info
-5. Commit everything to git
+5. Commit everything to git (settings.json and device file in separate commits)
 6. Enter discovery loop until no new devices are found
 
 ### On second device:
@@ -74,9 +76,15 @@ This loop handles:
    - Remote URLs use format: `user@hostname:~/.regroup-config`
 
 2. **Sync operations**:
-   - `git pull --all`: Pulls from all remotes
-   - `git push --all`: Pushes to all remotes
+   - `git pull --all --rebase`: Pulls from all remotes with rebase (linear history)
+   - `git push --all --force-with-lease`: Pushes to all remotes safely
    - Failures are logged as warnings (one-way SSH is OK)
+
+3. **Repository configuration** (set automatically on init):
+   - `receive.denyCurrentBranch = updateInstead`: Allows pushing to checked-out branches
+   - `pull.rebase = true`: Uses rebase instead of merge by default
+   
+   **Note**: With `pull.rebase = true`, manual `git pull` commands will use rebase automatically.
 
 ### Device Ownership
 
@@ -118,10 +126,11 @@ Git remotes (automatically managed using hostnames):
 
 Sync behavior:
   - Loop until no new devices are discovered
-  - git pull --all on each iteration (except first, or with -r)
-  - git push --all after updating SSH config
+  - git pull --all --rebase on each iteration (except first, or with -r)
+  - git push --all --force-with-lease after updating SSH config
   - One-way SSH connections handled gracefully
   - User prompted to resolve own config conflicts
+  - Repository defaults to rebase for manual pulls (pull.rebase = true)
 
 Exit codes:
   0  all machines found

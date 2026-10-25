@@ -170,6 +170,14 @@ fn git_init(repo_path: &Path) -> io::Result<()> {
         .arg("updateInstead")
         .status();
     
+    // Configure pull to use rebase by default for cleaner history
+    let _ = Command::new("git")
+        .current_dir(repo_path)
+        .arg("config")
+        .arg("pull.rebase")
+        .arg("true")
+        .status();
+    
     Ok(())
 }
 
