@@ -170,6 +170,13 @@ fn git_pull_all(repo_path: &Path) -> Vec<String> {
         return Vec::new();
     }
     
+    // Check if there are any remotes configured
+    let remotes = git_list_remotes(repo_path);
+    if remotes.is_empty() {
+        // No remotes configured - this is expected on first run
+        return Vec::new();
+    }
+    
     let output = Command::new("git")
         .current_dir(repo_path)
         .arg("pull")
@@ -180,20 +187,36 @@ fn git_pull_all(repo_path: &Path) -> Vec<String> {
     match output {
         Ok(o) if o.status.success() => Vec::new(),
         Ok(o) => {
-            let stderr = String::from_utf8_lossy(&o.stderr);
-            if stderr.contains("fatal") || stderr.contains("error") {
-                vec![stderr.into_owned()]
+            let stderr = String::from_utf8_lossy(&o.stderr).to_string();
+            // Check for authentication errors
+            if stderr.contains("Permission denied") || 
+               stderr.contains("Authentication failed") ||
+               stderr.contains("no suitable response") ||
+               stderr.contains("Connection closed by") {
+                vec![format!(
+                    "{} - To enable git sync, set up SSH authentication with the remote device",
+                    stderr.trim()
+                )]
+            } else if stderr.contains("fatal") || stderr.contains("error") {
+                vec![stderr.trim().to_string()]
             } else {
                 Vec::new()
             }
         }
-        Err(e) => vec![e.to_string()],
+        Err(e) => vec![format!("{} - To enable git sync, set up SSH authentication", e)],
     }
 }
 
 /// Push to all git remotes
 fn git_push_all(repo_path: &Path) -> Vec<String> {
     if !is_git_repo(repo_path) {
+        return Vec::new();
+    }
+    
+    // Check if there are any remotes configured
+    let remotes = git_list_remotes(repo_path);
+    if remotes.is_empty() {
+        // No remotes configured - this is expected on first run
         return Vec::new();
     }
     
@@ -207,14 +230,28 @@ fn git_push_all(repo_path: &Path) -> Vec<String> {
     match output {
         Ok(o) if o.status.success() => Vec::new(),
         Ok(o) => {
-            let stderr = String::from_utf8_lossy(&o.stderr);
-            if stderr.contains("fatal") || stderr.contains("error") {
-                vec![stderr.into_owned()]
+            let stderr = String::from_utf8_lossy(&o.stderr).to_string();
+            // Check for authentication errors
+            if stderr.contains("Permission denied") || 
+               stderr.contains("Authentication failed") ||
+               stderr.contains("no suitable response") ||
+               stderr.contains("Connection closed by") {
+                vec![format!(
+                    "{} - To enable git sync, set up SSH authentication with the remote device",
+                    stderr.trim()
+                )]
+            } else if stderr.contains("fatal") || stderr.contains("error") {
+                // Check if it's "no remotes" error - ignore this
+                if stderr.contains("no remotes") || stderr.contains("Pas de destination pour pousser") {
+                    Vec::new()
+                } else {
+                    vec![stderr.trim().to_string()]
+                }
             } else {
                 Vec::new()
             }
         }
-        Err(e) => vec![e.to_string()],
+        Err(e) => vec![format!("{} - To enable git sync, set up SSH authentication", e)],
     }
 }
 
@@ -355,15 +392,16 @@ fn refresh_git_remotes(repo_path: &Path, machines: &[Machine], local_hostname: &
     errors
 }
 
-/// Sync with all remotes (pull then push)
+/// Sync with all remotes (pull then push to all remotes)
+/// Each device A can both pull from and push to all other devices
 fn sync_with_remotes(repo_path: &Path) -> Vec<String> {
     let mut errors = Vec::new();
     
-    // Pull from all remotes
+    // Pull from all remotes - device A pulls from all other devices
     let pull_errors = git_pull_all(repo_path);
     errors.extend(pull_errors);
     
-    // Push to all remotes
+    // Push to all remotes - device A pushes to all other devices
     let push_errors = git_push_all(repo_path);
     errors.extend(push_errors);
     
@@ -1083,12 +1121,36 @@ fn discovery_sync_loop(
         Err(_) => die("HOME variable not set"),
     };
     let config_dir = PathBuf::from(&home).join(CONFIG_DIR);
+    let devices_dir = config_dir.join(DEVICES_DIR);
+    
+    // Get initial list of device files
+    let mut previous_device_files: std::collections::HashSet<String> = std::collections::HashSet::new();
+    if devices_dir.exists() {
+        if let Ok(entries) = fs::read_dir(&devices_dir) {
+            for entry in entries {
+                if let Ok(entry) = entry {
+                    if entry.path().is_file() && entry.path().extension().map_or(false, |ext| ext == "json") {
+                        if let Some(name) = entry.path().file_name().and_then(|n| n.to_str()) {
+                            previous_device_files.insert(name.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
     
     let mut found = 0;
     let mut missing = 0;
-    let mut previous_device_count = 0;
     let mut iteration = 0;
     let mut new_devices_found = true;
+    
+    // Save the current state of our device file before any operations
+    let local_device_path = config_dir.join(DEVICES_DIR).join(format!("{}.json", local_name));
+    let our_initial_config = if local_device_path.exists() {
+        read_device_file_content(&local_device_path)
+    } else {
+        String::new()
+    };
     
     while new_devices_found && iteration < MAX_SYNC_ITERATIONS {
         iteration += 1;
@@ -1106,8 +1168,44 @@ fn discovery_sync_loop(
             if iteration > 1 || initial_refresh {
                 let sync_errors = sync_with_remotes(&config_dir);
                 for error in &sync_errors {
+                    // Always warn about sync errors, even in non-verbose mode
+                    // The error message already includes SSH auth setup hint
+                    warn(&format!("[sync] {}", error));
                     if verbose {
                         println!("  [sync] {}", error);
+                    }
+                }
+                
+                // After pulling, check if our own device config was modified
+                // and if it conflicts with our initial state
+                if !sync_errors.is_empty() || iteration > 1 {
+                    if local_device_path.exists() {
+                        // Check if the current version differs from our initial state
+                        let current_content = read_device_file_content(&local_device_path);
+                        
+                        // Compare with initial state
+                        if current_content.trim() != our_initial_config.trim() {
+                            // Config was modified by the pull - ask user to resolve
+                            // The current_content is what was pulled from remote
+                            // our_initial_config is what we had before
+                            
+                            if let Some(keep_local) = ask_conflict_resolution(
+                                local_name, 
+                                &our_initial_config,  // Local version (before pull)
+                                &current_content       // Remote version (after pull)
+                            ) {
+                                if keep_local {
+                                    // User wants to keep local version - revert to initial
+                                    if let Err(e) = fs::write(&local_device_path, &our_initial_config) {
+                                        warn(&format!("failed to revert device config: {}", e));
+                                    }
+                                }
+                                // If !keep_local, the remote version is already in place
+                            } else {
+                                // User aborted
+                                std::process::exit(3);
+                            }
+                        }
                     }
                 }
             }
@@ -1331,55 +1429,7 @@ fn discovery_sync_loop(
                                 if iteration == 1 {
                                     println!("  + {} -> {}  (~/.ssh/config updated)", m.name, ip);
                                 }
-                                
-                                // After updating SSH config, push changes to git remotes
-                                // This ensures other devices can pull our updated SSH config
-                                let push_errors = git_push_all(&config_dir);
-                                for error in &push_errors {
-                                    if verbose {
-                                        println!("    [git push error: {}]", error);
-                                    }
-                                }
-                                
-                                // Check if this is our own device and if config changed
-                                if m.name == local_name {
-                                    // Check for config conflicts
-                                    let device_path = config_dir.join(DEVICES_DIR).join(format!("{}.json", local_name));
-                                    if device_path.exists() {
-                                        let current_content = read_device_file_content(&device_path);
-                                        let local_machine_content = serde_json::to_string_pretty(&serde_json::json!({
-                                            "name": m.name,
-                                            "fingerprint": m.fingerprint,
-                                            "user": m.user,
-                                            "port": if m.port_explicit { Some(m.port) } else { None }
-                                        })).unwrap();
-                                        
-                                        if current_content.trim() != local_machine_content.trim() {
-                                            // Config differs - ask user
-                                            if let Some(keep_local) = ask_conflict_resolution(&m.name, &current_content, &local_machine_content) {
-                                                if keep_local {
-                                                    // Keep current, revert any changes
-                                                    // Actually, we already wrote the SSH config, so just note it
-                                                } else {
-                                                    // Use remote version - overwrite local device file
-                                                    if let Err(e) = fs::write(&device_path, &local_machine_content) {
-                                                        warn(&format!("failed to update device config: {}", e));
-                                                    }
-                                                }
-                                            } else {
-                                                // User aborted
-                                                std::process::exit(3);
-                                            }
-                                        }
-                                    }
-                                }
-                                
                                 iteration_found += 1;
-                                
-                                // Mark that we found a new device this iteration
-                                if !conf.machines.iter().any(|x| x.name == m.name) {
-                                    new_devices_found = true;
-                                }
                             }
                             Err(e) => {
                                 warn(&format!("could not write ~/.ssh/config: {}", e));
@@ -1395,25 +1445,46 @@ fn discovery_sync_loop(
             }
         }
         
+        // Push to all remotes after updating SSH config
+        if !dry_run && (iteration > 1 || initial_refresh) {
+            let push_errors = git_push_all(&config_dir);
+            for error in &push_errors {
+                warn(&format!("[sync] {}", error));
+                if verbose {
+                    println!("  [sync] {}", error);
+                }
+            }
+        }
+        
         found = iteration_found;
         missing = iteration_missing;
         
-        // Check if we found new devices in this iteration
-        let current_device_count = {
-            let devices_dir = config_dir.join(DEVICES_DIR);
-            if devices_dir.exists() {
-                fs::read_dir(&devices_dir).map_or(0, |entries| {
-                    entries.filter_map(|e| e.ok()).filter(|e| e.path().is_file()).count()
-                })
-            } else {
-                0
+        // Check if we found new devices by comparing current device files with previous
+        let mut current_device_files: std::collections::HashSet<String> = std::collections::HashSet::new();
+        if devices_dir.exists() {
+            if let Ok(entries) = fs::read_dir(&devices_dir) {
+                for entry in entries {
+                    if let Ok(entry) = entry {
+                        if entry.path().is_file() && entry.path().extension().map_or(false, |ext| ext == "json") {
+                            if let Some(name) = entry.path().file_name().and_then(|n| n.to_str()) {
+                                current_device_files.insert(name.to_string());
+                            }
+                        }
+                    }
+                }
             }
-        };
-        
-        if current_device_count > previous_device_count {
-            previous_device_count = current_device_count;
-            new_devices_found = true;
         }
+        
+        // Check if new device files appeared
+        for new_file in &current_device_files {
+            if !previous_device_files.contains(new_file) {
+                new_devices_found = true;
+                break;
+            }
+        }
+        
+        // Update previous for next iteration
+        previous_device_files = current_device_files;
     }
     
     (found, missing)
