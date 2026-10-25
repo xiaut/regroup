@@ -224,6 +224,7 @@ fn git_push_all(repo_path: &Path) -> Vec<String> {
         .current_dir(repo_path)
         .arg("push")
         .arg("--all")
+        .arg("--force-with-lease")
         .arg("--porcelain")
         .output();
     
@@ -231,18 +232,26 @@ fn git_push_all(repo_path: &Path) -> Vec<String> {
         Ok(o) if o.status.success() => Vec::new(),
         Ok(o) => {
             let stderr = String::from_utf8_lossy(&o.stderr).to_string();
+            let stderr_lower = stderr.to_lowercase();
+            
             // Check for authentication errors
-            if stderr.contains("Permission denied") || 
-               stderr.contains("Authentication failed") ||
-               stderr.contains("no suitable response") ||
-               stderr.contains("Connection closed by") {
+            if stderr_lower.contains("permission denied") || 
+               stderr_lower.contains("authentication failed") ||
+               stderr_lower.contains("no suitable response") ||
+               stderr_lower.contains("connection closed by") {
                 vec![format!(
                     "{} - To enable git sync, set up SSH authentication with the remote device",
                     stderr.trim()
                 )]
-            } else if stderr.contains("fatal") || stderr.contains("error") {
-                // Check if it's "no remotes" error - ignore this
-                if stderr.contains("no remotes") || stderr.contains("Pas de destination pour pousser") {
+            } else if stderr_lower.contains("fatal") || stderr_lower.contains("error") {
+                // Check if it's expected errors in a decentralized system
+                // These are normal and shouldn't cause the program to fail
+                if stderr_lower.contains("no remotes") || 
+                   stderr_lower.contains("pas de destination pour pousser") ||
+                   stderr_lower.contains("tip of your current branch is behind") ||
+                   stderr_lower.contains("updates were rejected") ||
+                   stderr_lower.contains("non-fast-forward") {
+                    // These are expected in decentralized setups with one-way SSH
                     Vec::new()
                 } else {
                     vec![stderr.trim().to_string()]
