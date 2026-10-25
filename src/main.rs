@@ -197,17 +197,29 @@ fn git_pull_all(repo_path: &Path) -> Vec<String> {
         Ok(o) if o.status.success() => Vec::new(),
         Ok(o) => {
             let stderr = String::from_utf8_lossy(&o.stderr).to_string();
+            let stderr_lower = stderr.to_lowercase();
+            
             // Check for authentication errors
-            if stderr.contains("Permission denied") || 
-               stderr.contains("Authentication failed") ||
-               stderr.contains("no suitable response") ||
-               stderr.contains("Connection closed by") {
-                vec![format!(
-                    "{} - To enable git sync, set up SSH authentication with the remote device",
-                    stderr.trim()
+            if stderr_lower.contains("permission denied") || 
+               stderr_lower.contains("authentication failed") ||
+               stderr_lower.contains("no suitable response") ||
+               stderr_lower.contains("connection closed by") ||
+               stderr_lower.contains("impossible de lire le dépôt distant") ||
+               stderr_lower.contains("could not read from remote") ||
+               stderr_lower.contains("repository not found") ||
+               stderr_lower.contains("dépôt non trouvé") {
+                vec![String::from(
+                    "Git sync requires SSH access to remote devices. To enable:\n  1. Ensure the remote device is running regroup\n  2. Verify SSH authentication is set up (ssh-copy-id)\n  3. Check that the remote device is reachable on the network"
                 )]
             } else if stderr.contains("fatal") || stderr.contains("error") {
-                vec![stderr.trim().to_string()]
+                // Filter out SSH usage messages (they're just noise)
+                if stderr.contains("usage: ssh") {
+                    vec![String::from(
+                        "Git sync error. Ensure remote devices are configured correctly."
+                    )]
+                } else {
+                    vec![stderr.trim().to_string()]
+                }
             } else {
                 Vec::new()
             }
@@ -247,10 +259,11 @@ fn git_push_all(repo_path: &Path) -> Vec<String> {
             if stderr_lower.contains("permission denied") || 
                stderr_lower.contains("authentication failed") ||
                stderr_lower.contains("no suitable response") ||
-               stderr_lower.contains("connection closed by") {
-                vec![format!(
-                    "{} - To enable git sync, set up SSH authentication with the remote device",
-                    stderr.trim()
+               stderr_lower.contains("connection closed by") ||
+               stderr_lower.contains("impossible de lire le dépôt distant") ||
+               stderr_lower.contains("could not read from remote") {
+                vec![String::from(
+                    "Git sync requires SSH access to remote devices. To enable:\n  1. Ensure the remote device is running regroup\n  2. Verify SSH authentication is set up (ssh-copy-id)\n  3. Check that the remote device is reachable on the network"
                 )]
             } else if stderr_lower.contains("fatal") || stderr_lower.contains("error") {
                 // Check if it's expected errors in a decentralized system
@@ -261,6 +274,9 @@ fn git_push_all(repo_path: &Path) -> Vec<String> {
                    stderr_lower.contains("updates were rejected") ||
                    stderr_lower.contains("non-fast-forward") {
                     // These are expected in decentralized setups with one-way SSH
+                    Vec::new()
+                } else if stderr.contains("usage: ssh") {
+                    // Filter out SSH usage messages
                     Vec::new()
                 } else {
                     vec![stderr.trim().to_string()]
