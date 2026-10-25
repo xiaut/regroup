@@ -161,6 +161,15 @@ fn git_init(repo_path: &Path) -> io::Result<()> {
         .arg("regroup")
         .status();
     
+    // Configure git to allow pushing to the currently checked-out branch
+    // This is essential for decentralized sync where each device pushes to others
+    let _ = Command::new("git")
+        .current_dir(repo_path)
+        .arg("config")
+        .arg("receive.denyCurrentBranch")
+        .arg("updateInstead")
+        .status();
+    
     Ok(())
 }
 
@@ -706,6 +715,12 @@ fn load_config() -> Conf {
             die(&format!("cannot create default settings: {}", e));
         }
         
+        // Commit settings.json in its own commit (separate from device files)
+        let settings_path = config_dir.join(GLOBAL_CONFIG_FILE);
+        if settings_path.exists() {
+            let _ = git_add_and_commit_file(&config_dir, &settings_path, "Add global settings");
+        }
+        
         // Create devices directory
         let devices_dir = config_dir.join(DEVICES_DIR);
         if let Err(e) = fs::create_dir_all(&devices_dir) {
@@ -752,10 +767,11 @@ fn load_config() -> Conf {
             Ok(new_machine) => {
                 machines.push(new_machine);
                 
-                // Commit the new device config
-                if is_git_repo(&config_dir) {
+                // Commit the new device config in a separate commit
+                let device_path = config_dir.join(DEVICES_DIR).join(format!("{}.json", local_hostname));
+                if is_git_repo(&config_dir) && device_path.exists() {
                     let message = format!("Add device: {}", local_hostname);
-                    let _ = git_add_and_commit(&config_dir, &message);
+                    let _ = git_add_and_commit_file(&config_dir, &device_path, &message);
                 }
             }
             Err(e) => {
@@ -783,7 +799,8 @@ fn load_config() -> Conf {
     }
 }
 
-/// Git add and commit helper
+/// Git add and commit helper (commits all changes)
+/// DEPRECATED: Use git_add_and_commit_file for individual files to prevent conflicts
 fn git_add_and_commit(repo_path: &Path, message: &str) -> io::Result<()> {
     if !is_git_repo(repo_path) {
         return Ok(());
@@ -807,6 +824,49 @@ fn git_add_and_commit(repo_path: &Path, message: &str) -> io::Result<()> {
         .arg("commit")
         .arg("-m")
         .arg(message)
+        .status()?;
+    
+    if !status.success() {
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            "git commit failed",
+        ));
+    }
+    
+    Ok(())
+}
+
+/// Git add and commit a specific file (for device files and shared files separately)
+/// This ensures device-owned files are in separate commits from shared files,
+/// preventing conflicts during decentralized sync.
+fn git_add_and_commit_file(repo_path: &Path, file_path: &Path, message: &str) -> io::Result<()> {
+    if !is_git_repo(repo_path) {
+        return Ok(());
+    }
+    
+    // Add the specific file
+    let relative_path = file_path.strip_prefix(repo_path).unwrap_or(file_path);
+    let status = Command::new("git")
+        .current_dir(repo_path)
+        .arg("add")
+        .arg(relative_path)
+        .status()?;
+    
+    if !status.success() {
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            "git add failed",
+        ));
+    }
+    
+    // Commit only this file
+    let status = Command::new("git")
+        .current_dir(repo_path)
+        .arg("commit")
+        .arg("-m")
+        .arg(message)
+        .arg("--")
+        .arg(relative_path)
         .status()?;
     
     if !status.success() {
@@ -1207,9 +1267,17 @@ fn discovery_sync_loop(
                                     // User wants to keep local version - revert to initial
                                     if let Err(e) = fs::write(&local_device_path, &our_initial_config) {
                                         warn(&format!("failed to revert device config: {}", e));
+                                    } else {
+                                        // Commit the reverted device file separately
+                                        let message = format!("Revert device: {} to local version", local_name);
+                                        let _ = git_add_and_commit_file(&config_dir, &local_device_path, &message);
                                     }
+                                } else {
+                                    // User wants remote version - it's already in place from the pull
+                                    // Commit it separately
+                                    let message = format!("Update device: {} from remote", local_name);
+                                    let _ = git_add_and_commit_file(&config_dir, &local_device_path, &message);
                                 }
-                                // If !keep_local, the remote version is already in place
                             } else {
                                 // User aborted
                                 std::process::exit(3);
