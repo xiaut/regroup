@@ -1,15 +1,14 @@
 // regroup — find machines by their SSH host key fingerprint and update ~/.ssh/config.
 //
-// NEW ARCHITECTURE: Configuration is stored in a separate git repository
-// (regroup-config or regroup-conf) where each device has its own JSON file in the
-// devices/ directory. Devices auto-fill their own information if missing.
+// Configuration is stored in ~/.regroup-config/ git repository where each device
+// has its own JSON file in the devices/ directory. Devices auto-fill their own
+// information if missing.
 //
-// One binary, bidirectional: every run announces this machine ("name ip") over
-// UDP broadcast AND listens for the other machines' announcements during the
-// same window. Candidates are resolved by fingerprint
-// (ssh-keyscan | ssh-keygen -lf -), so random hotspot subnets are no problem.
-// A machine listed in the config that turns out to be THIS machine is detected
-// as local and never written into its own ~/.ssh/config.
+// Every run announces this machine ("name ip") over UDP broadcast AND listens
+// for the other machines' announcements during the same window. Candidates are
+// resolved by fingerprint (ssh-keyscan | ssh-keygen -lf -), so random hotspot
+// subnets are no problem. A machine listed in the config that turns out to be
+// THIS machine is detected as local and never written into its own ~/.ssh/config.
 //
 // Build (Termux):  pkg install rust openssh && cargo build --release
 // Build (Ubuntu): sudo apt install cargo && cargo build --release
@@ -17,16 +16,10 @@
 // Run:            ./regroup                (announce + listen, update ~/.ssh/config)
 //                 ./regroup test           (dry run: nothing is modified)
 //                 ./regroup -v             (verbose)
-//                 ./regroup -c REPO        (config repository path or URL)
 //                 ./regroup -r             (refresh config from git repo)
 //                 ./regroup 192.168.43     (also scan that /24 once)
 //                 ./regroup selftest       (built-in checks)
 //                 ./regroup -h             (help)
-//
-// Config: A separate git repo (default: ./regroup-config) with:
-//   devices/<name>.json - each device's configuration
-//   Each file can contain: name, fingerprint, user, port
-//   If a device's file is missing, it auto-creates it with self-detected info
 //
 // Exit codes: 0 = all machines found; 1 = at least one missing;
 //             2 = configuration or environment error.
@@ -62,14 +55,13 @@ struct Conf {
     batch_size: usize,
     subnets: Vec<String>,
     machines: Vec<Machine>,
-    config_dir: PathBuf,
 }
 
 // ============================================================
 // Configuration constants
 // ============================================================
 
-const DEFAULT_CONFIG_REPO: &str = "regroup-config";
+const CONFIG_DIR: &str = ".regroup-config";
 const DEVICES_DIR: &str = "devices";
 const GLOBAL_CONFIG_FILE: &str = "settings.json";
 
@@ -95,53 +87,7 @@ fn is_git_repo(path: &Path) -> bool {
     path.join(".git").exists()
 }
 
-/// Clone a git repository
-fn git_clone(repo_url: &str, target_dir: &Path) -> io::Result<()> {
-    if target_dir.exists() {
-        return Ok(()); // Already exists
-    }
-    
-    // Create parent directory if needed
-    if let Some(parent) = target_dir.parent() {
-        if !parent.exists() {
-            fs::create_dir_all(parent)?;
-        }
-    }
-    
-    let status = Command::new("git")
-        .arg("clone")
-        .arg(repo_url)
-        .arg(target_dir)
-        .status()?;
-    
-    if !status.success() {
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
-            format!("git clone failed with exit code: {}", status),
-        ));
-    }
-    
-    Ok(())
-}
-
-/// Pull updates from git repository
-fn git_pull(repo_path: &Path) -> io::Result<()> {
-    let status = Command::new("git")
-        .current_dir(repo_path)
-        .arg("pull")
-        .status()?;
-    
-    if !status.success() {
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
-            format!("git pull failed with exit code: {}", status),
-        ));
-    }
-    
-    Ok(())
-}
-
-/// Initialize a new git repository
+/// Initialize a git repository
 fn git_init(repo_path: &Path) -> io::Result<()> {
     if repo_path.exists() {
         return Ok(());
@@ -179,6 +125,63 @@ fn git_init(repo_path: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// Pull updates from git repository
+fn git_pull(repo_path: &Path) -> io::Result<()> {
+    if !is_git_repo(repo_path) {
+        return Ok(());
+    }
+    
+    let status = Command::new("git")
+        .current_dir(repo_path)
+        .arg("pull")
+        .status()?;
+    
+    if !status.success() {
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            format!("git pull failed with exit code: {}", status),
+        ));
+    }
+    
+    Ok(())
+}
+
+/// Add and commit changes in git repository
+fn git_add_and_commit(repo_path: &Path, message: &str) -> io::Result<()> {
+    if !is_git_repo(repo_path) {
+        return Ok(());
+    }
+    
+    let status = Command::new("git")
+        .current_dir(repo_path)
+        .arg("add")
+        .arg(".")
+        .status()?;
+    
+    if !status.success() {
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            "git add failed",
+        ));
+    }
+    
+    let status = Command::new("git")
+        .current_dir(repo_path)
+        .arg("commit")
+        .arg("-m")
+        .arg(message)
+        .status()?;
+    
+    if !status.success() {
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            "git commit failed",
+        ));
+    }
+    
+    Ok(())
+}
+
 /// Get the fingerprint of the local machine
 fn get_local_fingerprint(port: u16) -> Option<String> {
     if let Some(ip) = my_ip() {
@@ -188,6 +191,48 @@ fn get_local_fingerprint(port: u16) -> Option<String> {
         }
     }
     None
+}
+
+// ============================================================
+// JSON helpers
+// ============================================================
+
+/// Parse integer from JSON value
+fn int_value(v: &Value) -> Option<u64> {
+    if let Some(n) = v.as_u64() {
+        return Some(n);
+    }
+    if v.is_number() {
+        if let Some(f) = v.as_f64() {
+            if f >= 0.0 && f.fract() == 0.0 && f <= u64::MAX as f64 {
+                return Some(f as u64);
+            }
+        }
+    }
+    None
+}
+
+/// Parse number field with validation
+fn number_field(
+    obj: &Map<String, Value>,
+    key: &str,
+    default: u64,
+    min: u64,
+    max: u64,
+) -> Result<u64, String> {
+    match obj.get(key) {
+        None => Ok(default),
+        Some(v) => {
+            let n = match int_value(v) {
+                Some(n) => n,
+                None => return Err(format!("\"{}\" must be an integer", key)),
+            };
+            if n < min || n > max {
+                return Err(format!("\"{}\" must be between {} and {}", key, min, max));
+            }
+            Ok(n)
+        }
+    }
 }
 
 // ============================================================
@@ -232,7 +277,7 @@ fn load_device_file(path: &Path) -> Result<Machine, String> {
             Some(s) => s.trim().to_string(),
             None => return Err(format!("{}: \"fingerprint\" must be a string", path.display())),
         },
-        None => String::new(),
+        None => return Err(format!("{}: \"fingerprint\" is required", path.display())),
     };
     
     let user = match obj.get("user") {
@@ -289,27 +334,18 @@ fn save_device_file(path: &Path, machine: &Machine) -> io::Result<()> {
 }
 
 /// Auto-create device configuration with self-detected information
-fn create_device_config(config_dir: &Path, device_name: &str) -> Result<Machine, String> {
+fn create_device_config(config_dir: &Path) -> Result<Machine, String> {
     let hostname = host_name();
-    let fingerprint = get_local_fingerprint(22).unwrap_or_default();
-    
-    // Use hostname as name if device_name is empty
-    let name = if device_name.is_empty() {
-        hostname
-    } else {
-        device_name.to_string()
-    };
+    let fingerprint = get_local_fingerprint(22).unwrap_or_else(|| {
+        "SHA256:PUT-YOUR-FINGERPRINT-HERE".to_string()
+    });
     
     // Determine the current user
     let current_user = env::var("USER").unwrap_or_else(|_| env::var("LOGNAME").unwrap_or_default());
     
     let machine = Machine {
-        name: name.clone(),
-        fingerprint: if fingerprint.is_empty() { 
-            "SHA256:PUT-YOUR-FINGERPRINT-HERE".to_string()
-        } else {
-            fingerprint
-        },
+        name: hostname.clone(),
+        fingerprint,
         user: current_user,
         port: 22,
         port_explicit: false,
@@ -323,7 +359,7 @@ fn create_device_config(config_dir: &Path, device_name: &str) -> Result<Machine,
         }
     }
     
-    let device_path = devices_dir.join(format!("{}.json", name));
+    let device_path = devices_dir.join(format!("{}.json", hostname));
     if let Err(e) = save_device_file(&device_path, &machine) {
         return Err(format!("cannot save device config: {}", e));
     }
@@ -335,11 +371,16 @@ fn create_device_config(config_dir: &Path, device_name: &str) -> Result<Machine,
 // Global configuration
 // ============================================================
 
+/// Default global settings
+fn default_global_settings() -> (u16, u64, usize, Vec<String>) {
+    (4242u16, 10u64, 64usize, Vec::<String>::new())
+}
+
 /// Load global settings from settings.json
 fn load_global_settings(config_dir: &Path) -> (u16, u64, usize, Vec<String>) {
     let settings_path = config_dir.join(GLOBAL_CONFIG_FILE);
     
-    let defaults = (4242u16, 10u64, 64usize, Vec::<String>::new());
+    let defaults = default_global_settings();
     
     if !settings_path.exists() {
         return defaults;
@@ -406,54 +447,36 @@ fn save_default_global_settings(config_dir: &Path) -> io::Result<()> {
 // Configuration loading
 // ============================================================
 
-fn load_config(config_path: &Path) -> Conf {
-    let config_dir = if config_path.exists() && config_path.is_dir() {
-        config_path.to_path_buf()
-    } else if config_path.exists() {
-        // If it's a file, use its parent directory
-        config_path.parent().unwrap_or(config_path).to_path_buf()
-    } else {
-        // Try to use the path as a directory, or create it
-        if let Some(parent) = config_path.parent() {
-            if !parent.exists() {
-                if let Err(e) = fs::create_dir_all(parent) {
-                    die(&format!("cannot create config directory {}: {}", parent.display(), e));
-                }
-            }
-        }
-        config_path.to_path_buf()
+fn load_config(refresh: bool) -> Conf {
+    // Config directory is always ~/.regroup-config
+    let home = match env::var("HOME") {
+        Ok(h) => h,
+        Err(_) => die("HOME variable not set"),
     };
+    let config_dir = PathBuf::from(&home).join(CONFIG_DIR);
     
-    // Check if config_dir exists, if not try to clone from default
+    // Refresh if requested
+    if refresh && config_dir.exists() {
+        if let Err(e) = git_pull(&config_dir) {
+            warn(&format!("could not refresh config: {}", e));
+        }
+    }
+    
+    // Initialize config directory if it doesn't exist
     if !config_dir.exists() {
-        // Try to clone from default repository URL
-        let clone_url = format!("file://{}", DEFAULT_CONFIG_REPO);
-        if git_clone(&clone_url, &config_dir).is_err() {
-            // Try as a local path
-            let local_path = Path::new(DEFAULT_CONFIG_REPO);
-            if local_path.exists() && local_path.is_dir() {
-                if let Err(e) = fs::create_dir_all(&config_dir) {
-                    die(&format!("cannot create config directory: {}", e));
-                }
-                // Copy from local default
-                warn(&format!("using local config from {}", DEFAULT_CONFIG_REPO));
-            } else {
-                // Initialize a new git repository
-                if let Err(e) = git_init(&config_dir) {
-                    die(&format!("cannot initialize git repository: {}", e));
-                }
-                
-                // Create default settings
-                if let Err(e) = save_default_global_settings(&config_dir) {
-                    die(&format!("cannot create default settings: {}", e));
-                }
-                
-                // Create devices directory
-                let devices_dir = config_dir.join(DEVICES_DIR);
-                if let Err(e) = fs::create_dir_all(&devices_dir) {
-                    die(&format!("cannot create devices directory: {}", e));
-                }
-            }
+        if let Err(e) = git_init(&config_dir) {
+            die(&format!("cannot initialize config directory {}: {}", config_dir.display(), e));
+        }
+        
+        // Create default settings
+        if let Err(e) = save_default_global_settings(&config_dir) {
+            die(&format!("cannot create default settings: {}", e));
+        }
+        
+        // Create devices directory
+        let devices_dir = config_dir.join(DEVICES_DIR);
+        if let Err(e) = fs::create_dir_all(&devices_dir) {
+            die(&format!("cannot create devices directory: {}", e));
         }
     }
     
@@ -482,21 +505,28 @@ fn load_config(config_path: &Path) -> Conf {
     
     // Check if current machine's config exists, if not create it
     let local_hostname = host_name();
+    let local_fingerprint = get_local_fingerprint(22);
     
     let current_machine_exists = machines.iter().any(|m| {
         m.name == local_hostname || 
-        (m.fingerprint.starts_with("SHA256:") && m.fingerprint == get_local_fingerprint(m.port).unwrap_or_default())
+        (m.fingerprint.starts_with("SHA256:") && 
+         local_fingerprint.as_ref().map_or(false, |f| &m.fingerprint == f))
     });
     
     if !current_machine_exists {
         // Auto-create this device's configuration
-        if let Ok(new_machine) = create_device_config(&config_dir, &local_hostname) {
-            machines.push(new_machine);
-            
-            // Commit the new device config
-            if is_git_repo(&config_dir) {
-                let message = format!("Add device: {}", local_hostname);
-                let _ = git_add_and_commit(&config_dir, &message);
+        match create_device_config(&config_dir) {
+            Ok(new_machine) => {
+                machines.push(new_machine);
+                
+                // Commit the new device config
+                if is_git_repo(&config_dir) {
+                    let message = format!("Add device: {}", local_hostname);
+                    let _ = git_add_and_commit(&config_dir, &message);
+                }
+            }
+            Err(e) => {
+                warn(&format!("could not create device config: {}", e));
             }
         }
     }
@@ -517,246 +547,6 @@ fn load_config(config_path: &Path) -> Conf {
         batch_size,
         subnets,
         machines,
-        config_dir,
-    }
-}
-
-/// Git add and commit helper
-fn git_add_and_commit(repo_path: &Path, message: &str) -> io::Result<()> {
-    if !is_git_repo(repo_path) {
-        return Ok(());
-    }
-    
-    let status = Command::new("git")
-        .current_dir(repo_path)
-        .arg("add")
-        .arg(".")
-        .status()?;
-    
-    if !status.success() {
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
-            "git add failed",
-        ));
-    }
-    
-    let status = Command::new("git")
-        .current_dir(repo_path)
-        .arg("commit")
-        .arg("-m")
-        .arg(message)
-        .status()?;
-    
-    if !status.success() {
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
-            "git commit failed",
-        ));
-    }
-    
-    Ok(())
-}
-
-/// Pull latest changes from config repository
-fn refresh_config(config_path: &Path) -> io::Result<()> {
-    if !config_path.exists() || !is_git_repo(config_path) {
-        return Ok(());
-    }
-    
-    git_pull(config_path)?;
-    Ok(())
-}
-
-// ============================================================
-// Legacy configuration support (for backward compatibility)
-// ============================================================
-
-fn config_template() -> String {
-    r#"{
-    "udp_port": 4242,
-    "wait_secs": 10,
-    "batch_size": 64,
-    "subnets": [],
-    "machines": [
-        {
-            "name": "ordi",
-            "fingerprint": "SHA256:PUT-YOUR-FINGERPRINT-HERE",
-            "user": "matthias",
-            "port": 22
-        }
-    ]
-}
-"#
-    .to_string()
-}
-
-// Integer value from a JSON number: accepts 42 and 42.0, rejects 42.5.
-fn int_value(v: &Value) -> Option<u64> {
-    if let Some(n) = v.as_u64() {
-        return Some(n);
-    }
-    if v.is_number() {
-        if let Some(f) = v.as_f64() {
-            if f >= 0.0 && f.fract() == 0.0 && f <= u64::MAX as f64 {
-                return Some(f as u64);
-            }
-        }
-    }
-    None
-}
-
-fn number_field(
-    obj: &Map<String, Value>,
-    key: &str,
-    default: u64,
-    min: u64,
-    max: u64,
-) -> Result<u64, String> {
-    match obj.get(key) {
-        None => Ok(default),
-        Some(v) => {
-            let n = match int_value(v) {
-                Some(n) => n,
-                None => return Err(format!("\"{}\" must be an integer", key)),
-            };
-            if n < min || n > max {
-                return Err(format!("\"{}\" must be between {} and {}", key, min, max));
-            }
-            Ok(n)
-        }
-    }
-}
-
-fn parse_legacy_config(text: &str) -> Result<Conf, String> {
-    let root: Value = match serde_json::from_str(text) {
-        Ok(v) => v,
-        Err(e) => return Err(format!("invalid JSON: {}", e)),
-    };
-    let obj = match root.as_object() {
-        Some(o) => o,
-        None => return Err("the top-level value must be a JSON object".to_string()),
-    };
-
-    let udp_port = number_field(obj, "udp_port", 4242, 1, 65535)? as u16;
-    let wait_secs = number_field(obj, "wait_secs", 10, 1, 3600)?;
-    let batch_size = number_field(obj, "batch_size", 64, 1, 1024)? as usize;
-
-    let mut subnets: Vec<String> = Vec::new();
-    if let Some(v) = obj.get("subnets") {
-        let arr = match v.as_array() {
-            Some(a) => a,
-            None => return Err("\"subnets\" must be an array of strings".to_string()),
-        };
-        for s in arr {
-            let s = match s.as_str() {
-                Some(s) => s.trim(),
-                None => return Err("\"subnets\" must be an array of strings".to_string()),
-            };
-            if s.is_empty() {
-                continue;
-            }
-            match net_valid(&net_prefix(s)) {
-                Some(n) => subnets.push(n),
-                None => {
-                    return Err(format!(
-                        "\"subnets\": \"{}\" is not a valid /24 prefix (e.g. \"192.168.43\")",
-                        s
-                    ));
-                }
-            }
-        }
-    }
-
-    let machines_v = match obj.get("machines") {
-        Some(v) => v,
-        None => return Err("\"machines\" is missing (an array is required)".to_string()),
-    };
-    let arr = match machines_v.as_array() {
-        Some(a) => a,
-        None => return Err("\"machines\" must be an array".to_string()),
-    };
-    if arr.is_empty() {
-        return Err("\"machines\" is empty — configure at least one machine".to_string());
-    }
-
-    let mut machines = Vec::new();
-    for (i, mv) in arr.iter().enumerate() {
-        let m = match mv.as_object() {
-            Some(m) => m,
-            None => return Err(format!("machines[{}] must be a JSON object", i)),
-        };
-        let name = required_str(m, "name", i)?;
-        let fingerprint = required_str(m, "fingerprint", i)?;
-        let user = match m.get("user") {
-            None => String::new(),
-            Some(v) => match v.as_str() {
-                Some(s) => s.trim().to_string(),
-                None => return Err(format!("machines[{}]: \"user\" must be a string", i)),
-            },
-        };
-        let (port, port_explicit) = match m.get("port") {
-            None => (22u16, false),
-            Some(v) => {
-                let n = match int_value(v) {
-                    Some(n) => n,
-                    None => return Err(format!("machines[{}]: \"port\" must be an integer", i)),
-                };
-                if n < 1 || n > 65535 {
-                    return Err(format!(
-                        "machines[{}]: \"port\" must be between 1 and 65535",
-                        i
-                    ));
-                }
-                (n as u16, true)
-            }
-        };
-        if !(fingerprint.starts_with("SHA256:") || fingerprint.starts_with("MD5:")) {
-            warn(&format!(
-                "machines[{}]: fingerprint has an unusual format (\"SHA256:...\" expected)",
-                i
-            ));
-        }
-        machines.push(Machine {
-            name,
-            fingerprint,
-            user,
-            port,
-            port_explicit,
-        });
-    }
-
-    let mut names: Vec<&str> = machines.iter().map(|m| m.name.as_str()).collect();
-    names.sort_unstable();
-    for w in names.windows(2) {
-        if w[0] == w[1] {
-            return Err(format!("duplicate machine name: \"{}\"", w[0]));
-        }
-    }
-
-    Ok(Conf {
-        udp_port,
-        wait_secs,
-        batch_size,
-        subnets,
-        machines,
-        config_dir: PathBuf::from("legacy"),
-    })
-}
-
-fn required_str(m: &Map<String, Value>, key: &str, i: usize) -> Result<String, String> {
-    match m.get(key) {
-        Some(v) => {
-            let s = match v.as_str() {
-                Some(s) => s,
-                None => return Err(format!("machines[{}]: \"{}\" must be a string", i, key)),
-            }
-            .trim();
-            if s.is_empty() {
-                return Err(format!("machines[{}]: \"{}\" must not be empty", i, key));
-            }
-            Ok(s.to_string())
-        }
-        None => Err(format!("machines[{}]: \"{}\" is required", i, key)),
     }
 }
 
@@ -1076,28 +866,7 @@ fn run_selftest() -> ! {
     );
     ok &= tools_ok;
 
-    // 2. config template parses + validates
-    let parsed = parse_legacy_config(&config_template());
-    let conf_ok = parsed.is_ok();
-    println!(
-        "legacy config template parses + validates — {}",
-        if conf_ok { "OK" } else { "FAIL" }
-    );
-    ok &= conf_ok;
-    if let Ok(c) = parsed {
-        let v = c.udp_port == 4242
-            && c.wait_secs == 10
-            && c.batch_size == 64
-            && c.subnets.is_empty()
-            && c.machines.len() == 1
-            && c.machines[0].name == "ordi"
-            && c.machines[0].port == 22
-            && c.machines[0].port_explicit;
-        println!("legacy config template fields — {}", if v { "OK" } else { "FAIL" });
-        ok &= v;
-    }
-
-    // 3. subnet helpers
+    // 2. subnet helpers
     let net_ok = net_valid(&net_prefix("192.168.43.0/24")) == Some("192.168.43".to_string())
         && net_valid(&net_prefix("192.168.43")) == Some("192.168.43".to_string())
         && net_valid("192.168.43") == Some("192.168.43".to_string())
@@ -1106,6 +875,43 @@ fn run_selftest() -> ! {
         && net_valid("abc.def.ghi") == None;
     println!("subnet helpers — {}", if net_ok { "OK" } else { "FAIL" });
     ok &= net_ok;
+
+    // 3. test config loading with sample data
+    let sample_dir = PathBuf::from("/tmp/regroup-selftest");
+    let _ = fs::remove_dir_all(&sample_dir);
+    
+    if let Err(e) = fs::create_dir_all(&sample_dir) {
+        println!("temp dir creation — FAIL ({})", e);
+        ok = false;
+    } else {
+        let devices_dir = sample_dir.join("devices");
+        let _ = fs::create_dir_all(&devices_dir);
+        
+        let device_file = devices_dir.join("test.json");
+        let device_config = r#"{"name": "test", "fingerprint": "SHA256:abc", "user": "testuser", "port": 22}"#;
+        if let Err(e) = fs::write(&device_file, device_config) {
+            println!("device file creation — FAIL ({})", e);
+            ok = false;
+        } else {
+            match load_device_file(&device_file) {
+                Ok(m) => {
+                    let device_ok = m.name == "test" 
+                        && m.fingerprint == "SHA256:abc"
+                        && m.user == "testuser"
+                        && m.port == 22
+                        && m.port_explicit;
+                    println!("device config loading — {}", if device_ok { "OK" } else { "FAIL" });
+                    ok &= device_ok;
+                }
+                Err(e) => {
+                    println!("device config loading — FAIL ({})", e);
+                    ok = false;
+                }
+            }
+        }
+        
+        let _ = fs::remove_dir_all(&sample_dir);
+    }
 
     println!("selftest: {}", if ok { "OK" } else { "FAIL" });
     std::process::exit(if ok { 0 } else { 1 });
@@ -1121,28 +927,27 @@ fn usage() {
 ~/.ssh/config. Every run announces this machine over UDP broadcast while
 listening for the other machines' announcements during the same window.
 
-NEW: Configuration is now stored in a separate git repository where each
-device has its own file. Devices auto-fill their information if missing.
+Configuration is stored in ~/.regroup-config/ git repository where each
+device has its own JSON file in the devices/ directory. Devices auto-fill
+their information if missing.
 
 Usage:
   ./regroup                announce + listen, then update ~/.ssh/config
   ./regroup test           dry run: nothing is modified
   ./regroup -v             verbose
-  ./regroup -c REPO        use REPO as config repository (default: ./regroup-config)
   ./regroup -r             refresh config from git repo before running
   ./regroup 192.168.43     also scan that /24 once (if broadcast is filtered)
   ./regroup selftest       built-in checks (tools, config, config rewrite)
   ./regroup -h             this help
 
-Config repository structure:
-  REPO/
-    settings.json           (optional: udp_port, wait_secs, batch_size, subnets)
-    devices/
-      <hostname>.json       (each device's config: name, fingerprint, user, port)
+Config repository structure (~/.regroup-config/):
+  settings.json           (optional: udp_port, wait_secs, batch_size, subnets)
+  devices/
+    <hostname>.json       (each device's config: name, fingerprint, user, port)
 
-On first run, a new git repository is created with a devices/ directory.
-Each device auto-creates its own config file with detected information.
-Sync the repository across devices on a controlled network.
+On first run, the ~/.regroup-config/ directory is created with a devices/
+directory. Each device auto-creates its own config file with detected info.
+Sync the repository across devices on a controlled network using git.
 
 Exit codes:
   0  all machines found
@@ -1159,7 +964,6 @@ fn main() {
     let mut help = false;
     let mut selftest = false;
     let mut net_arg: Option<String> = None;
-    let mut conf_path = PathBuf::from(DEFAULT_CONFIG_REPO);
     let mut refresh = false;
     let mut i = 0;
     while i < args.len() {
@@ -1172,12 +976,6 @@ fn main() {
             help = true;
         } else if a == "selftest" {
             selftest = true;
-        } else if a == "-c" || a == "--config" {
-            i += 1;
-            if i >= args.len() {
-                die("option -c/--config requires a path or URL");
-            }
-            conf_path = PathBuf::from(&args[i]);
         } else if a == "-r" || a == "--refresh" {
             refresh = true;
         } else if a.contains('.') {
@@ -1206,22 +1004,9 @@ fn main() {
             ));
         }
     }
-    
-    // Check for git (optional, but needed for config management)
-    if refresh || !conf_path.exists() {
-        if Command::new("git").output().is_err() {
-            warn("git not found — config repository features disabled");
-        }
-    }
 
     // --- configuration ---
-    if refresh {
-        if let Err(e) = refresh_config(&conf_path) {
-            warn(&format!("could not refresh config: {}", e));
-        }
-    }
-    
-    let conf = load_config(&conf_path);
+    let conf = load_config(refresh);
 
     // --- ~/.ssh preparation (only when we may write) ---
     let home = match env::var("HOME") {
@@ -1257,7 +1042,6 @@ fn main() {
             local_name,
             local_ip.as_deref().unwrap_or("unknown IP")
         );
-        println!("  . config dir: {}", conf.config_dir.display());
     }
 
     // --- announce (background thread) + listen, same window ---

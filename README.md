@@ -2,94 +2,73 @@
 
 Find machines by their SSH host key fingerprint and update `~/.ssh/config`.
 
-## New Architecture: Distributed Configuration
+## Configuration
 
-Configuration is now stored in a **separate git repository** where each device has its own file. This allows:
+**Configuration is stored in `~/.regroup-config/`** - a git repository where each device has its own JSON file in the `devices/` directory.
 
-- **No conflicts**: Each device writes to its own file
-- **Easy sync**: Use git to synchronize configurations across devices on a controlled network
-- **Auto-registration**: Devices automatically create their own configuration if missing
-
-## How It Works
-
-1. Each device has its own JSON file in the `devices/` directory of the config repository
-2. On first run, a device auto-creates its file with self-detected information (hostname, IP, fingerprint)
-3. You sync the repository across all devices on your controlled network
-4. Each device reads all device files to discover the network topology
+Each device automatically creates its own configuration file with self-detected information (hostname, SSH fingerprint, user) on first run.
 
 ## Quick Start
 
-### 1. Create a config repository
+### First run on any device:
 
 ```bash
-# On a shared location (e.g., a server or USB drive)
-git init regroup-config
-cd regroup-config
-# Create devices directory (optional - will be created automatically)
-mkdir devices
-# Initialize git with your settings
-git config user.email "your@email.com"
-git config user.name "Your Name"
-git add .
-git commit -m "Initial config"
+./regroup
 ```
 
-### 2. On each device
+This will:
+1. Create `~/.regroup-config/` directory
+2. Initialize a git repository
+3. Create `settings.json` with defaults
+4. Create `devices/<hostname>.json` with auto-detected info
+5. Commit everything to git
+
+### On other devices:
 
 ```bash
-# Build regroup
-cd /path/to/regroup
-git pull  # Make sure you have the latest code
-cargo build --release
+# Clone the config from first device
+git clone ~/regroup-config ~/.regroup-config
+# Or copy the directory directly
+cp -r /path/to/regroup-config ~/.regroup-config
 
-# Run regroup with your config repository
-./target/release/regroup -c /path/to/regroup-config
-
-# On first run, it will:
-# 1. Clone the config repo if it doesn't exist locally
-# 2. Auto-create a device file for this machine
-# 3. Commit and you can push to sync with other devices
+# Then run regroup
+./regroup
 ```
 
-### 3. Sync configurations
-
-After running on all devices, sync the repository:
+### Sync changes:
 
 ```bash
-cd /path/to/regroup-config
-git pull  # Get latest changes
-git push  # Push your device config
+# Pull latest changes before running
+./regroup -r
+
+# Or manually in the config directory
+cd ~/.regroup-config
+git pull
 ```
 
 ## Usage
 
 ```
 regroup — find machines by their SSH host key fingerprint and update
-~/.ssh/config. Every run announces this machine over UDP broadcast while
-listening for the other machines' announcements during the same window.
+~/.ssh/config.
 
-NEW: Configuration is now stored in a separate git repository where each
-device has its own file. Devices auto-fill their information if missing.
+Configuration is stored in ~/.regroup-config/ git repository where each
+device has its own JSON file in the devices/ directory. Devices auto-fill
+their information if missing.
 
 Usage:
   ./regroup                announce + listen, then update ~/.ssh/config
   ./regroup test           dry run: nothing is modified
   ./regroup -v             verbose
-  ./regroup -c REPO        use REPO as config repository (default: ./regroup-config)
   ./regroup -r             refresh config from git repo before running
   ./regroup 192.168.43     also scan that /24 once (if broadcast is filtered)
   ./regroup selftest       built-in checks (tools, config, config rewrite)
   ./regroup -h             this help
 
-Config repository structure:
-  REPO/
-    settings.json           (optional: udp_port, wait_secs, batch_size, subnets)
-    devices/
-      <hostname>.json       (each device's config: name, fingerprint, user, port)
-
-On first run, a new git repository is created with a devices/ directory.
-Each device auto-creates its own config file with detected information.
-Sync the repository across devices on a controlled network.
+Config repository structure (~/.regroup-config/):
+  settings.json           (optional: udp_port, wait_secs, batch_size, subnets)
+  devices/
+    <hostname>.json       (each device's config: name, fingerprint, user, port)
 
 Exit codes:
   0  all machines found
@@ -102,12 +81,12 @@ Exit codes:
 ### Repository Layout
 
 ```
-regroup-config/
+~/.regroup-config/
 ├── settings.json          # Global settings (optional)
 └── devices/
-    ├── ordi.json         # Device: ordi
-    ├── nas.json          # Device: nas
-    └── laptop.json       # Device: laptop
+    ├── ubuntu-MacBookPro.json
+    ├── ordi.json
+    └── nas.json
 ```
 
 ### Device Configuration File
@@ -116,7 +95,7 @@ Each device file (`devices/<name>.json`) contains:
 
 ```json
 {
-  "name": "ordi",
+  "name": "ubuntu-MacBookPro",
   "fingerprint": "SHA256:abcdef123456...",
   "user": "matthias",
   "port": 22
@@ -124,10 +103,10 @@ Each device file (`devices/<name>.json`) contains:
 ```
 
 Fields:
-- `name`: Device hostname (auto-detected from system hostname)
-- `fingerprint`: SSH host key fingerprint (SHA256 or MD5 format)
-- `user`: SSH username (defaults to current user)
-- `port`: SSH port (defaults to 22)
+- `name`: Device hostname (auto-detected)
+- `fingerprint`: SSH host key fingerprint (SHA256 or MD5 format) - **required**
+- `user`: SSH username (defaults to current user, omitted if empty)
+- `port`: SSH port (defaults to 22, omitted if default)
 
 ### Global Settings
 
@@ -148,61 +127,56 @@ Fields:
 - `batch_size`: Parallel connections for subnet scanning (default: 64)
 - `subnets`: Array of /24 subnet prefixes to scan as fallback
 
+## How It Works
+
+1. **First run**: Creates `~/.regroup-config/` with git repo, settings, and your device file
+2. **Subsequent runs**: Loads all device configs from `~/.regroup-config/devices/`
+3. **Auto-registration**: If your device's config is missing, it's auto-created
+4. **Sync**: Use `./regroup -r` or manually `git pull` in `~/.regroup-config/`
+
 ## Workflow Examples
 
 ### Setting up a new network
 
 ```bash
-# On a central server or laptop
-mkdir ~/regroup-config
-cd ~/regroup-config
-git init
+# On first device
+./regroup
+# This creates ~/.regroup-config/ with your device config
 
-# On device 1 (ordi)
-./regroup -c ~/regroup-config
-# Auto-creates: ~/regroup-config/devices/ordi.json
-
-# On device 2 (nas)
-./regroup -c ~/regroup-config
-# Auto-creates: ~/regroup-config/devices/nas.json
-
-# Sync to a central location
-cd ~/regroup-config
-git add .
-git commit -m "Add ordi and nas"
+# Commit and push to a shared location
+cd ~/.regroup-config
 git remote add origin git@server:/path/to/regroup-config.git
-git push -u origin main
+git push -u origin master
 
-# On other devices, clone and use
- git clone git@server:/path/to/regroup-config.git
-./regroup -c ~/regroup-config
-```
+# On second device
+git clone git@server:/path/to/regroup-config.git ~/.regroup-config
+./regroup
+# This creates a device file for the second machine
 
-### Adding a new device
-
-```bash
-# On the new device (laptop)
-./regroup -c ~/regroup-config
-# Auto-creates ~/regroup-config/devices/laptop.json
-
-# Commit and sync
-cd ~/regroup-config
-git add devices/laptop.json
-git commit -m "Add laptop"
+# On second device, push changes
+cd ~/.regroup-config
+git add .
+git commit -m "Add second device"
 git push
+
+# On first device, pull changes
+./regroup -r
 ```
 
 ### Using with USB drive for air-gapped networks
 
 ```bash
-# On a machine with the USB drive mounted at /media/usb
-./regroup -c /media/usb/regroup-config
+# On first device
+./regroup
+cp -r ~/.regroup-config /media/usb/
 
-# After running on all devices, sync manually
-# Copy the updated files from the USB drive to other machines
+# On second device (after copying from USB)
+cp -r /media/usb/regroup-config ~/.regroup-config
+./regroup
+cp -r ~/.regroup-config /media/usb/
 ```
 
-### Getting the SSH fingerprint
+## Getting SSH Fingerprints
 
 To find a machine's fingerprint:
 
@@ -237,10 +211,6 @@ cargo build --release
 - Rust (cargo)
 - OpenSSH client (`ssh-keyscan`, `ssh-keygen`)
 - Git (optional, but recommended for config sync)
-
-## Legacy Configuration
-
-The old single-file `regroup.json` configuration is still supported for backward compatibility, but new installations should use the distributed configuration approach.
 
 ## License
 

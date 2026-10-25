@@ -2,28 +2,36 @@
 
 ## Summary
 
-Updated the configuration system from a single `regroup.json` file to a **distributed git repository** approach where each device has its own configuration file.
+**Configuration is now always stored in `~/.regroup-config/`** - a git repository where each device has its own JSON file in the `devices/` directory.
+
+The old `regroup.json` single-file configuration is **completely removed**. This is a breaking change that fixes the scalability and sync issues.
 
 ## Key Changes
 
-### 1. New Configuration Structure
+### 1. Fixed Configuration Location
 
-**Old:** Single `regroup.json` file with all machines
-```
-regroup.json
+**Before:** Config file path could be specified with `-c` flag, defaulted to `./regroup.json`
+**After:** Config is **always** at `~/.regroup-config/` - no `-c` flag, no other options
+
+### 2. Per-Device Configuration Files
+
+**Before:** Single file with all machines in a `machines` array
+```json
+{
+  "machines": [
+    {"name": "ordi", "fingerprint": "...", "user": "...", "port": 22},
+    {"name": "nas", "fingerprint": "...", "user": "...", "port": 22}
+  ]
+}
 ```
 
-**New:** Git repository with per-device files
+**After:** Separate file for each device
 ```
-regroup-config/
-├── settings.json          # Global settings (optional)
-└── devices/
-    ├── <hostname1>.json
-    ├── <hostname2>.json
-    └── <hostname3>.json
+~/.regroup-config/devices/ordi.json
+~/.regroup-config/devices/nas.json
 ```
 
-### 2. Auto-Registration
+### 3. Auto-Registration
 
 Each device automatically creates its own configuration file on first run with:
 - Auto-detected hostname
@@ -31,125 +39,123 @@ Each device automatically creates its own configuration file on first run with:
 - Current user
 - Default port (22)
 
-This happens transparently when a device's config file is missing.
+### 4. Git Integration
 
-### 3. Git Integration
+The `~/.regroup-config/` directory is automatically initialized as a git repository on first run. You can:
+- Use `./regroup -r` to pull latest changes before running
+- Manually run `git pull` in `~/.regroup-config/`
+- Commit and push changes to a remote repository
 
-The configuration repository can be:
-- A local git repository
-- A remote git repository (cloned on first use)
-- A plain directory (git features optional)
+### 5. Removed Command-Line Options
 
-Git operations supported:
-- `git clone` - for initializing from a remote
-- `git pull` - for refreshing before runs (`-r` flag)
-- `git add` + `git commit` - for saving new device configs
+- `-c REPO` / `--config REPO`: **Removed** - config location is fixed at `~/.regroup-config/`
 
-### 4. New Command-Line Options
+### 6. New Command-Line Options
 
-- `-c REPO` / `--config REPO`: Specify config repository path or URL (default: `./regroup-config`)
 - `-r` / `--refresh`: Pull latest changes from git repo before running
-
-### 5. Backward Compatibility
-
-The old `regroup.json` single-file format is still supported for reading, but new installations should use the distributed approach.
 
 ## Migration Guide
 
-### For existing users with `regroup.json`:
+### For existing users:
 
-1. Create a new config repository:
+The old `regroup.json` format is **no longer supported**. You must migrate:
+
+1. **Backup your old config:**
    ```bash
-   mkdir regroup-config
-   cd regroup-config
-   git init
-   mkdir devices
+   cp regroup.json regroup.json.bak
    ```
 
-2. Convert your old config to new format:
-   - Copy machines from `regroup.json` to individual files in `devices/`
-   - Example: Machine named "ordi" → `devices/ordi.json`
-   - Copy global settings to `settings.json`
-
-3. On each device, run:
+2. **Run regroup to create new structure:**
    ```bash
-   ./regroup -c /path/to/regroup-config
+   ./regroup test
+   ```
+   This creates `~/.regroup-config/` with a device file for your current machine.
+
+3. **Add other devices manually:**
+   For each machine in your old `regroup.json`, create a file in `~/.regroup-config/devices/`:
+   
+   Example: For a machine named "ordi" with fingerprint "SHA256:abc..." and user "matthias":
+   ```bash
+   cat > ~/.regroup-config/devices/ordi.json << EOF
+   {
+     "name": "ordi",
+     "fingerprint": "SHA256:abc...",
+     "user": "matthias"
+   }
+   EOF
    ```
 
-### For new users:
+4. **Copy global settings:**
+   If you had custom settings (udp_port, wait_secs, batch_size, subnets), add them to `settings.json`:
+   ```bash
+   cat > ~/.regroup-config/settings.json << EOF
+   {
+     "udp_port": 4242,
+     "wait_secs": 10,
+     "batch_size": 64,
+     "subnets": ["192.168.43"]
+   }
+   EOF
+   ```
 
-Simply run:
-```bash
-./regroup -c /path/to/regroup-config
-```
+5. **Commit changes:**
+   ```bash
+   cd ~/.regroup-config
+   git add .
+   git commit -m "Migrated from old config"
+   ```
 
-The first device will:
-1. Create the config directory
-2. Initialize a git repository
-3. Create its own device file
-4. You can then push to a shared location and clone on other devices
-
-## Technical Details
-
-### Device File Format
-
-Each device file (`devices/<name>.json`) contains:
-
-```json
-{
-  "name": "hostname",
-  "fingerprint": "SHA256:...",
-  "user": "username",
-  "port": 22
-}
-```
-
-All fields except `name` and `fingerprint` are optional and will use defaults:
-- `user`: Current system user
-- `port`: 22 (omitted from file if default)
-
-### Global Settings Format
-
-Optional `settings.json`:
-
-```json
-{
-  "udp_port": 4242,
-  "wait_secs": 10,
-  "batch_size": 64,
-  "subnets": ["192.168.43", "192.168.1"]
-}
-```
-
-### Workflow
-
-1. **On first device:**
-   - Run `./regroup -c ./regroup-config`
-   - Device auto-creates its config file
-   - Git repository is initialized
-   - Commit and push to shared location
-
-2. **On subsequent devices:**
-   - Clone the config repository
-   - Run `./regroup -c ./regroup-config`
-   - Device auto-creates its config file (if missing)
-   - Commit and push changes
-
-3. **Sync across devices:**
-   - Use `./regroup -c ./regroup-config -r` to pull latest changes
-   - Or manually `git pull` in the config repository
+6. **Sync to other devices:**
+   On other devices, either:
+   - Copy the directory: `cp -r ~/.regroup-config user@other-device:~/.regroup-config`
+   - Clone from a remote: `git clone your-repo-url ~/.regroup-config`
 
 ## Benefits
 
 1. **No merge conflicts**: Each device writes to its own file
-2. **Easy distribution**: Use git to sync configurations
-3. **Auto-discovery**: Devices self-register with minimal user input
-4. **Scalable**: Works well with many devices
-5. **Flexible**: Can use git or just a plain directory
+2. **Predictable location**: Always `~/.regroup-config/` - no confusion about where config is
+3. **Easy distribution**: Use git or any file copy method
+4. **Auto-discovery**: Devices self-register with minimal user input
+5. **Clean separation**: Global settings separate from device configs
 
-## Implementation Notes
+## Breaking Changes
 
-- Uses `std::process::Command` for git operations (no external dependencies)
-- Git is optional - tool works with plain directories
-- JSON files are human-readable and editable
-- All existing functionality preserved (UDP beacons, fingerprint matching, SSH config updates)
+- Old `regroup.json` format is **not supported**
+- `-c` flag is **removed** - config location is fixed
+- Config directory is **always** `~/.regroup-config/`
+
+## Technical Details
+
+### File Structure
+
+```
+~/.regroup-config/
+├── .git/                     # Git repository
+├── settings.json            # Global settings (optional)
+└── devices/
+    ├── <hostname1>.json     # Device 1 config
+    ├── <hostname2>.json     # Device 2 config
+    └── <hostname3>.json     # Device 3 config
+```
+
+### Device File Format
+
+```json
+{
+  "name": "hostname",           # Required
+  "fingerprint": "SHA256:...",  # Required
+  "user": "username",           # Optional (default: current user)
+  "port": 2222                  # Optional (default: 22)
+}
+```
+
+### Global Settings Format
+
+```json
+{
+  "udp_port": 4242,             # Optional (default: 4242)
+  "wait_secs": 10,             # Optional (default: 10)
+  "batch_size": 64,            # Optional (default: 64)
+  "subnets": ["192.168.43"]   # Optional (default: [])
+}
+```
