@@ -2,11 +2,13 @@
 
 Find machines by their SSH host key fingerprint and update `~/.ssh/config`.
 
-## Configuration
+## Configuration & Sync
 
-**Configuration is stored in `~/.regroup-config/`** - a git repository where each device has its own JSON file in the `devices/` directory.
-
-Each device automatically creates its own configuration file with self-detected information (hostname, SSH fingerprint, user) on first run.
+**Configuration is stored in `~/.regroup-config/`** - a git repository where:
+- Each device has its own JSON file in `devices/`
+- Git remotes are **automatically configured** for all other devices
+- Decentralized sync via `git pull --all` and `git push --all`
+- One-way SSH connections are handled gracefully
 
 ## Quick Start
 
@@ -23,27 +25,67 @@ This will:
 4. Create `devices/<hostname>.json` with auto-detected info
 5. Commit everything to git
 
-### On other devices:
+### On second device:
 
 ```bash
-# Clone the config from first device
-git clone ~/regroup-config ~/.regroup-config
-# Or copy the directory directly
-cp -r /path/to/regroup-config ~/.regroup-config
-
-# Then run regroup
 ./regroup
 ```
 
-### Sync changes:
+This will:
+1. Create local `~/.regroup-config/`
+2. Create its own device file
+3. Automatically add the first device as a git remote
+4. Push to the first device's config repo
+
+### On first device (or any device):
 
 ```bash
-# Pull latest changes before running
+# Pull changes from all remotes
 ./regroup -r
 
-# Or manually in the config directory
-cd ~/.regroup-config
-git pull
+# This will pull from all known device remotes
+# and update SSH config accordingly
+```
+
+## How It Works
+
+### Automatic Git Remote Management
+
+1. **On every run**, regroup:
+   - Scans all device configs in `~/.regroup-config/devices/`
+   - Adds git remotes for all other devices (except self)
+   - Removes stale remotes (devices no longer in config)
+   - Updates SSH config for each device
+
+2. **Remote URLs** follow this format:
+   ```
+   user@hostname:~/.regroup-config
+   ```
+
+3. **Sync process**:
+   - `-r` flag: Pulls from all remotes before discovery
+   - After updating SSH config: Pushes to all remotes
+   - One-way SSH is OK - failures are logged as warnings
+
+### Example Workflow
+
+```
+Device A (hostname: ordi, user: alice)
+  └── ~/.regroup-config/
+      ├── devices/ordi.json
+      └── settings.json
+
+Device B runs regroup:
+  1. Creates ~/.regroup-config/devices/laptop.json
+  2. Adds remote: alice@ordi:~/.regroup-config
+  3. Pushes to ordi's repo
+  4. Updates SSH config to connect to ordi
+
+Device A runs regroup -r:
+  1. Pulls from laptop's remote (alice@ordi has laptop as remote)
+  2. Gets laptop's device config
+  3. Adds laptop as a remote
+  4. Updates SSH config for laptop
 ```
 
 ## Usage
@@ -53,14 +95,14 @@ regroup — find machines by their SSH host key fingerprint and update
 ~/.ssh/config.
 
 Configuration is stored in ~/.regroup-config/ git repository where each
-device has its own JSON file in the devices/ directory. Devices auto-fill
-their information if missing.
+device has its own JSON file in the devices/ directory. Git remotes are
+automatically configured for all other devices.
 
 Usage:
   ./regroup                announce + listen, then update ~/.ssh/config
   ./regroup test           dry run: nothing is modified
   ./regroup -v             verbose
-  ./regroup -r             refresh config from git repo before running
+  ./regroup -r             refresh: pull from all git remotes before running
   ./regroup 192.168.43     also scan that /24 once (if broadcast is filtered)
   ./regroup selftest       built-in checks (tools, config, config rewrite)
   ./regroup -h             this help
@@ -70,6 +112,14 @@ Config repository structure (~/.regroup-config/):
   devices/
     <hostname>.json       (each device's config: name, fingerprint, user, port)
 
+Git remotes (automatically managed):
+  user@hostname:~/.regroup-config  (for each other device)
+
+Sync behavior:
+  - git pull --all on startup (with -r flag)
+  - git push --all after updating SSH config
+  - One-way SSH connections handled gracefully (warnings only)
+
 Exit codes:
   0  all machines found
   1  at least one machine missing
@@ -78,32 +128,21 @@ Exit codes:
 
 ## Configuration Structure
 
-### Repository Layout
-
-```
-~/.regroup-config/
-├── settings.json          # Global settings (optional)
-└── devices/
-    ├── ubuntu-MacBookPro.json
-    ├── ordi.json
-    └── nas.json
-```
-
 ### Device Configuration File
 
 Each device file (`devices/<name>.json`) contains:
 
 ```json
 {
-  "name": "ubuntu-MacBookPro",
+  "name": "hostname",
   "fingerprint": "SHA256:abcdef123456...",
-  "user": "matthias",
+  "user": "username",
   "port": 22
 }
 ```
 
 Fields:
-- `name`: Device hostname (auto-detected)
+- `name`: Device hostname (auto-detected) - **required**
 - `fingerprint`: SSH host key fingerprint (SHA256 or MD5 format) - **required**
 - `user`: SSH username (defaults to current user, omitted if empty)
 - `port`: SSH port (defaults to 22, omitted if default)
@@ -127,53 +166,60 @@ Fields:
 - `batch_size`: Parallel connections for subnet scanning (default: 64)
 - `subnets`: Array of /24 subnet prefixes to scan as fallback
 
-## How It Works
+## Practical Examples
 
-1. **First run**: Creates `~/.regroup-config/` with git repo, settings, and your device file
-2. **Subsequent runs**: Loads all device configs from `~/.regroup-config/devices/`
-3. **Auto-registration**: If your device's config is missing, it's auto-created
-4. **Sync**: Use `./regroup -r` or manually `git pull` in `~/.regroup-config/`
+### Two devices on a local network
 
-## Workflow Examples
-
-### Setting up a new network
-
+**Device 1 (ordi):**
 ```bash
-# On first device
+# First run - creates config and initializes git
 ./regroup
-# This creates ~/.regroup-config/ with your device config
 
-# Commit and push to a shared location
-cd ~/.regroup-config
-git remote add origin git@server:/path/to/regroup-config.git
-git push -u origin master
+# Config is now at ~/.regroup-config/ with ordi.json
+```
 
-# On second device
-git clone git@server:/path/to/regroup-config.git ~/.regroup-config
+**Device 2 (laptop):**
+```bash
+# First run - creates config, adds ordi as remote, pushes to ordi
 ./regroup
-# This creates a device file for the second machine
 
-# On second device, push changes
-cd ~/.regroup-config
-git add .
-git commit -m "Add second device"
-git push
+# Now ordi has laptop as a remote, and laptop has ordi as a remote
+```
 
-# On first device, pull changes
+**Sync on Device 1:**
+```bash
+# Pull laptop's config
 ./regroup -r
 ```
 
-### Using with USB drive for air-gapped networks
+### Manual sync (if automatic push fails)
 
 ```bash
-# On first device
-./regroup
-cp -r ~/.regroup-config /media/usb/
+# On any device
+cd ~/.regroup-config
+git pull --all
+git push --all
+```
 
-# On second device (after copying from USB)
-cp -r /media/usb/regroup-config ~/.regroup-config
-./regroup
-cp -r ~/.regroup-config /media/usb/
+### Adding a device manually
+
+```bash
+# On any device, add a new device config
+cat > ~/.regroup-config/devices/newdevice.json << EOF
+{
+  "name": "newdevice",
+  "fingerprint": "SHA256:...",
+  "user": "username"
+}
+EOF
+
+# Commit and sync
+git add .
+git commit -m "Add newdevice"
+git push --all
+
+# On other devices, run with -r to pull the new config
+./regroup -r
 ```
 
 ## Getting SSH Fingerprints
@@ -210,7 +256,30 @@ cargo build --release
 
 - Rust (cargo)
 - OpenSSH client (`ssh-keyscan`, `ssh-keygen`)
-- Git (optional, but recommended for config sync)
+- Git
+- SSH access between devices (one-way is OK)
+
+## Troubleshooting
+
+### "git remote errors (one-way SSH is OK)"
+This is normal! It means some devices can't push/pull to each other. As long as:
+- Each device can reach at least one other device
+- The network forms a connected graph
+Then all configs will eventually sync.
+
+### SSH connection issues
+Make sure:
+1. SSH keys are set up between devices
+2. Hostnames are resolvable (use IP addresses if DNS doesn't work)
+3. SSH config is correct (regroup updates this automatically)
+
+### Git push/pull failures
+These are expected if:
+- A device is offline
+- SSH is one-way only
+- Firewall blocks connections
+
+Regroup handles these gracefully with warnings. The sync will work through other paths.
 
 ## License
 

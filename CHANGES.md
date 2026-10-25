@@ -4,61 +4,93 @@
 
 **Configuration is now always stored in `~/.regroup-config/`** - a git repository where each device has its own JSON file in the `devices/` directory.
 
-The old `regroup.json` single-file configuration is **completely removed**. This is a breaking change that fixes the scalability and sync issues.
+## Key Features
 
-## Key Changes
+### 1. Automatic Git Remote Management
 
-### 1. Fixed Configuration Location
+- **Automatic addition**: When a new device is detected in the config, a git remote is automatically added
+- **Automatic removal**: When a device is removed from config, its remote is automatically removed
+- **Remote URL format**: `user@hostname:~/.regroup-config`
+- **Self-exclusion**: A device never adds itself as a remote
 
-**Before:** Config file path could be specified with `-c` flag, defaulted to `./regroup.json`
-**After:** Config is **always** at `~/.regroup-config/` - no `-c` flag, no other options
+### 2. Decentralized Sync
 
-### 2. Per-Device Configuration Files
+- **`git pull --all`**: Used with `-r` flag to pull from all remotes before discovery
+- **`git push --all`**: Used after updating SSH config to push to all remotes
+- **Graceful failures**: One-way SSH connections are handled with warnings only
 
-**Before:** Single file with all machines in a `machines` array
+### 3. Sync Workflow
+
+```
+1. On startup with -r flag:
+   - git pull --all (pulls from all remotes)
+   - Load all device configs
+   
+2. After discovery:
+   - Update SSH config for each discovered device
+   - git push --all (pushes to all remotes)
+   - Update git remotes to match current device list
+   
+3. Continuous:
+   - Every run refreshes git remotes
+   - Stale remotes are removed
+   - New devices get remotes added
+```
+
+### 4. Configuration Structure
+
+```
+~/.regroup-config/
+├── .git/                      # Git repository
+├── settings.json             # Global settings (optional)
+└── devices/
+    ├── ubuntu-MacBookPro.json # Device 1 (this device)
+    ├── ordi.json             # Device 2 (remote added)
+    └── nas.json              # Device 3 (remote added)
+```
+
+### 5. Device File Format
+
 ```json
 {
-  "machines": [
-    {"name": "ordi", "fingerprint": "...", "user": "...", "port": 22},
-    {"name": "nas", "fingerprint": "...", "user": "...", "port": 22}
-  ]
+  "name": "hostname",           # Required
+  "fingerprint": "SHA256:...",  # Required
+  "user": "username",           # Optional (default: current user)
+  "port": 22                    # Optional (default: 22)
 }
 ```
 
-**After:** Separate file for each device
+### 6. Global Settings Format
+
+```json
+{
+  "udp_port": 4242,             # Optional (default: 4242)
+  "wait_secs": 10,             # Optional (default: 10)
+  "batch_size": 64,            # Optional (default: 64)
+  "subnets": ["192.168.43"]   # Optional (default: [])
+}
 ```
-~/.regroup-config/devices/ordi.json
-~/.regroup-config/devices/nas.json
-```
 
-### 3. Auto-Registration
+## Breaking Changes
 
-Each device automatically creates its own configuration file on first run with:
-- Auto-detected hostname
-- Auto-detected SSH fingerprint
-- Current user
-- Default port (22)
-
-### 4. Git Integration
-
-The `~/.regroup-config/` directory is automatically initialized as a git repository on first run. You can:
-- Use `./regroup -r` to pull latest changes before running
-- Manually run `git pull` in `~/.regroup-config/`
-- Commit and push changes to a remote repository
-
-### 5. Removed Command-Line Options
-
-- `-c REPO` / `--config REPO`: **Removed** - config location is fixed at `~/.regroup-config/`
-
-### 6. New Command-Line Options
-
-- `-r` / `--refresh`: Pull latest changes from git repo before running
+1. **Configuration location is fixed**: Always `~/.regroup-config/` - cannot be changed
+2. **Removed `-c` flag**: Config location is no longer configurable
+3. **Old `regroup.json` format removed**: Completely replaced with per-device files
 
 ## Migration Guide
 
-### For existing users:
+### For new users:
 
-The old `regroup.json` format is **no longer supported**. You must migrate:
+Just run:
+```bash
+./regroup
+```
+
+Everything is set up automatically.
+
+### For existing users with old `regroup.json`:
+
+You must migrate manually:
 
 1. **Backup your old config:**
    ```bash
@@ -67,14 +99,13 @@ The old `regroup.json` format is **no longer supported**. You must migrate:
 
 2. **Run regroup to create new structure:**
    ```bash
-   ./regroup test
+   ./regroup
    ```
-   This creates `~/.regroup-config/` with a device file for your current machine.
+   This creates `~/.regroup-config/` with your current device.
 
-3. **Add other devices manually:**
-   For each machine in your old `regroup.json`, create a file in `~/.regroup-config/devices/`:
+3. **Add other devices:**
+   For each machine in your old `regroup.json`, create a file:
    
-   Example: For a machine named "ordi" with fingerprint "SHA256:abc..." and user "matthias":
    ```bash
    cat > ~/.regroup-config/devices/ordi.json << EOF
    {
@@ -86,7 +117,6 @@ The old `regroup.json` format is **no longer supported**. You must migrate:
    ```
 
 4. **Copy global settings:**
-   If you had custom settings (udp_port, wait_secs, batch_size, subnets), add them to `settings.json`:
    ```bash
    cat > ~/.regroup-config/settings.json << EOF
    {
@@ -98,64 +128,104 @@ The old `regroup.json` format is **no longer supported**. You must migrate:
    EOF
    ```
 
-5. **Commit changes:**
+5. **Commit and sync:**
    ```bash
    cd ~/.regroup-config
    git add .
    git commit -m "Migrated from old config"
+   git push --all 2>&1 | grep -v "one-way SSH is OK"  # Filter expected warnings
    ```
 
-6. **Sync to other devices:**
-   On other devices, either:
-   - Copy the directory: `cp -r ~/.regroup-config user@other-device:~/.regroup-config`
-   - Clone from a remote: `git clone your-repo-url ~/.regroup-config`
+## Usage Examples
 
-## Benefits
+### Simple two-device network
 
-1. **No merge conflicts**: Each device writes to its own file
-2. **Predictable location**: Always `~/.regroup-config/` - no confusion about where config is
-3. **Easy distribution**: Use git or any file copy method
-4. **Auto-discovery**: Devices self-register with minimal user input
-5. **Clean separation**: Global settings separate from device configs
+**Device A:**
+```bash
+./regroup
+# Creates config, initializes git
+```
 
-## Breaking Changes
+**Device B:**
+```bash
+./regroup
+# Creates config, adds A as remote, pushes to A
+```
 
-- Old `regroup.json` format is **not supported**
-- `-c` flag is **removed** - config location is fixed
-- Config directory is **always** `~/.regroup-config/`
+**Device A:**
+```bash
+./regroup -r
+# Pulls from B, adds B as remote, now both sync bidirectionally
+```
+
+### Manual sync when automatic fails
+
+```bash
+# On any device
+cd ~/.regroup-config
+git pull --all
+git push --all
+```
+
+### Adding a device
+
+Just create the device file and commit. Remotes are updated automatically on next run:
+
+```bash
+cat > ~/.regroup-config/devices/newdevice.json << EOF
+{
+  "name": "newdevice",
+  "fingerprint": "SHA256:..."
+}
+EOF
+git add .
+git commit -m "Add newdevice"
+./regroup  # Will add newdevice as remote and push to it
+```
 
 ## Technical Details
 
-### File Structure
+### Git Remote Management Function
 
-```
-~/.regroup-config/
-├── .git/                     # Git repository
-├── settings.json            # Global settings (optional)
-└── devices/
-    ├── <hostname1>.json     # Device 1 config
-    ├── <hostname2>.json     # Device 2 config
-    └── <hostname3>.json     # Device 3 config
-```
+The `refresh_git_remotes()` function:
+1. Gets list of existing remotes
+2. Removes remotes that don't correspond to any machine (except self)
+3. Adds remotes for all machines (except self)
+4. Updates existing remotes if URL changed
 
-### Device File Format
+### Sync Functions
 
-```json
-{
-  "name": "hostname",           # Required
-  "fingerprint": "SHA256:...",  # Required
-  "user": "username",           # Optional (default: current user)
-  "port": 2222                  # Optional (default: 22)
-}
-```
+- `git_pull_all()`: Runs `git pull --all --no-rebase` and collects errors
+- `git_push_all()`: Runs `git push --all --porcelain` and collects errors
+- `sync_with_remotes()`: Combines pull and push, returns all errors
 
-### Global Settings Format
+### Error Handling
 
-```json
-{
-  "udp_port": 4242,             # Optional (default: 4242)
-  "wait_secs": 10,             # Optional (default: 10)
-  "batch_size": 64,            # Optional (default: 64)
-  "subnets": ["192.168.43"]   # Optional (default: [])
-}
-```
+All git operations that might fail (due to one-way SSH) are:
+- Wrapped in error collection
+- Reported as warnings (not errors)
+- Continue execution even if some remotes fail
+
+This ensures the system works even with partial connectivity.
+
+## Why This Design?
+
+### Decentralized
+- No single point of failure
+- No need for a central server
+- Works with any network topology
+
+### Robust
+- Handles one-way SSH connections
+- Handles offline devices
+- Handles partial connectivity
+
+### Automatic
+- No manual git remote management
+- Remotes always match device list
+- Sync happens automatically on every run
+
+### Simple
+- Single config location
+- Standard git operations
+- No custom protocols or formats

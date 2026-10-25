@@ -4,6 +4,9 @@
 // has its own JSON file in the devices/ directory. Devices auto-fill their own
 // information if missing.
 //
+// Git remotes are automatically configured for all devices (except self) to enable
+// decentralized sync via git pull --all and git push --all.
+//
 // Every run announces this machine ("name ip") over UDP broadcast AND listens
 // for the other machines' announcements during the same window. Candidates are
 // resolved by fingerprint (ssh-keyscan | ssh-keygen -lf -), so random hotspot
@@ -16,7 +19,7 @@
 // Run:            ./regroup                (announce + listen, update ~/.ssh/config)
 //                 ./regroup test           (dry run: nothing is modified)
 //                 ./regroup -v             (verbose)
-//                 ./regroup -r             (refresh config from git repo)
+//                 ./regroup -r             (refresh config from git remotes)
 //                 ./regroup 192.168.43     (also scan that /24 once)
 //                 ./regroup selftest       (built-in checks)
 //                 ./regroup -h             (help)
@@ -125,61 +128,210 @@ fn git_init(repo_path: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// Pull updates from git repository
-fn git_pull(repo_path: &Path) -> io::Result<()> {
+/// Pull updates from all git remotes
+fn git_pull_all(repo_path: &Path) -> Vec<String> {
+    if !is_git_repo(repo_path) {
+        return Vec::new();
+    }
+    
+    let output = Command::new("git")
+        .current_dir(repo_path)
+        .arg("pull")
+        .arg("--all")
+        .arg("--no-rebase")
+        .output();
+    
+    match output {
+        Ok(o) if o.status.success() => Vec::new(),
+        Ok(o) => {
+            let stderr = String::from_utf8_lossy(&o.stderr);
+            if stderr.contains("fatal") || stderr.contains("error") {
+                vec![stderr.into_owned()]
+            } else {
+                Vec::new()
+            }
+        }
+        Err(e) => vec![e.to_string()],
+    }
+}
+
+/// Push to all git remotes
+fn git_push_all(repo_path: &Path) -> Vec<String> {
+    if !is_git_repo(repo_path) {
+        return Vec::new();
+    }
+    
+    let output = Command::new("git")
+        .current_dir(repo_path)
+        .arg("push")
+        .arg("--all")
+        .arg("--porcelain")
+        .output();
+    
+    match output {
+        Ok(o) if o.status.success() => Vec::new(),
+        Ok(o) => {
+            let stderr = String::from_utf8_lossy(&o.stderr);
+            if stderr.contains("fatal") || stderr.contains("error") {
+                vec![stderr.into_owned()]
+            } else {
+                Vec::new()
+            }
+        }
+        Err(e) => vec![e.to_string()],
+    }
+}
+
+/// Add a git remote for a machine
+fn git_add_remote(repo_path: &Path, remote_name: &str, remote_url: &str) -> io::Result<()> {
+    if !is_git_repo(repo_path) {
+        return Ok(());
+    }
+    
+    // Check if remote already exists
+    let check = Command::new("git")
+        .current_dir(repo_path)
+        .arg("remote")
+        .arg("get-url")
+        .arg(remote_name)
+        .output();
+    
+    match check {
+        Ok(o) if o.status.success() => {
+            let existing_url = String::from_utf8_lossy(&o.stdout).trim().to_string();
+            if existing_url != remote_url {
+                // Update existing remote
+                let status = Command::new("git")
+                    .current_dir(repo_path)
+                    .arg("remote")
+                    .arg("set-url")
+                    .arg(remote_name)
+                    .arg(remote_url)
+                    .status()?;
+                if !status.success() {
+                    return Err(io::Error::new(io::ErrorKind::Other, "failed to update remote"));
+                }
+            }
+            Ok(())
+        }
+        _ => {
+            // Add new remote
+            let status = Command::new("git")
+                .current_dir(repo_path)
+                .arg("remote")
+                .arg("add")
+                .arg(remote_name)
+                .arg(remote_url)
+                .status()?;
+            if !status.success() {
+                return Err(io::Error::new(io::ErrorKind::Other, "failed to add remote"));
+            }
+            Ok(())
+        }
+    }
+}
+
+/// Remove a git remote
+fn git_remove_remote(repo_path: &Path, remote_name: &str) -> io::Result<()> {
     if !is_git_repo(repo_path) {
         return Ok(());
     }
     
     let status = Command::new("git")
         .current_dir(repo_path)
-        .arg("pull")
+        .arg("remote")
+        .arg("remove")
+        .arg(remote_name)
         .status()?;
     
     if !status.success() {
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
-            format!("git pull failed with exit code: {}", status),
-        ));
+        return Err(io::Error::new(io::ErrorKind::Other, "failed to remove remote"));
     }
     
     Ok(())
 }
 
-/// Add and commit changes in git repository
-fn git_add_and_commit(repo_path: &Path, message: &str) -> io::Result<()> {
+/// Get the list of existing git remotes
+fn git_list_remotes(repo_path: &Path) -> Vec<String> {
     if !is_git_repo(repo_path) {
-        return Ok(());
+        return Vec::new();
     }
     
-    let status = Command::new("git")
+    let output = Command::new("git")
         .current_dir(repo_path)
-        .arg("add")
-        .arg(".")
-        .status()?;
+        .arg("remote")
+        .output();
     
-    if !status.success() {
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
-            "git add failed",
-        ));
+    match output {
+        Ok(o) if o.status.success() => {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// Refresh git remotes to match all machines except self
+fn refresh_git_remotes(repo_path: &Path, machines: &[Machine], local_hostname: &str) -> Vec<String> {
+    let mut errors = Vec::new();
+    
+    if !is_git_repo(repo_path) {
+        return errors;
     }
     
-    let status = Command::new("git")
-        .current_dir(repo_path)
-        .arg("commit")
-        .arg("-m")
-        .arg(message)
-        .status()?;
+    let existing_remotes = git_list_remotes(repo_path);
     
-    if !status.success() {
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
-            "git commit failed",
-        ));
+    // Remove remotes that don't correspond to any machine
+    for remote in &existing_remotes {
+        if remote == local_hostname {
+            // Never add self as a remote
+            if let Err(e) = git_remove_remote(repo_path, remote) {
+                errors.push(format!("failed to remove self remote {}: {}", remote, e));
+            }
+            continue;
+        }
+        
+        let has_machine = machines.iter().any(|m| m.name == *remote);
+        if !has_machine {
+            if let Err(e) = git_remove_remote(repo_path, remote) {
+                errors.push(format!("failed to remove stale remote {}: {}", remote, e));
+            }
+        }
     }
     
-    Ok(())
+    // Add remotes for all machines (except self)
+    for machine in machines {
+        if machine.name == local_hostname {
+            continue; // Skip self
+        }
+        
+        // Construct SSH URL for the machine's config repo
+        let remote_url = format!("{}@{}:~/.regroup-config", machine.user, machine.name);
+        
+        if let Err(e) = git_add_remote(repo_path, &machine.name, &remote_url) {
+            errors.push(format!("failed to add remote for {}: {}", machine.name, e));
+        }
+    }
+    
+    errors
+}
+
+/// Sync with all remotes (pull then push)
+fn sync_with_remotes(repo_path: &Path) -> Vec<String> {
+    let mut errors = Vec::new();
+    
+    // Pull from all remotes
+    let pull_errors = git_pull_all(repo_path);
+    errors.extend(pull_errors);
+    
+    // Push to all remotes
+    let push_errors = git_push_all(repo_path);
+    errors.extend(push_errors);
+    
+    errors
 }
 
 /// Get the fingerprint of the local machine
@@ -457,8 +609,9 @@ fn load_config(refresh: bool) -> Conf {
     
     // Refresh if requested
     if refresh && config_dir.exists() {
-        if let Err(e) = git_pull(&config_dir) {
-            warn(&format!("could not refresh config: {}", e));
+        let errors = sync_with_remotes(&config_dir);
+        for error in &errors {
+            warn(&format!("git sync: {}", error));
         }
     }
     
@@ -548,6 +701,42 @@ fn load_config(refresh: bool) -> Conf {
         subnets,
         machines,
     }
+}
+
+/// Git add and commit helper
+fn git_add_and_commit(repo_path: &Path, message: &str) -> io::Result<()> {
+    if !is_git_repo(repo_path) {
+        return Ok(());
+    }
+    
+    let status = Command::new("git")
+        .current_dir(repo_path)
+        .arg("add")
+        .arg(".")
+        .status()?;
+    
+    if !status.success() {
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            "git add failed",
+        ));
+    }
+    
+    let status = Command::new("git")
+        .current_dir(repo_path)
+        .arg("commit")
+        .arg("-m")
+        .arg(message)
+        .status()?;
+    
+    if !status.success() {
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            "git commit failed",
+        ));
+    }
+    
+    Ok(())
 }
 
 // ============================================================
@@ -928,14 +1117,14 @@ fn usage() {
 listening for the other machines' announcements during the same window.
 
 Configuration is stored in ~/.regroup-config/ git repository where each
-device has its own JSON file in the devices/ directory. Devices auto-fill
-their information if missing.
+device has its own JSON file in the devices/ directory. Git remotes are
+automatically configured for all other devices to enable decentralized sync.
 
 Usage:
   ./regroup                announce + listen, then update ~/.ssh/config
   ./regroup test           dry run: nothing is modified
   ./regroup -v             verbose
-  ./regroup -r             refresh config from git repo before running
+  ./regroup -r             refresh config from git remotes before running
   ./regroup 192.168.43     also scan that /24 once (if broadcast is filtered)
   ./regroup selftest       built-in checks (tools, config, config rewrite)
   ./regroup -h             this help
@@ -945,9 +1134,10 @@ Config repository structure (~/.regroup-config/):
   devices/
     <hostname>.json       (each device's config: name, fingerprint, user, port)
 
-On first run, the ~/.regroup-config/ directory is created with a devices/
-directory. Each device auto-creates its own config file with detected info.
-Sync the repository across devices on a controlled network using git.
+Git remotes are automatically configured to all other devices (except self)
+using SSH URLs like: user@hostname:~/.regroup-config
+Sync happens via: git pull --all && git push --all
+One-way SSH connections are handled gracefully.
 
 Exit codes:
   0  all machines found
@@ -1042,6 +1232,18 @@ fn main() {
             local_name,
             local_ip.as_deref().unwrap_or("unknown IP")
         );
+    }
+
+    // --- Update git remotes to match all machines ---
+    let config_dir = PathBuf::from(&home).join(CONFIG_DIR);
+    if !dry_run && config_dir.exists() {
+        let errors = refresh_git_remotes(&config_dir, &conf.machines, &local_name);
+        for error in &errors {
+            warn(&format!("git remote refresh: {}", error));
+        }
+        if !errors.is_empty() && verbose {
+            println!("  . {} git remote errors (one-way SSH is OK)", errors.len());
+        }
     }
 
     // --- announce (background thread) + listen, same window ---
@@ -1233,7 +1435,18 @@ fn main() {
                 } else {
                     match update_block(&ssh_config, &m.name, &ip, &m.user, m.port, m.port_explicit)
                     {
-                        Ok(()) => println!("  + {} -> {}  (~/.ssh/config updated)", m.name, ip),
+                        Ok(()) => {
+                            println!("  + {} -> {}  (~/.ssh/config updated)", m.name, ip);
+                            
+                            // After updating SSH config, push changes to git remotes
+                            // This ensures other devices can pull our updated SSH config
+                            let push_errors = git_push_all(&config_dir);
+                            for error in &push_errors {
+                                if verbose {
+                                    println!("    [git push error: {}]", error);
+                                }
+                            }
+                        },
                         Err(e) => {
                             warn(&format!("could not write ~/.ssh/config: {}", e));
                             missing += 1;
