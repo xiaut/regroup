@@ -1,11 +1,12 @@
 // regroup — find machines by their SSH host key fingerprint and update ~/.ssh/config.
 //
 // Configuration is stored in ~/.regroup-config/ git repository where each device
-// has its own JSON file in the devices/ directory. Devices auto-fill their own
-// information if missing.
+// has its own JSON file in the devices/ directory. Git remotes are automatically
+// configured for all other devices to enable decentralized sync.
 //
-// Git remotes are automatically configured for all devices (except self) to enable
-// decentralized sync via git pull --all and git push --all.
+// Discovery and sync run in a loop until no new devices are found, handling IP
+// address changes automatically. Each device owns its own config file and can only
+// overwrite it. Conflicts on self-config are resolved by asking the user.
 //
 // Every run announces this machine ("name ip") over UDP broadcast AND listens
 // for the other machines' announcements during the same window. Candidates are
@@ -16,16 +17,16 @@
 // Build (Termux):  pkg install rust openssh && cargo build --release
 // Build (Ubuntu): sudo apt install cargo && cargo build --release
 //
-// Run:            ./regroup                (announce + listen, update ~/.ssh/config)
+// Run:            ./regroup                (announce + listen + sync, update ~/.ssh/config)
 //                 ./regroup test           (dry run: nothing is modified)
 //                 ./regroup -v             (verbose)
-//                 ./regroup -r             (refresh config from git remotes)
+//                 ./regroup -r             (refresh config from git remotes, then sync)
 //                 ./regroup 192.168.43     (also scan that /24 once)
 //                 ./regroup selftest       (built-in checks)
-//                 ./regroup -h             (help)
+//                 ./regroup -h             (this help)
 //
 // Exit codes: 0 = all machines found; 1 = at least one missing;
-//             2 = configuration or environment error.
+//             2 = configuration or environment error; 3 = user declined conflict resolution.
 
 use std::env;
 use std::fs;
@@ -67,6 +68,7 @@ struct Conf {
 const CONFIG_DIR: &str = ".regroup-config";
 const DEVICES_DIR: &str = "devices";
 const GLOBAL_CONFIG_FILE: &str = "settings.json";
+const MAX_SYNC_ITERATIONS: usize = 10;
 
 // ============================================================
 // Error handling
@@ -79,6 +81,40 @@ fn die(msg: &str) -> ! {
 
 fn warn(msg: &str) {
     eprintln!("WARNING: {}", msg);
+}
+
+// ============================================================
+// User interaction
+// ============================================================
+
+/// Ask user to resolve a conflict
+/// Returns: true = keep local, false = use remote, None = abort
+fn ask_conflict_resolution(device_name: &str, local_content: &str, remote_content: &str) -> Option<bool> {
+    use std::io::stdin;
+    
+    println!("\nCONFLICT: Device config for '{}' differs from remote", device_name);
+    println!("Local version:");
+    println!("{}", local_content);
+    println!("\nRemote version:");
+    println!("{}", remote_content);
+    println!("\nOptions:");
+    println!("  1. Keep local version");
+    println!("  2. Use remote version");
+    println!("  3. Abort");
+    print!("\nChoice [1/2/3]: ");
+    io::stdout().flush().ok();
+    
+    let mut input = String::new();
+    if stdin().read_line(&mut input).is_ok() {
+        match input.trim() {
+            "1" => Some(true),
+            "2" => Some(false),
+            "3" => None,
+            _ => Some(true), // Default to keep local
+        }
+    } else {
+        Some(true)
+    }
 }
 
 // ============================================================
@@ -284,7 +320,7 @@ fn refresh_git_remotes(repo_path: &Path, machines: &[Machine], local_hostname: &
     
     let existing_remotes = git_list_remotes(repo_path);
     
-    // Remove remotes that don't correspond to any machine
+    // Remove remotes that don't correspond to any machine or are self
     for remote in &existing_remotes {
         if remote == local_hostname {
             // Never add self as a remote
@@ -308,7 +344,7 @@ fn refresh_git_remotes(repo_path: &Path, machines: &[Machine], local_hostname: &
             continue; // Skip self
         }
         
-        // Construct SSH URL for the machine's config repo
+        // Construct SSH URL for the machine's config repo using hostname (not IP)
         let remote_url = format!("{}@{}:~/.regroup-config", machine.user, machine.name);
         
         if let Err(e) = git_add_remote(repo_path, &machine.name, &remote_url) {
@@ -485,6 +521,11 @@ fn save_device_file(path: &Path, machine: &Machine) -> io::Result<()> {
     Ok(())
 }
 
+/// Read device file content as string
+fn read_device_file_content(path: &Path) -> String {
+    fs::read_to_string(path).unwrap_or_default()
+}
+
 /// Auto-create device configuration with self-detected information
 fn create_device_config(config_dir: &Path) -> Result<Machine, String> {
     let hostname = host_name();
@@ -599,21 +640,13 @@ fn save_default_global_settings(config_dir: &Path) -> io::Result<()> {
 // Configuration loading
 // ============================================================
 
-fn load_config(refresh: bool) -> Conf {
+fn load_config() -> Conf {
     // Config directory is always ~/.regroup-config
     let home = match env::var("HOME") {
         Ok(h) => h,
         Err(_) => die("HOME variable not set"),
     };
     let config_dir = PathBuf::from(&home).join(CONFIG_DIR);
-    
-    // Refresh if requested
-    if refresh && config_dir.exists() {
-        let errors = sync_with_remotes(&config_dir);
-        for error in &errors {
-            warn(&format!("git sync: {}", error));
-        }
-    }
     
     // Initialize config directory if it doesn't exist
     if !config_dir.exists() {
@@ -1031,6 +1064,362 @@ fn update_block(
 }
 
 // ============================================================
+// Discovery and Sync Loop
+// ============================================================
+
+/// Run discovery and sync in a loop until no new devices are found
+fn discovery_sync_loop(
+    conf: &Conf,
+    ssh_config: &Path,
+    local_name: &str,
+    local_ip: &Option<String>,
+    dry_run: bool,
+    verbose: bool,
+    initial_refresh: bool,
+    net_arg: &Option<String>,
+) -> (usize, usize) {
+    let home = match env::var("HOME") {
+        Ok(h) => h,
+        Err(_) => die("HOME variable not set"),
+    };
+    let config_dir = PathBuf::from(&home).join(CONFIG_DIR);
+    
+    let mut found = 0;
+    let mut missing = 0;
+    let mut previous_device_count = 0;
+    let mut iteration = 0;
+    let mut new_devices_found = true;
+    
+    while new_devices_found && iteration < MAX_SYNC_ITERATIONS {
+        iteration += 1;
+        new_devices_found = false;
+        
+        // Update git remotes before discovery
+        if !dry_run {
+            let errors = refresh_git_remotes(&config_dir, &conf.machines, local_name);
+            for error in &errors {
+                warn(&format!("git remote refresh: {}", error));
+            }
+            
+            // Sync with remotes before discovery
+            // On first iteration, only sync if initial_refresh flag is set
+            if iteration > 1 || initial_refresh {
+                let sync_errors = sync_with_remotes(&config_dir);
+                for error in &sync_errors {
+                    if verbose {
+                        println!("  [sync] {}", error);
+                    }
+                }
+            }
+        }
+        
+        // --- announce (background thread) + listen, same window ---
+        if verbose {
+            println!("== Iteration {}: Announcing + listening for beacons ({} s, UDP port {}) ==",
+                iteration, conf.wait_secs, conf.udp_port);
+        } else if iteration == 1 {
+            println!(
+                "== Announcing + listening for beacons ({} s, UDP port {}) ==",
+                conf.wait_secs, conf.udp_port
+            );
+        }
+        
+        let announcer = match local_ip.clone() {
+            Some(ip) => {
+                let port = conf.udp_port;
+                let secs = conf.wait_secs;
+                let name = local_name.to_string();
+                Some(thread::spawn(move || {
+                    announce_beacon(port, secs, &name, &ip)
+                }))
+            }
+            None => {
+                if iteration == 1 {
+                    warn("local IP unknown — announcing disabled (listening continues)");
+                }
+                None
+            }
+        };
+        
+        let beacons = listen_beacons(conf.udp_port, conf.wait_secs);
+        if let Some(h) = announcer {
+            let _ = h.join();
+        }
+        
+        if verbose {
+            println!("  . {} beacon(s) received", beacons.len());
+            for (n, ip) in &beacons {
+                println!(
+                    "  . beacon: {} ({})",
+                    if n.is_empty() { "?" } else { n.as_str() },
+                    ip
+                );
+            }
+        }
+        
+        // --- candidates: beacons x ports ---
+        let mut ports: Vec<u16> = conf.machines.iter().map(|m| m.port).collect();
+        ports.sort_unstable();
+        ports.dedup();
+
+        let mut candidates: Vec<(String, u16)> = Vec::new();
+        for (_, ip) in &beacons {
+            for p in &ports {
+                candidates.push((ip.clone(), *p));
+            }
+        }
+
+        // --- fallback (or requested) subnet scan ---
+        let mut nets: Vec<String> = Vec::new();
+        match net_arg {
+            Some(a) => match net_valid(&net_prefix(a)) {
+                Some(n) => nets.push(n),
+                None => die(&format!(
+                    "argument \"{}\" is not a valid /24 prefix (e.g. 192.168.43)",
+                    a
+                )),
+            },
+            None => nets.extend(conf.subnets.iter().cloned()),
+        }
+        let force_scan = net_arg.is_some();
+        if (candidates.is_empty() || force_scan) && !nets.is_empty() {
+            if iteration == 1 {
+                println!(
+                    "== Subnet scan ({}) ==",
+                    if force_scan { "requested" } else { "fallback" }
+                );
+            }
+            for net in &nets {
+                if verbose {
+                    println!("  scanning {}.0/24 (port {}) ...", net, ports[0]);
+                }
+                for p in &ports {
+                    candidates.extend(scan_subnet(net, *p, conf.batch_size));
+                }
+            }
+        }
+        candidates.sort();
+        candidates.dedup();
+        if verbose {
+            println!("  . {} candidate(s) in total", candidates.len());
+            for (ip, p) in &candidates {
+                println!("  . candidate {}:{}", ip, p);
+            }
+        }
+        
+        // --- fingerprints of the candidates ---
+        if iteration == 1 {
+            println!("== Fingerprinting candidates ==");
+        }
+        let md5_needed = conf
+            .machines
+            .iter()
+            .any(|m| m.fingerprint.starts_with("MD5:"));
+        let mut seen: Vec<(String, u16, String)> = Vec::new();
+        for (ip, port) in &candidates {
+            let fps = fingerprints(ip, *port, false);
+            if fps.is_empty() {
+                warn(&format!(
+                    "port open on {}:{} but no SSH key received (not an SSH server?)",
+                    ip, port
+                ));
+                continue;
+            }
+            for f in fps {
+                seen.push((ip.clone(), *port, f));
+            }
+            if md5_needed {
+                for f in fingerprints(ip, *port, true) {
+                    seen.push((ip.clone(), *port, f));
+                }
+            }
+        }
+        if verbose {
+            println!("  . {} fingerprint(s) collected", seen.len());
+            for (ip, p, f) in &seen {
+                println!("  . fingerprint {}:{} {}", ip, p, f);
+            }
+        }
+        if candidates.is_empty() && iteration == 1 {
+            warn(
+                "no beacons received and no open ports found — run regroup on the other machine during the window, or pass a subnet: ./regroup 192.168.43",
+            );
+        } else if seen.is_empty() && iteration == 1 {
+            warn("open ports found but no SSH server responded");
+        }
+
+        // --- fingerprints of this machine's own IP, for local detection ---
+        let mut local_fps: Vec<(u16, String)> = Vec::new();
+        if let Some(ip) = local_ip {
+            for p in &ports {
+                for f in fingerprints(ip, *p, false) {
+                    local_fps.push((*p, f));
+                }
+                if md5_needed {
+                    for f in fingerprints(ip, *p, true) {
+                        local_fps.push((*p, f));
+                    }
+                }
+            }
+        }
+
+        // --- machines ---
+        if iteration == 1 {
+            println!("== Machines ==");
+        }
+        let mut iteration_found = 0;
+        let mut iteration_missing = 0;
+        
+        for m in &conf.machines {
+            // (a) pre-check: this machine offers the configured key itself
+            if local_fps
+                .iter()
+                .any(|(p, f)| *p == m.port && *f == m.fingerprint)
+            {
+                if iteration == 1 {
+                    println!(
+                        "  o {}: this is the local machine (this host), config unchanged",
+                        m.name
+                    );
+                }
+                iteration_found += 1;
+                continue;
+            }
+            // resolution by fingerprint among the candidates
+            let mut matched: Option<String> = None;
+            for (ip, p, f) in &seen {
+                if *p == m.port && *f == m.fingerprint {
+                    matched = Some(ip.clone());
+                    break;
+                }
+            }
+            match matched {
+                None => {
+                    let servers = seen.iter().filter(|(_, p, _)| *p == m.port).count();
+                    if servers > 0 && iteration == 1 {
+                        println!(
+                            "  x {}: {} SSH server(s) seen on port {}, none with a matching key",
+                            m.name, servers, m.port
+                        );
+                    } else if iteration == 1 {
+                        println!(
+                            "  x {}: not found (no SSH server on port {})",
+                            m.name, m.port
+                        );
+                    }
+                    iteration_missing += 1;
+                }
+                Some(ip) => {
+                    // (b) the resolved machine is this machine
+                    if local_ip.as_deref() == Some(ip.as_str()) {
+                        if iteration == 1 {
+                            println!(
+                                "  o {}: this is the local machine (this host), config unchanged",
+                                m.name
+                            );
+                        }
+                        iteration_found += 1;
+                    } else if dry_run {
+                        if iteration == 1 {
+                            println!("  ~ {} -> {} (test mode, config not modified)", m.name, ip);
+                        }
+                        iteration_found += 1;
+                    } else {
+                        match update_block(&ssh_config, &m.name, &ip, &m.user, m.port, m.port_explicit)
+                        {
+                            Ok(()) => {
+                                if iteration == 1 {
+                                    println!("  + {} -> {}  (~/.ssh/config updated)", m.name, ip);
+                                }
+                                
+                                // After updating SSH config, push changes to git remotes
+                                // This ensures other devices can pull our updated SSH config
+                                let push_errors = git_push_all(&config_dir);
+                                for error in &push_errors {
+                                    if verbose {
+                                        println!("    [git push error: {}]", error);
+                                    }
+                                }
+                                
+                                // Check if this is our own device and if config changed
+                                if m.name == local_name {
+                                    // Check for config conflicts
+                                    let device_path = config_dir.join(DEVICES_DIR).join(format!("{}.json", local_name));
+                                    if device_path.exists() {
+                                        let current_content = read_device_file_content(&device_path);
+                                        let local_machine_content = serde_json::to_string_pretty(&serde_json::json!({
+                                            "name": m.name,
+                                            "fingerprint": m.fingerprint,
+                                            "user": m.user,
+                                            "port": if m.port_explicit { Some(m.port) } else { None }
+                                        })).unwrap();
+                                        
+                                        if current_content.trim() != local_machine_content.trim() {
+                                            // Config differs - ask user
+                                            if let Some(keep_local) = ask_conflict_resolution(&m.name, &current_content, &local_machine_content) {
+                                                if keep_local {
+                                                    // Keep current, revert any changes
+                                                    // Actually, we already wrote the SSH config, so just note it
+                                                } else {
+                                                    // Use remote version - overwrite local device file
+                                                    if let Err(e) = fs::write(&device_path, &local_machine_content) {
+                                                        warn(&format!("failed to update device config: {}", e));
+                                                    }
+                                                }
+                                            } else {
+                                                // User aborted
+                                                std::process::exit(3);
+                                            }
+                                        }
+                                    }
+                                }
+                                
+                                iteration_found += 1;
+                                
+                                // Mark that we found a new device this iteration
+                                if !conf.machines.iter().any(|x| x.name == m.name) {
+                                    new_devices_found = true;
+                                }
+                            }
+                            Err(e) => {
+                                warn(&format!("could not write ~/.ssh/config: {}", e));
+                                iteration_missing += 1;
+                                continue;
+                            }
+                        }
+                        // purge any stale known_hosts entry for this IP
+                        let _ = Command::new("ssh-keygen").arg("-R").arg(&ip).output();
+                        iteration_found += 1;
+                    }
+                }
+            }
+        }
+        
+        found = iteration_found;
+        missing = iteration_missing;
+        
+        // Check if we found new devices in this iteration
+        let current_device_count = {
+            let devices_dir = config_dir.join(DEVICES_DIR);
+            if devices_dir.exists() {
+                fs::read_dir(&devices_dir).map_or(0, |entries| {
+                    entries.filter_map(|e| e.ok()).filter(|e| e.path().is_file()).count()
+                })
+            } else {
+                0
+            }
+        };
+        
+        if current_device_count > previous_device_count {
+            previous_device_count = current_device_count;
+            new_devices_found = true;
+        }
+    }
+    
+    (found, missing)
+}
+
+// ============================================================
 // Selftest
 // ============================================================
 
@@ -1118,14 +1507,18 @@ listening for the other machines' announcements during the same window.
 
 Configuration is stored in ~/.regroup-config/ git repository where each
 device has its own JSON file in the devices/ directory. Git remotes are
-automatically configured for all other devices to enable decentralized sync.
+automatically configured for all other devices (using hostnames, not IPs).
+
+Discovery and sync run in a loop until no new devices are found. Each device
+owns its own config file and can only overwrite it. If the local device config
+differs from the remote, the user is asked to resolve the conflict.
 
 Usage:
-  ./regroup                announce + listen, then update ~/.ssh/config
+  ./regroup                announce + listen + sync loop, update ~/.ssh/config
   ./regroup test           dry run: nothing is modified
   ./regroup -v             verbose
-  ./regroup -r             refresh config from git remotes before running
-  ./regroup 192.168.43     also scan that /24 once (if broadcast is filtered)
+  ./regroup -r             refresh: pull from git remotes before sync loop
+  ./regroup 192.168.43     also scan that /24 once
   ./regroup selftest       built-in checks (tools, config, config rewrite)
   ./regroup -h             this help
 
@@ -1134,15 +1527,21 @@ Config repository structure (~/.regroup-config/):
   devices/
     <hostname>.json       (each device's config: name, fingerprint, user, port)
 
-Git remotes are automatically configured to all other devices (except self)
-using SSH URLs like: user@hostname:~/.regroup-config
-Sync happens via: git pull --all && git push --all
-One-way SSH connections are handled gracefully.
+Git remotes (automatically managed using hostnames):
+  user@hostname:~/.regroup-config  (for each other device)
+
+Sync behavior:
+  - Loop until no new devices are discovered
+  - git pull --all on each iteration (except first)
+  - git push --all after updating SSH config
+  - One-way SSH connections handled gracefully
+  - User prompted to resolve own config conflicts
 
 Exit codes:
   0  all machines found
   1  at least one machine missing
-  2  configuration or environment error"
+  2  configuration or environment error
+  3  user declined conflict resolution"
     );
 }
 
@@ -1196,7 +1595,7 @@ fn main() {
     }
 
     // --- configuration ---
-    let conf = load_config(refresh);
+    let conf = load_config();
 
     // --- ~/.ssh preparation (only when we may write) ---
     let home = match env::var("HOME") {
@@ -1234,232 +1633,8 @@ fn main() {
         );
     }
 
-    // --- Update git remotes to match all machines ---
-    let config_dir = PathBuf::from(&home).join(CONFIG_DIR);
-    if !dry_run && config_dir.exists() {
-        let errors = refresh_git_remotes(&config_dir, &conf.machines, &local_name);
-        for error in &errors {
-            warn(&format!("git remote refresh: {}", error));
-        }
-        if !errors.is_empty() && verbose {
-            println!("  . {} git remote errors (one-way SSH is OK)", errors.len());
-        }
-    }
-
-    // --- announce (background thread) + listen, same window ---
-    println!(
-        "== Announcing + listening for beacons ({} s, UDP port {}) ==",
-        conf.wait_secs, conf.udp_port
-    );
-    let announcer = match local_ip.clone() {
-        Some(ip) => {
-            let port = conf.udp_port;
-            let secs = conf.wait_secs;
-            let name = local_name.clone();
-            Some(thread::spawn(move || {
-                announce_beacon(port, secs, &name, &ip)
-            }))
-        }
-        None => {
-            warn("local IP unknown — announcing disabled (listening continues)");
-            None
-        }
-    };
-    let beacons = listen_beacons(conf.udp_port, conf.wait_secs);
-    if let Some(h) = announcer {
-        let _ = h.join();
-    }
-    if verbose {
-        println!("  . {} beacon(s) received", beacons.len());
-        for (n, ip) in &beacons {
-            println!(
-                "  . beacon: {} ({})",
-                if n.is_empty() { "?" } else { n.as_str() },
-                ip
-            );
-        }
-    }
-
-    // --- candidates: beacons x ports ---
-    let mut ports: Vec<u16> = conf.machines.iter().map(|m| m.port).collect();
-    ports.sort_unstable();
-    ports.dedup();
-
-    let mut candidates: Vec<(String, u16)> = Vec::new();
-    for (_, ip) in &beacons {
-        for p in &ports {
-            candidates.push((ip.clone(), *p));
-        }
-    }
-
-    // --- fallback (or requested) subnet scan ---
-    let mut nets: Vec<String> = Vec::new();
-    match &net_arg {
-        Some(a) => match net_valid(&net_prefix(a)) {
-            Some(n) => nets.push(n),
-            None => die(&format!(
-                "argument \"{}\" is not a valid /24 prefix (e.g. 192.168.43)",
-                a
-            )),
-        },
-        None => nets.extend(conf.subnets.iter().cloned()),
-    }
-    let force_scan = net_arg.is_some();
-    if (candidates.is_empty() || force_scan) && !nets.is_empty() {
-        println!(
-            "== Subnet scan ({}) ==",
-            if force_scan { "requested" } else { "fallback" }
-        );
-        for net in &nets {
-            for p in &ports {
-                println!("  scanning {}.0/24 (port {}) ...", net, p);
-                candidates.extend(scan_subnet(net, *p, conf.batch_size));
-            }
-        }
-    }
-    candidates.sort();
-    candidates.dedup();
-    if verbose {
-        println!("  . {} candidate(s) in total", candidates.len());
-        for (ip, p) in &candidates {
-            println!("  . candidate {}:{}", ip, p);
-        }
-    }
-
-    // --- fingerprints of the candidates ---
-    println!("== Fingerprinting candidates ==");
-    let md5_needed = conf
-        .machines
-        .iter()
-        .any(|m| m.fingerprint.starts_with("MD5:"));
-    let mut seen: Vec<(String, u16, String)> = Vec::new();
-    for (ip, port) in &candidates {
-        let fps = fingerprints(ip, *port, false);
-        if fps.is_empty() {
-            warn(&format!(
-                "port open on {}:{} but no SSH key received (not an SSH server?)",
-                ip, port
-            ));
-            continue;
-        }
-        for f in fps {
-            seen.push((ip.clone(), *port, f));
-        }
-        if md5_needed {
-            for f in fingerprints(ip, *port, true) {
-                seen.push((ip.clone(), *port, f));
-            }
-        }
-    }
-    if verbose {
-        println!("  . {} fingerprint(s) collected", seen.len());
-        for (ip, p, f) in &seen {
-            println!("  . fingerprint {}:{} {}", ip, p, f);
-        }
-    }
-    if candidates.is_empty() {
-        warn(
-            "no beacons received and no open ports found — run regroup on the other machine during the window, or pass a subnet: ./regroup 192.168.43",
-        );
-    } else if seen.is_empty() {
-        warn("open ports found but no SSH server responded");
-    }
-
-    // --- fingerprints of this machine's own IP, for local detection ---
-    let mut local_fps: Vec<(u16, String)> = Vec::new();
-    if let Some(ip) = &local_ip {
-        for p in &ports {
-            for f in fingerprints(ip, *p, false) {
-                local_fps.push((*p, f));
-            }
-            if md5_needed {
-                for f in fingerprints(ip, *p, true) {
-                    local_fps.push((*p, f));
-                }
-            }
-        }
-    }
-
-    // --- machines ---
-    println!("== Machines ==");
-    let mut found = 0;
-    let mut missing = 0;
-    for m in &conf.machines {
-        // (a) pre-check: this machine offers the configured key itself
-        if local_fps
-            .iter()
-            .any(|(p, f)| *p == m.port && *f == m.fingerprint)
-        {
-            println!(
-                "  o {}: this is the local machine (this host), config unchanged",
-                m.name
-            );
-            found += 1;
-            continue;
-        }
-        // resolution by fingerprint among the candidates
-        let mut matched: Option<String> = None;
-        for (ip, p, f) in &seen {
-            if *p == m.port && *f == m.fingerprint {
-                matched = Some(ip.clone());
-                break;
-            }
-        }
-        match matched {
-            None => {
-                let servers = seen.iter().filter(|(_, p, _)| *p == m.port).count();
-                if servers > 0 {
-                    println!(
-                        "  x {}: {} SSH server(s) seen on port {}, none with a matching key",
-                        m.name, servers, m.port
-                    );
-                } else {
-                    println!(
-                        "  x {}: not found (no SSH server on port {})",
-                        m.name, m.port
-                    );
-                }
-                missing += 1;
-            }
-            Some(ip) => {
-                // (b) the resolved machine is this machine
-                if local_ip.as_deref() == Some(ip.as_str()) {
-                    println!(
-                        "  o {}: this is the local machine (this host), config unchanged",
-                        m.name
-                    );
-                    found += 1;
-                } else if dry_run {
-                    println!("  ~ {} -> {} (test mode, config not modified)", m.name, ip);
-                    found += 1;
-                } else {
-                    match update_block(&ssh_config, &m.name, &ip, &m.user, m.port, m.port_explicit)
-                    {
-                        Ok(()) => {
-                            println!("  + {} -> {}  (~/.ssh/config updated)", m.name, ip);
-                            
-                            // After updating SSH config, push changes to git remotes
-                            // This ensures other devices can pull our updated SSH config
-                            let push_errors = git_push_all(&config_dir);
-                            for error in &push_errors {
-                                if verbose {
-                                    println!("    [git push error: {}]", error);
-                                }
-                            }
-                        },
-                        Err(e) => {
-                            warn(&format!("could not write ~/.ssh/config: {}", e));
-                            missing += 1;
-                            continue;
-                        }
-                    }
-                    // purge any stale known_hosts entry for this IP
-                    let _ = Command::new("ssh-keygen").arg("-R").arg(&ip).output();
-                    found += 1;
-                }
-            }
-        }
-    }
+    // --- Discovery and sync loop ---
+    let (found, missing) = discovery_sync_loop(&conf, &ssh_config, &local_name, &local_ip, dry_run, verbose, refresh, &net_arg);
 
     println!("== {} found, {} missing ==", found, missing);
     std::process::exit(if missing == 0 { 0 } else { 1 });
