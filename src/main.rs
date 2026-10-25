@@ -190,7 +190,7 @@ fn git_pull_all(repo_path: &Path) -> Vec<String> {
         .current_dir(repo_path)
         .arg("pull")
         .arg("--all")
-        .arg("--no-rebase")
+        .arg("--rebase")
         .output();
     
     match output {
