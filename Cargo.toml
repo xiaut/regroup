@@ -1,8 +1,10 @@
 [package]
 name = "regroup"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 license = "MIT"
+description = "Find machines by SSH host key fingerprint and update ~/.ssh/config"
+homepage = "https://github.com/yourusername/regroup"
 
 [dependencies]
 serde_json = "1.0.154"
