@@ -446,7 +446,7 @@ fn refresh_git_remotes(repo_path: &Path, machines: &[Machine], local_hostname: &
 
 /// Sync with all remotes (pull then push to all remotes)
 /// Each device A can both pull from and push to all other devices
-fn sync_with_remotes(repo_path: &Path) -> Vec<String> {
+fn sync_with_remotes(repo_path: &Path, has_local_changes: bool) -> Vec<String> {
     let mut errors = Vec::new();
     
     // Pull from all remotes - device A pulls from all other devices
@@ -454,8 +454,11 @@ fn sync_with_remotes(repo_path: &Path) -> Vec<String> {
     errors.extend(pull_errors);
     
     // Push to all remotes - device A pushes to all other devices
-    let push_errors = git_push_all(repo_path);
-    errors.extend(push_errors);
+    // Only push if we have local changes to share
+    if has_local_changes {
+        let push_errors = git_push_all(repo_path);
+        errors.extend(push_errors);
+    }
     
     errors
 }
@@ -1246,6 +1249,7 @@ fn discovery_sync_loop(
     let mut missing = 0;
     let mut iteration = 0;
     let mut new_devices_found = true;
+    let mut has_local_changes = false;
     
     // Check if this device is alone in the config (only itself configured)
     let is_alone = conf.machines.len() == 1 && conf.machines[0].name == local_name;
@@ -1272,7 +1276,7 @@ fn discovery_sync_loop(
             // Sync with remotes before discovery
             // On first iteration, only sync if initial_refresh flag is set
             if iteration > 1 || initial_refresh {
-                let sync_errors = sync_with_remotes(&config_dir);
+                let sync_errors = sync_with_remotes(&config_dir, has_local_changes);
                 for error in &sync_errors {
                     // Always warn about sync errors, even in non-verbose mode
                     // The error message already includes SSH auth setup hint
@@ -1308,12 +1312,16 @@ fn discovery_sync_loop(
                                         // Commit the reverted device file separately
                                         let message = format!("Revert device: {} to local version", local_name);
                                         let _ = git_add_and_commit_file(&config_dir, &local_device_path, &message);
+                                        // Mark that we have local changes to push
+                                        has_local_changes = true;
                                     }
                                 } else {
                                     // User wants remote version - it's already in place from the pull
                                     // Commit it separately
                                     let message = format!("Update device: {} from remote", local_name);
                                     let _ = git_add_and_commit_file(&config_dir, &local_device_path, &message);
+                                    // Mark that we have local changes to push
+                                    has_local_changes = true;
                                 }
                             } else {
                                 // User aborted
@@ -1591,6 +1599,7 @@ fn discovery_sync_loop(
         for new_file in &current_device_files {
             if !previous_device_files.contains(new_file) {
                 new_devices_found = true;
+                has_local_changes = true;
                 break;
             }
         }
