@@ -1549,7 +1549,7 @@ fn discovery_sync_loop(
                         m.name
                     );
                 }
-                iteration_found += 1;
+                // Don't count local machine in the found total
                 continue;
             }
             // resolution by fingerprint among the candidates
@@ -1585,7 +1585,7 @@ fn discovery_sync_loop(
                                 m.name
                             );
                         }
-                        iteration_found += 1;
+                        // Don't count local machine in the found total
                     } else if dry_run {
                         if iteration == 1 {
                             println!("  ~ {} -> {} (test mode, config not modified)", m.name, ip);
@@ -1606,7 +1606,6 @@ fn discovery_sync_loop(
                                 continue;
                             }
                         }
-                        iteration_found += 1;
                     }
                 }
             }
