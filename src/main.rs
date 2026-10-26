@@ -194,6 +194,9 @@ fn git_pull_all(repo_path: &Path) -> Vec<String> {
         return Vec::new();
     }
     
+    // Inform user that we're about to pull from remotes (may require password)
+    eprintln!("Syncing: Pulling updates from {} remote(s)...", remotes.len());
+    
     let output = Command::new("git")
         .current_dir(repo_path)
         .arg("pull")
@@ -250,6 +253,9 @@ fn git_push_all(repo_path: &Path) -> Vec<String> {
         // No remotes configured - this is expected on first run
         return Vec::new();
     }
+    
+    // Inform user that we're about to push to remotes (may require password)
+    eprintln!("Syncing: Pushing to {} remote(s)...", remotes.len());
     
     let output = Command::new("git")
         .current_dir(repo_path)
