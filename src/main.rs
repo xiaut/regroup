@@ -1247,6 +1247,9 @@ fn discovery_sync_loop(
     let mut iteration = 0;
     let mut new_devices_found = true;
     
+    // Check if this device is alone in the config (only itself configured)
+    let is_alone = conf.machines.len() == 1 && conf.machines[0].name == local_name;
+    
     // Save the current state of our device file before any operations
     let local_device_path = config_dir.join(DEVICES_DIR).join(format!("{}.json", local_name));
     let our_initial_config = if local_device_path.exists() {
@@ -1255,7 +1258,7 @@ fn discovery_sync_loop(
         String::new()
     };
     
-    while (new_devices_found || iteration < 2) && iteration < MAX_SYNC_ITERATIONS {
+    while (new_devices_found || (is_alone && iteration < 2)) && iteration < MAX_SYNC_ITERATIONS {
         iteration += 1;
         new_devices_found = false;
         
