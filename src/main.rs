@@ -1538,8 +1538,6 @@ fn discovery_sync_loop(
                                 continue;
                             }
                         }
-                        // purge any stale known_hosts entry for this IP
-                        let _ = Command::new("ssh-keygen").arg("-R").arg(&ip).output();
                         iteration_found += 1;
                     }
                 }
