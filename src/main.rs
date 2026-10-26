@@ -1313,73 +1313,6 @@ fn discovery_sync_loop(
         iteration += 1;
         new_devices_found = false;
         
-        // Update git remotes before discovery
-        if !dry_run {
-            let errors = refresh_git_remotes(&config_dir, &conf.machines, local_name);
-            for error in &errors {
-                warn(&format!("git remote refresh: {}", error));
-            }
-            
-            // Sync with remotes before discovery
-            // On first iteration, only sync if initial_refresh flag is set
-            if iteration > 1 || initial_refresh {
-                let sync_errors = sync_with_remotes(&config_dir, has_local_changes);
-                for error in &sync_errors {
-                    // Always warn about sync errors, even in non-verbose mode
-                    // The error message already includes SSH auth setup hint
-                    warn(&format!("[sync] {}", error));
-                    if verbose {
-                        println!("  [sync] {}", error);
-                    }
-                }
-                
-                // After pulling, check if our own device config was modified
-                // and if it conflicts with our initial state
-                if !sync_errors.is_empty() || iteration > 1 {
-                    if local_device_path.exists() {
-                        // Check if the current version differs from our initial state
-                        let current_content = read_device_file_content(&local_device_path);
-                        
-                        // Compare with initial state
-                        if current_content.trim() != our_initial_config.trim() {
-                            // Config was modified by the pull - ask user to resolve
-                            // The current_content is what was pulled from remote
-                            // our_initial_config is what we had before
-                            
-                            if let Some(keep_local) = ask_conflict_resolution(
-                                local_name, 
-                                &our_initial_config,  // Local version (before pull)
-                                &current_content       // Remote version (after pull)
-                            ) {
-                                if keep_local {
-                                    // User wants to keep local version - revert to initial
-                                    if let Err(e) = fs::write(&local_device_path, &our_initial_config) {
-                                        warn(&format!("failed to revert device config: {}", e));
-                                    } else {
-                                        // Commit the reverted device file separately
-                                        let message = format!("Revert device: {} to local version", local_name);
-                                        let _ = git_add_and_commit_file(&config_dir, &local_device_path, &message);
-                                        // Mark that we have local changes to push
-                                        has_local_changes = true;
-                                    }
-                                } else {
-                                    // User wants remote version - it's already in place from the pull
-                                    // Commit it separately
-                                    let message = format!("Update device: {} from remote", local_name);
-                                    let _ = git_add_and_commit_file(&config_dir, &local_device_path, &message);
-                                    // Mark that we have local changes to push
-                                    has_local_changes = true;
-                                }
-                            } else {
-                                // User aborted
-                                std::process::exit(3);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        
         // --- announce (background thread) + listen, same window ---
         if verbose {
             println!("== Iteration {}: Announcing + listening for beacons ({} s, UDP port {}) ==",
@@ -1604,6 +1537,73 @@ fn discovery_sync_loop(
                                 warn(&format!("could not write ~/.ssh/config: {}", e));
                                 iteration_missing += 1;
                                 continue;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Update git remotes and sync after discovery
+        if !dry_run {
+            let errors = refresh_git_remotes(&config_dir, &conf.machines, local_name);
+            for error in &errors {
+                warn(&format!("git remote refresh: {}", error));
+            }
+            
+            // Sync with remotes after discovery
+            // On first iteration, only sync if initial_refresh flag is set
+            if iteration > 1 || initial_refresh {
+                let sync_errors = sync_with_remotes(&config_dir, has_local_changes);
+                for error in &sync_errors {
+                    // Always warn about sync errors, even in non-verbose mode
+                    // The error message already includes SSH auth setup hint
+                    warn(&format!("[sync] {}", error));
+                    if verbose {
+                        println!("  [sync] {}", error);
+                    }
+                }
+                
+                // After pulling, check if our own device config was modified
+                // and if it conflicts with our initial state
+                if !sync_errors.is_empty() || iteration > 1 {
+                    if local_device_path.exists() {
+                        // Check if the current version differs from our initial state
+                        let current_content = read_device_file_content(&local_device_path);
+                        
+                        // Compare with initial state
+                        if current_content.trim() != our_initial_config.trim() {
+                            // Config was modified by the pull - ask user to resolve
+                            // The current_content is what was pulled from remote
+                            // our_initial_config is what we had before
+                            
+                            if let Some(keep_local) = ask_conflict_resolution(
+                                local_name, 
+                                &our_initial_config,  // Local version (before pull)
+                                &current_content       // Remote version (after pull)
+                            ) {
+                                if keep_local {
+                                    // User wants to keep local version - revert to initial
+                                    if let Err(e) = fs::write(&local_device_path, &our_initial_config) {
+                                        warn(&format!("failed to revert device config: {}", e));
+                                    } else {
+                                        // Commit the reverted device file separately
+                                        let message = format!("Revert device: {} to local version", local_name);
+                                        let _ = git_add_and_commit_file(&config_dir, &local_device_path, &message);
+                                        // Mark that we have local changes to push
+                                        has_local_changes = true;
+                                    }
+                                } else {
+                                    // User wants remote version - it's already in place from the pull
+                                    // Commit it separately
+                                    let message = format!("Update device: {} from remote", local_name);
+                                    let _ = git_add_and_commit_file(&config_dir, &local_device_path, &message);
+                                    // Mark that we have local changes to push
+                                    has_local_changes = true;
+                                }
+                            } else {
+                                // User aborted
+                                std::process::exit(3);
                             }
                         }
                     }
