@@ -42,6 +42,35 @@ This will:
 4. Push to the first device's config repo
 5. Enter discovery loop
 
+## First Manual Git Sync
+
+When setting up your first device or adding devices to an existing network, you may need to perform a manual git sync:
+
+### From the device itself (if you have SSH access to other devices):
+
+```bash
+cd ~/.regroup-config
+git remote add <other-device> user@other-device:~/.regroup-config
+git push <other-device> main
+```
+
+This pushes your config to the other device.
+
+### From another device (if you're setting up a new device):
+
+```bash
+cd ~/.regroup-config
+git remote add <new-device> user@new-device:~/.regroup-config
+git pull <new-device> main
+```
+
+This pulls the new device's config to your existing setup.
+
+**Authentication direction matters:**
+- If you can SSH from A → B, you can push from A to B
+- If you can SSH from B → A, you can pull from A on B
+- One-way authentication is sufficient for sync to work
+
 ## How It Works
 
 ### Discovery and Sync Loop
