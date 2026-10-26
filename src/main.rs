@@ -524,23 +524,23 @@ fn number_field(
 fn load_device_file(path: &Path) -> Result<Machine, String> {
     let text = match fs::read_to_string(path) {
         Ok(t) => t,
-        Err(e) => return Err(format!("cannot read {}: {}", path.display(), e)),
+        Err(e) => return Err(format!("cannot read: {}", e)),
     };
     
     let root: Value = match serde_json::from_str(&text) {
         Ok(v) => v,
-        Err(e) => return Err(format!("invalid JSON in {}: {}", path.display(), e)),
+        Err(e) => return Err(format!("invalid JSON: {}", e)),
     };
     
     let obj = match root.as_object() {
         Some(o) => o,
-        None => return Err(format!("{}: top-level value must be a JSON object", path.display())),
+        None => return Err(format!("top-level value must be a JSON object")),
     };
     
     let name = match obj.get("name") {
         Some(v) => match v.as_str() {
             Some(s) => s.trim().to_string(),
-            None => return Err(format!("{}: \"name\" must be a string", path.display())),
+            None => return Err(format!("\"name\" must be a string")),
         },
         None => {
             // Try to get name from filename
@@ -556,15 +556,15 @@ fn load_device_file(path: &Path) -> Result<Machine, String> {
     let fingerprint = match obj.get("fingerprint") {
         Some(v) => match v.as_str() {
             Some(s) => s.trim().to_string(),
-            None => return Err(format!("{}: \"fingerprint\" must be a string", path.display())),
+            None => return Err(format!("\"fingerprint\" must be a string")),
         },
-        None => return Err(format!("{}: \"fingerprint\" is required", path.display())),
+        None => return Err(format!("\"fingerprint\" is required")),
     };
     
     let user = match obj.get("user") {
         Some(v) => match v.as_str() {
             Some(s) => s.trim().to_string(),
-            None => return Err(format!("{}: \"user\" must be a string", path.display())),
+            None => return Err(format!("\"user\" must be a string")),
         },
         None => String::new(),
     };
@@ -574,12 +574,11 @@ fn load_device_file(path: &Path) -> Result<Machine, String> {
         Some(v) => {
             let n = match int_value(v) {
                 Some(n) => n,
-                None => return Err(format!("{}: \"port\" must be an integer", path.display())),
+                None => return Err(format!("\"port\" must be an integer")),
             };
             if n < 1 || n > 65535 {
                 return Err(format!(
-                    "{}: \"port\" must be between 1 and 65535",
-                    path.display()
+                    "\"port\" must be between 1 and 65535"
                 ));
             }
             (n as u16, true)
@@ -596,7 +595,7 @@ fn load_device_file(path: &Path) -> Result<Machine, String> {
     
     // Validate the machine configuration
     if let Err(e) = validate_machine(&machine) {
-        return Err(format!("{}: {}", path.display(), e));
+        return Err(e);
     }
     
     Ok(machine)
