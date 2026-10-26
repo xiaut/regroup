@@ -586,13 +586,20 @@ fn load_device_file(path: &Path) -> Result<Machine, String> {
         }
     };
     
-    Ok(Machine {
+    let machine = Machine {
         name,
         fingerprint,
         user,
         port,
         port_explicit,
-    })
+    };
+    
+    // Validate the machine configuration
+    if let Err(e) = validate_machine(&machine) {
+        return Err(format!("{}: {}", path.display(), e));
+    }
+    
+    Ok(machine)
 }
 
 /// Save a device configuration to a JSON file
@@ -622,9 +629,18 @@ fn read_device_file_content(path: &Path) -> String {
 /// Auto-create device configuration with self-detected information
 fn create_device_config(config_dir: &Path) -> Result<Machine, String> {
     let hostname = host_name();
-    let fingerprint = get_local_fingerprint(22).unwrap_or_else(|| {
-        "SHA256:PUT-YOUR-FINGERPRINT-HERE".to_string()
-    });
+    
+    // Validate hostname
+    if hostname.to_lowercase() == "localhost" || hostname.to_lowercase() == "127.0.0.1" {
+        return Err(format!(
+            "Hostname '{}' is not valid for device discovery. Please ensure the system has a proper hostname.",
+            hostname
+        ));
+    }
+    
+    let fingerprint = get_local_fingerprint(22).ok_or_else(|| {
+        "Could not detect SSH fingerprint. Ensure SSH server is running on this machine.".to_string()
+    })?;
     
     // Determine the current user
     let current_user = env::var("USER").unwrap_or_else(|_| env::var("LOGNAME").unwrap_or_default());
@@ -643,6 +659,11 @@ fn create_device_config(config_dir: &Path) -> Result<Machine, String> {
         if let Err(e) = fs::create_dir_all(&devices_dir) {
             return Err(format!("cannot create devices directory: {}", e));
         }
+    }
+    
+    // Validate the machine configuration
+    if let Err(e) = validate_machine(&machine) {
+        return Err(e);
     }
     
     let device_path = devices_dir.join(format!("{}.json", hostname));
@@ -952,6 +973,33 @@ fn net_valid(s: &str) -> Option<String> {
     }
     let out: Vec<String> = octets.iter().map(|o| o.to_string()).collect();
     Some(out.join("."))
+}
+
+// ============================================================
+// Validation helpers
+// ============================================================
+
+/// Validate a machine configuration
+fn validate_machine(machine: &Machine) -> Result<(), String> {
+    // Check for placeholder fingerprint
+    if machine.fingerprint == "SHA256:PUT-YOUR-FINGERPRINT-HERE" ||
+       machine.fingerprint == "MD5:PUT-YOUR-FINGERPRINT-HERE" {
+        return Err(format!(
+            "Device '{}' has a placeholder fingerprint. Please run: ssh-keygen -lf /etc/ssh/ssh_host_*_key.pub to get the real fingerprint",
+            machine.name
+        ));
+    }
+    
+    // Validate hostname - reject localhost and other invalid names
+    let name_lower = machine.name.to_lowercase();
+    if name_lower == "localhost" || name_lower == "localhost.localdomain" || name_lower == "127.0.0.1" {
+        return Err(format!(
+            "Device name '{}' is invalid. Hostname cannot be 'localhost' or '127.0.0.1'. Please use the actual hostname.",
+            machine.name
+        ));
+    }
+    
+    Ok(())
 }
 
 // ============================================================
