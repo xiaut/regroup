@@ -1810,6 +1810,31 @@ fn main() {
     // --- Discovery and sync loop ---
     let (found, missing) = discovery_sync_loop(&conf, &ssh_config, &local_name, &local_ip, dry_run, verbose, refresh, &net_arg);
 
+    // Check if this device is alone (only found itself, no remotes configured)
+    if !dry_run && found == 1 && missing == 0 {
+        let home = match env::var("HOME") {
+            Ok(h) => h,
+            Err(_) => String::new(),
+        };
+        let config_dir = PathBuf::from(&home).join(CONFIG_DIR);
+        if is_git_repo(&config_dir) {
+            let remotes = git_list_remotes(&config_dir);
+            if remotes.is_empty() {
+                println!("\n=== Manual git sync setup ===");
+                println!("This device is alone in the config. To sync with other devices:");
+                println!("\nFrom this device (if you can SSH to others):");
+                println!("  cd ~/.regroup-config");
+                println!("  git remote add <hostname> user@hostname:~/.regroup-config");
+                println!("  git push <hostname> main");
+                println!("\nFrom another device (to pull this device's config):");
+                println!("  cd ~/.regroup-config");
+                println!("  git remote add {} {}:~/.regroup-config", local_name, local_name);
+                println!("  git pull {} main", local_name);
+                println!("\nNote: Authentication direction matters - you need SSH access in the direction you're syncing.");
+            }
+        }
+    }
+
     println!("== {} found, {} missing ==", found, missing);
     std::process::exit(if missing == 0 { 0 } else { 1 });
 }
