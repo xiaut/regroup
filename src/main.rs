@@ -1255,7 +1255,7 @@ fn discovery_sync_loop(
         String::new()
     };
     
-    while new_devices_found && iteration < MAX_SYNC_ITERATIONS {
+    while (new_devices_found || iteration < 2) && iteration < MAX_SYNC_ITERATIONS {
         iteration += 1;
         new_devices_found = false;
         
