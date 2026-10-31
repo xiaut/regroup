@@ -17,6 +17,6 @@ pub mod sync;
 // Re-export commonly used functions
 pub use beacon::{announce_beacon, listen_beacons};
 pub use fingerprint::fingerprints;
-pub use local::{host_name, my_ip};
+pub use local::{get_local_interfaces, host_name, my_ip};
 pub use net::{net_prefix, net_valid};
 pub use scan::scan_subnet;

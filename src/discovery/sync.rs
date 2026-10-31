@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use std::process;
 use std::thread;
 
-use super::{announce_beacon, fingerprints, listen_beacons, net_prefix, net_valid, scan_subnet};
+use super::{announce_beacon, fingerprints, get_local_interfaces, listen_beacons, net_prefix, net_valid, scan_subnet};
 use crate::cli::{ask_conflict_resolution, die, warn};
 use crate::config::{Conf, CONFIG_DIR, DEVICES_DIR, GLOBAL_CONFIG_FILE, MAX_SYNC_ITERATIONS, load_config, read_device_file_content};
 use crate::git::{git_add_and_commit_file, get_modified_config_files, git_push_all, has_unstaged_changes, is_git_repo, refresh_git_remotes, sync_with_remotes};
@@ -158,21 +158,20 @@ pub fn discovery_sync_loop(
             );
         }
         
-        let announcer = match local_ip.clone() {
-            Some(ip) => {
-                let port = current_conf.udp_port;
-                let secs = current_conf.wait_secs;
-                let name = local_name.to_string();
-                Some(thread::spawn(move || {
-                    announce_beacon(port, secs, &name, &ip)
-                }))
+        let local_interfaces = get_local_interfaces();
+        let announcer = if !local_interfaces.is_empty() {
+            let port = current_conf.udp_port;
+            let secs = current_conf.wait_secs;
+            let name = local_name.to_string();
+            let interfaces = local_interfaces.clone();
+            Some(thread::spawn(move || {
+                announce_beacon(port, secs, &name, &interfaces)
+            }))
+        } else {
+            if iteration == 1 {
+                warn("no local interfaces found — announcing disabled (listening continues)");
             }
-            None => {
-                if iteration == 1 {
-                    warn("local IP unknown — announcing disabled (listening continues)");
-                }
-                None
-            }
+            None
         };
         
         let beacons = listen_beacons(current_conf.udp_port, current_conf.wait_secs);

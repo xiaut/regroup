@@ -2,25 +2,43 @@
 //!
 //! This module handles UDP beacon announcement and listening for device discovery.
 
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr, SocketAddr};
 use std::time::{Duration, Instant};
 
-/// Broadcasts "name ip" every 2 s until the deadline. Runs in its own thread,
-/// in parallel with listen_beacons, for the same window.
-pub fn announce_beacon(port: u16, secs: u64, name: &str, ip: &str) {
-    let target = format!("255.255.255.255:{}", port);
-    let message = format!("{} {}", name, ip);
-    let sock = match std::net::UdpSocket::bind("0.0.0.0:0") {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("WARNING: announcing disabled: {}", e);
-            return;
-        }
-    };
-    let _ = sock.set_broadcast(true);
+/// Broadcasts "name ip" every 2 s until the deadline on all local interfaces.
+/// Runs in its own thread, in parallel with listen_beacons, for the same window.
+/// Each interface sends to its own broadcast address.
+pub fn announce_beacon(port: u16, secs: u64, name: &str, interfaces: &[(String, String)]) {
+    if interfaces.is_empty() {
+        eprintln!("WARNING: no local interfaces found — announcing disabled");
+        return;
+    }
+
     let deadline = Instant::now() + Duration::from_secs(secs);
+    let message = format!("{} {}", name, &interfaces[0].0);
+
+    // Create one socket per interface to send on the correct broadcast address
+    let mut sockets = Vec::new();
+    for (ip, broadcast) in interfaces {
+        if let Ok(sock) = std::net::UdpSocket::bind(format!("{}:0", ip)) {
+            if sock.set_broadcast(true).is_ok() {
+                sockets.push((sock, broadcast.clone()));
+            }
+        }
+    }
+
+    if sockets.is_empty() {
+        eprintln!("WARNING: cannot bind to any interface for announcing");
+        return;
+    }
+
     while Instant::now() < deadline {
-        let _ = sock.send_to(message.as_bytes(), &target);
+        for (sock, broadcast) in &sockets {
+            let target = format!("{}:{}", broadcast, port);
+            if let Ok(addr) = target.parse::<SocketAddr>() {
+                let _ = sock.send_to(message.as_bytes(), addr);
+            }
+        }
         std::thread::sleep(Duration::from_secs(2));
     }
 }
