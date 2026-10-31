@@ -5,6 +5,9 @@
 //! - TCP subnet scanning
 //! - SSH fingerprint detection
 //! - Local identity detection
+//! - Discovery and sync loop
+
+pub mod sync;
 
 use std::io::Write;
 use std::net::{Ipv4Addr, SocketAddr, TcpStream, UdpSocket};
