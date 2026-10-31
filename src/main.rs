@@ -38,18 +38,18 @@ use std::thread;
 
 use serde_json::{Map, Value};
 
-use config::{Conf, Machine, CONFIG_DIR, DEVICES_DIR, GLOBAL_CONFIG_FILE, MAX_SYNC_ITERATIONS};
-
 mod config;
 mod discovery;
 mod git;
+mod ssh;
+
+use config::{Conf, Machine, CONFIG_DIR, DEVICES_DIR, GLOBAL_CONFIG_FILE, MAX_SYNC_ITERATIONS};
 
 use discovery::{announce_beacon, fingerprints, get_local_fingerprint, host_name, listen_beacons, my_ip, net_prefix, net_valid, scan_subnet};
-use git::{
-    git_add_and_commit_file, git_list_remotes, git_init, git_push_all,
+use git::{git_add_and_commit_file, git_init, git_list_remotes, git_push_all,
     has_unstaged_changes, get_modified_config_files,
-    refresh_git_remotes, sync_with_remotes, is_git_repo,
-};
+    is_git_repo, refresh_git_remotes, sync_with_remotes};
+use ssh::update_block;
 
 // ============================================================
 // Error handling
@@ -510,50 +510,6 @@ fn validate_machine(machine: &Machine) -> Result<(), String> {
 // ============================================================
 // ~/.ssh/config
 // ============================================================
-
-// Replaces ONLY the "Host <name>" block; all other blocks are preserved
-// (e.g. github.com). Idempotent: running it twice yields the same file.
-fn update_block(
-    path: &Path,
-    name: &str,
-    ip: &str,
-    user: &str,
-    port: u16,
-    port_explicit: bool,
-) -> io::Result<()> {
-    let old = fs::read_to_string(path).unwrap_or_default();
-    let mut kept = String::new();
-    let mut in_block = false;
-    for line in old.lines() {
-        let words: Vec<&str> = line.split_whitespace().collect();
-        if !words.is_empty() && words[0] == "Host" {
-            in_block = false;
-            if words[1..].iter().any(|w| *w == name) {
-                in_block = true;
-                continue;
-            }
-        }
-        if in_block {
-            continue;
-        }
-        kept.push_str(line);
-        kept.push('\n');
-    }
-    let body = kept.trim_end();
-    let mut out = String::new();
-    if !body.is_empty() {
-        out.push_str(body);
-        out.push_str("\n\n");
-    }
-    out.push_str(&format!("Host {}\n    HostName {}\n", name, ip));
-    if !user.is_empty() {
-        out.push_str(&format!("    User {}\n", user));
-    }
-    if port_explicit {
-        out.push_str(&format!("    Port {}\n", port));
-    }
-    fs::write(path, out)
-}
 
 // ============================================================
 // Discovery and Sync Loop
