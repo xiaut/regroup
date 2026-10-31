@@ -28,7 +28,7 @@ use crate::ssh::{flush_ssh_config, update_block, verify_ssh_config_complete};
 /// Log the current phase of the sync process
 fn log_phase(verbose: bool, iteration: usize, phase: u8, total_phases: u8, message: &str) {
     if verbose || iteration == 1 {
-        println!("[{}={}] {}", phase, total_phases, message);
+        println!("[{}/{}] {}", phase, total_phases, message);
     }
 }
 
@@ -148,15 +148,7 @@ pub fn discovery_sync_loop(
         // Find machines and their current IPs via UDP beacons and TCP scanning
         // This does NOT require SSH to be configured
         // ============================================================
-        if verbose {
-            println!("== Iteration {}: Announcing + listening for beacons ({} s, UDP port {}) ==",
-                iteration, current_conf.wait_secs, current_conf.udp_port);
-        } else if iteration == 1 {
-            println!(
-                "== Announcing + listening for beacons ({} s, UDP port {}) ==",
-                current_conf.wait_secs, current_conf.udp_port
-            );
-        }
+        log_phase(verbose, iteration, 1, 4, "Discovery");
         
         let local_interfaces = get_local_interfaces();
         let announcer = if !local_interfaces.is_empty() {
@@ -312,9 +304,7 @@ pub fn discovery_sync_loop(
         // Update ~/.ssh/config with discovered IPs so that git can connect
         // This MUST happen BEFORE any git operations (pull/push)
         // ============================================================
-        if iteration == 1 || verbose {
-            log_phase(verbose, iteration, 2, 4, "Updating SSH config (~/.ssh/config)");
-        }
+        log_phase(verbose, iteration, 2, 4, "Updating SSH config (~/.ssh/config)");
         
         let mut ssh_updated = 0;
         let mut ssh_failed: Vec<String> = Vec::new();
@@ -426,9 +416,9 @@ pub fn discovery_sync_loop(
         // Configure git remotes for all machines
         // Requires SSH config to be up to date (Phase 2)
         // ============================================================
+        log_phase(verbose, iteration, 3, 4, if dry_run { "Configuring git remotes - skipped (dry run)" } else { "Configuring git remotes" });
+        
         if !dry_run {
-            log_phase(verbose, iteration, 3, 4, "Configuring git remotes");
-            
             // Verify SSH config is complete before git operations
             let ssh_missing = verify_ssh_config_complete(ssh_config, &current_conf.machines);
             if !ssh_missing.is_empty() {
@@ -445,9 +435,17 @@ pub fn discovery_sync_loop(
             
             // Sync with remotes after discovery and SSH config update
             // On first iteration, only sync if initial_refresh flag is set
+            log_phase(verbose, iteration, 4, 4, 
+                if dry_run {
+                    "Syncing with git remotes (pull/push) - skipped (dry run)"
+                } else if iteration > 1 || initial_refresh {
+                    "Syncing with git remotes (pull/push)"
+                } else {
+                    "Syncing with git remotes (pull/push) - skipped"
+                }
+            );
+            
             if iteration > 1 || initial_refresh {
-                log_phase(verbose, iteration, 4, 4, "Syncing with git remotes (pull/push)");
-                
                 let sync_errors = sync_with_remotes(&config_dir, has_local_changes);
                 for error in &sync_errors {
                     // Always warn about sync errors, even in non-verbose mode
