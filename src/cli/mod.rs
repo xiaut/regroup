@@ -1,0 +1,183 @@
+//! CLI module for regroup
+//!
+//! This module handles command-line interface functionality.
+
+use std::fs;
+use std::path::PathBuf;
+use std::process::Command;
+
+
+
+use crate::config::DEVICES_DIR;
+use crate::discovery::{net_prefix, net_valid};
+
+// ============================================================
+// Error handling
+// ============================================================
+
+/// Terminate with an error message
+pub fn die(msg: &str) -> ! {
+    eprintln!("ERROR: {}", msg);
+    std::process::exit(2);
+}
+
+/// Print a warning message
+pub fn warn(msg: &str) {
+    eprintln!("WARNING: {}", msg);
+}
+
+// ============================================================
+// User interaction
+// ============================================================
+
+/// Ask user to resolve a conflict
+/// Returns: true = keep local, false = use remote, None = abort
+pub fn ask_conflict_resolution(device_name: &str, local_content: &str, remote_content: &str) -> Option<bool> {
+    use std::io::Write;
+    
+    println!("\nCONFLICT: Device config for '{}' differs from remote", device_name);
+    println!("Local version:");
+    println!("{}", local_content);
+    println!("\nRemote version:");
+    println!("{}", remote_content);
+    println!("\nOptions:");
+    println!("  1. Keep local version");
+    println!("  2. Use remote version");
+    println!("  3. Abort");
+    print!("\nChoice [1/2/3]: ");
+    std::io::stdout().flush().ok();
+    
+    let mut input = String::new();
+    if std::io::stdin().read_line(&mut input).is_ok() {
+        match input.trim() {
+            "1" => Some(true),
+            "2" => Some(false),
+            "3" => None,
+            _ => Some(true), // Default to keep local
+        }
+    } else {
+        Some(true)
+    }
+}
+
+
+
+// ============================================================
+// Selftest
+// ============================================================
+
+/// Run built-in selftest
+pub fn run_selftest() -> ! {
+    let mut ok = true;
+
+    // 1. external tools
+    let mut tools_ok = true;
+    for tool in ["ssh-keyscan", "ssh-keygen"] {
+        if Command::new(tool).output().is_err() {
+            tools_ok = false;
+        }
+    }
+    // Check for git
+    if Command::new("git").output().is_err() {
+        tools_ok = false;
+    }
+    
+    println!(
+        "ssh-keyscan/ssh-keygen/git present — {}",
+        if tools_ok { "OK" } else { "FAIL" }
+    );
+    ok &= tools_ok;
+
+    // 2. subnet helpers
+    let net_ok = net_valid(&net_prefix("192.168.43.0/24")) == Some("192.168.43".to_string())
+        && net_valid(&net_prefix("192.168.43")) == Some("192.168.43".to_string())
+        && net_valid("192.168.43") == Some("192.168.43".to_string())
+        && net_valid("192.168.256") == None
+        && net_valid("192.168") == None
+        && net_valid("abc.def.ghi") == None;
+    println!("subnet helpers — {}", if net_ok { "OK" } else { "FAIL" });
+    ok &= net_ok;
+
+    // 3. test config loading with sample data
+    let sample_dir = PathBuf::from("/tmp/regroup-selftest");
+    let _ = fs::remove_dir_all(&sample_dir);
+    
+    if let Err(e) = fs::create_dir_all(&sample_dir) {
+        println!("temp dir creation — FAIL ({})", e);
+        ok = false;
+    } else {
+        let devices_dir = sample_dir.join(DEVICES_DIR);
+        let _ = fs::create_dir_all(&devices_dir);
+        
+        let device_file = devices_dir.join("test.json");
+        let device_config = r#"{"name": "test", "fingerprint": "SHA256:abc", "user": "testuser", "port": 22}"#;
+        if let Err(e) = fs::write(&device_file, device_config) {
+            println!("device file creation — FAIL ({})", e);
+            ok = false;
+        } else {
+            match crate::config::loading::load_device_file(&device_file) {
+                Ok(m) => {
+                    let device_ok = m.name == "test" 
+                        && m.fingerprint == "SHA256:abc"
+                        && m.user == "testuser"
+                        && m.port == 22
+                        && m.port_explicit;
+                    println!("device config loading — {}", if device_ok { "OK" } else { "FAIL" });
+                    ok &= device_ok;
+                }
+                Err(e) => {
+                    println!("device config loading — FAIL ({})", e);
+                    ok = false;
+                }
+            }
+        }
+        
+        let _ = fs::remove_dir_all(&sample_dir);
+    }
+
+    println!("selftest: {}", if ok { "OK" } else { "FAIL" });
+    std::process::exit(if ok { 0 } else { 1 });
+}
+
+// ============================================================
+// Usage
+// ============================================================
+
+/// Print usage information
+pub fn usage() {
+    println!(
+        "regroup — find machines by their SSH host key fingerprint and update
+~/.ssh/config. Every run announces this machine over UDP broadcast while
+listening for the other machines' announcements during the same window.\n
+Configuration is stored in ~/.regroup-config/ git repository where each
+device has its own JSON file in the devices/ directory. Git remotes are
+automatically configured for all other devices (using hostnames, not IPs).\n\nDiscovery and sync run in a loop until no new devices are found. Each device
+owns its own config file and can only overwrite it. If the local device config
+differs from the remote, the user is asked to resolve the conflict.\n
+Usage:
+  ./regroup                announce + listen + sync loop, update ~/.ssh/config
+  ./regroup test           dry run: nothing is modified
+  ./regroup -v             verbose
+  ./regroup -r             refresh: pull from git remotes before sync loop
+  ./regroup 192.168.43     also scan that /24 once
+  ./regroup selftest       built-in checks (tools, config, config rewrite)
+  ./regroup -h             this help\n
+Config repository structure (~/.regroup-config/):
+  settings.json           (optional: udp_port, wait_secs, batch_size, subnets)
+  devices/
+    <hostname>.json       (each device's config: name, fingerprint, user, port)\n
+Git remotes (automatically managed using hostnames):
+  user@hostname:~/.regroup-config  (for each other device)\n
+Sync behavior:
+  - Loop until no new devices are discovered
+  - git pull --all on each iteration (except first)
+  - git push --all after updating SSH config
+  - One-way SSH connections handled gracefully
+  - User prompted to resolve own config conflicts\n
+Exit codes:
+  0  all machines found
+  1  at least one machine missing
+  2  configuration or environment error
+  3  user declined conflict resolution"
+    );
+}
