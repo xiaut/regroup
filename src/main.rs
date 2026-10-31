@@ -40,7 +40,7 @@ mod discovery;
 mod git;
 mod ssh;
 
-use cli::{die, run_selftest, usage};
+use cli::{die, run_selftest, setup_cd, usage};
 use config::{load_config, CONFIG_DIR};
 use discovery::{host_name, my_ip};
 use discovery::sync::discovery_sync_loop;
@@ -68,6 +68,8 @@ fn main() {
             selftest = true;
         } else if a == "-r" || a == "--refresh" {
             refresh = true;
+        } else if a == "setup-cd" {
+            setup_cd();
         } else if a.contains('.') {
             net_arg = Some(a.clone());
         } else {

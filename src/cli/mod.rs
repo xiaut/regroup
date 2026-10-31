@@ -2,13 +2,12 @@
 //!
 //! This module handles command-line interface functionality.
 
+use std::env;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
-
-
-use crate::config::DEVICES_DIR;
+use crate::config::{CONFIG_DIR, DEVICES_DIR};
 use crate::discovery::{net_prefix, net_valid};
 
 // ============================================================
@@ -161,6 +160,7 @@ Usage:
   ./regroup -r             refresh: pull from git remotes before sync loop
   ./regroup 192.168.43     also scan that /24 once
   ./regroup selftest       built-in checks (tools, config, config rewrite)
+  ./regroup setup-cd       install 'regroup-cd' shell function to change to config directory
   ./regroup -h             this help\n
 Config repository structure (~/.regroup-config/):
   settings.json           (optional: udp_port, wait_secs, batch_size, subnets)
@@ -180,4 +180,82 @@ Exit codes:
   2  configuration or environment error
   3  user declined conflict resolution"
     );
+}
+
+// ============================================================
+// Setup CD command
+// ============================================================
+
+/// Install the regroup-cd shell function in the user's shell config
+pub fn setup_cd() -> ! {
+    let home = match env::var("HOME") {
+        Ok(h) => h,
+        Err(_) => die("HOME variable not set"),
+    };
+
+    let config_dir = PathBuf::from(&home).join(CONFIG_DIR);
+    let function_def = format!("regroup-cd() {{ cd {}; }}", config_dir.to_string_lossy());
+
+    // Detect shell from SHELL environment variable
+    let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
+    let config_file = if shell.contains("zsh") {
+        PathBuf::from(&home).join(".zshrc")
+    } else {
+        PathBuf::from(&home).join(".bashrc")
+    };
+
+    // Read current content
+    let current_content = if config_file.exists() {
+        match fs::read_to_string(&config_file) {
+            Ok(c) => c,
+            Err(_) => String::new(),
+        }
+    } else {
+        String::new()
+    };
+
+    // Prepare new content - remove any existing definition
+    let new_content: String = current_content
+        .lines()
+        .filter(|line| !line.trim().starts_with("regroup-cd()"))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    // Find the line with "case $- in" (non-interactive shell check)
+    // We want to insert BEFORE this block so the function is available even when
+    // the shell returns early for non-interactive sessions
+    let case_line_index = new_content.lines().position(|line| line.contains("case $- in"));
+
+    // Add the function definition before the case block, or at the end
+    let final_content = if let Some(idx) = case_line_index {
+        let mut lines: Vec<&str> = new_content.lines().collect();
+        // Insert before the case block, but after any leading comments/blank lines
+        // Actually, just insert right before the case line
+        lines.insert(idx, &function_def);
+        lines.join("\n")
+    } else if !new_content.is_empty() && !new_content.ends_with('\n') {
+        format!("{}\n\n{}", new_content, function_def)
+    } else if new_content.is_empty() {
+        function_def
+    } else {
+        format!("{}{}", new_content, function_def)
+    };
+
+    // Write to config file
+    match fs::write(&config_file, final_content) {
+        Ok(_) => {
+            println!(
+                "✓ 'regroup-cd' function installed in ~/{}",
+                config_file.file_name().unwrap_or_default().to_string_lossy()
+            );
+            println!("Use: regroup-cd");
+        }
+        Err(e) => die(&format!(
+            "Cannot write to ~/{}: {}",
+            config_file.file_name().unwrap_or_default().to_string_lossy(),
+            e
+        )),
+    }
+
+    std::process::exit(0);
 }
