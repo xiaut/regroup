@@ -2,6 +2,7 @@
 //!
 //! This module handles local machine identification.
 
+use std::env;
 use std::net::Ipv4Addr;
 use std::process::Command;
 
@@ -9,6 +10,63 @@ use crate::discovery::fingerprint::fingerprints;
 
 /// Get the local hostname
 pub fn host_name() -> String {
+    // Check if we're running in Termux
+    let is_termux = env::var("TERMUX_VERSION").is_ok() || 
+                    env::var("PREFIX").map_or(false, |p| p.contains("com.termux"));
+    
+    if is_termux {
+        // Try Termux-specific hostname detection
+        // First try getprop (Android property system)
+        if let Ok(o) = Command::new("getprop").arg("net.hostname").output() {
+            if o.status.success() {
+                let n = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                if !n.is_empty() && n != "localhost" && n != "127.0.0.1" && n != "local" {
+                    return n;
+                }
+            }
+        }
+        
+        // Fallback: try /proc/sys/kernel/hostname
+        if let Ok(hostname) = std::fs::read_to_string("/proc/sys/kernel/hostname") {
+            let n = hostname.trim().to_string();
+            if !n.is_empty() && n != "localhost" && n != "127.0.0.1" && n != "local" {
+                return n;
+            }
+        }
+        
+        // Fallback: use hostname command but handle Termux default
+        if let Ok(o) = Command::new("hostname").output() {
+            if o.status.success() {
+                let n = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                if !n.is_empty() {
+                    // In Termux, hostname often returns "localhost", "local", or a generic name
+                    // Try to get a better identifier
+                    if n == "localhost" || n == "127.0.0.1" || n == "local" {
+                        // Try to use device model or other identifier
+                        if let Ok(model) = env::var("ANDROID_DEVICE") {
+                            if !model.is_empty() {
+                                return model;
+                            }
+                        }
+                        // Try to use a more unique identifier
+                        if let Ok(user) = env::var("USER") {
+                            if !user.is_empty() {
+                                return format!("{}-termux", user);
+                            }
+                        }
+                        return format!("termux-{}", 
+                            std::process::id());
+                    }
+                    return n;
+                }
+            }
+        }
+        
+        // Last resort for Termux
+        return format!("termux-{}", std::process::id());
+    }
+    
+    // Standard hostname detection
     if let Ok(o) = Command::new("hostname").output() {
         if o.status.success() {
             let n = String::from_utf8_lossy(&o.stdout).trim().to_string();
@@ -23,6 +81,56 @@ pub fn host_name() -> String {
 /// Get the local IP address
 pub fn my_ip() -> Option<String> {
     use std::net::UdpSocket;
+    
+    // Check if we're running in Termux
+    let is_termux = env::var("TERMUX_VERSION").is_ok() || 
+                    env::var("PREFIX").map_or(false, |p| p.contains("com.termux"));
+    
+    if is_termux {
+        // Termux-specific IP detection
+        // Try common Termux network interfaces
+        let termux_interfaces = ["wlan0", "rmnet_data", "eth0", "tun0", "lo"];
+        
+        // Try with ifconfig
+        for iface in &termux_interfaces {
+            if let Ok(o) = Command::new("ifconfig").arg(iface).output() {
+                if o.status.success() {
+                    let text = String::from_utf8_lossy(&o.stdout);
+                    for line in text.lines() {
+                        let parts: Vec<&str> = line.split_whitespace().collect();
+                        for part in &parts {
+                            if let Ok(ip) = part.parse::<Ipv4Addr>() {
+                                if !ip.is_loopback() {
+                                    return Some(ip.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Try with ip addr
+        if let Ok(o) = Command::new("ip").args(["addr", "show"]).output() {
+            if o.status.success() {
+                let text = String::from_utf8_lossy(&o.stdout);
+                for line in text.lines() {
+                    if line.trim().starts_with("inet ") && !line.contains("127.0.0.1") {
+                        let parts: Vec<&str> = line.split_whitespace().collect();
+                        for part in &parts {
+                            if let Some(ip_str) = part.split('/').next() {
+                                if let Ok(ip) = ip_str.parse::<Ipv4Addr>() {
+                                    if !ip.is_loopback() {
+                                        return Some(ip.to_string());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
     
     // "Connecting" a UDP socket sends no packet but selects the default
     // interface and reveals its source address.

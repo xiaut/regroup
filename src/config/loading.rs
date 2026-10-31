@@ -2,14 +2,19 @@
 //!
 //! This module handles the main configuration loading logic.
 
+use std::collections::HashSet;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
 
 use super::{Conf, Machine, CONFIG_DIR, DEVICES_DIR};
 use super::device::{load_device_file, save_device_file};
 use super::settings::{load_global_settings, save_default_global_settings};
 use crate::discovery::local::{host_name, get_local_fingerprint};
+
+/// Track warnings that have already been displayed to avoid duplicates
+static WARNING_TRACKER: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
 /// Terminate with an error message
 fn die(msg: &str) -> ! {
@@ -17,9 +22,13 @@ fn die(msg: &str) -> ! {
     std::process::exit(2);
 }
 
-/// Print a warning message
+/// Print a warning message only once per execution
 fn warn(msg: &str) {
-    eprintln!("WARNING: {}", msg);
+    let tracker = WARNING_TRACKER.get_or_init(|| Mutex::new(HashSet::new()));
+    let mut tracker = tracker.lock().unwrap();
+    if tracker.insert(msg.to_string()) {
+        eprintln!("WARNING: {}", msg);
+    }
 }
 
 // ============================================================
@@ -31,7 +40,8 @@ pub fn create_device_config(config_dir: &PathBuf) -> Result<Machine, String> {
     let hostname = host_name();
     
     // Validate hostname
-    if hostname.to_lowercase() == "localhost" || hostname.to_lowercase() == "127.0.0.1" {
+    let hostname_lower = hostname.to_lowercase();
+    if hostname_lower == "localhost" || hostname_lower == "127.0.0.1" || hostname_lower == "local" {
         return Err(format!(
             "Hostname '{}' is not valid for device discovery. Please ensure the system has a proper hostname.",
             hostname
