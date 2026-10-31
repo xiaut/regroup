@@ -23,35 +23,7 @@ use super::{announce_beacon, fingerprints, listen_beacons, net_prefix, net_valid
 use crate::cli::{ask_conflict_resolution, die, warn};
 use crate::config::{Conf, CONFIG_DIR, DEVICES_DIR, GLOBAL_CONFIG_FILE, MAX_SYNC_ITERATIONS, load_config, read_device_file_content};
 use crate::git::{git_add_and_commit_file, get_modified_config_files, git_push_all, has_unstaged_changes, is_git_repo, refresh_git_remotes, sync_with_remotes};
-use crate::ssh::update_block;
-
-/// Verify that SSH config contains entries for all machines
-/// Returns list of machine names missing from SSH config
-fn verify_ssh_config_complete(ssh_config: &Path, machines: &[crate::config::Machine]) -> Vec<String> {
-    let ssh_content = match fs::read_to_string(ssh_config) {
-        Ok(c) => c,
-        Err(_) => return machines.iter().map(|m| m.name.clone()).collect(),
-    };
-    
-    let mut missing = Vec::new();
-    for m in machines {
-        // Skip local machine - it shouldn't be in SSH config pointing to itself
-        if !ssh_content.contains(&format!("Host {}", m.name)) {
-            missing.push(m.name.clone());
-        }
-    }
-    missing
-}
-
-/// Force SSH config file to be written to disk
-fn flush_ssh_config(ssh_config: &Path) -> std::io::Result<()> {
-    // Open in append mode to ensure file exists, then sync
-    let file = std::fs::OpenOptions::new()
-        .append(true)
-        .open(ssh_config)?;
-    file.sync_all()?;
-    Ok(())
-}
+use crate::ssh::{flush_ssh_config, update_block, verify_ssh_config_complete};
 
 /// Log the current phase of the sync process
 fn log_phase(verbose: bool, iteration: usize, phase: u8, total_phases: u8, message: &str) {
