@@ -34,3 +34,14 @@ pub const CONFIG_DIR: &str = ".regroup-config";
 pub const DEVICES_DIR: &str = "devices";
 pub const GLOBAL_CONFIG_FILE: &str = "settings.json";
 pub const MAX_SYNC_ITERATIONS: usize = 10;
+
+// ============================================================
+// Submodules
+// ============================================================
+
+pub mod loading;
+pub mod validation;
+
+// Re-export commonly used items
+pub use loading::{load_config, read_device_file_content};
+pub use validation::validate_machine;
