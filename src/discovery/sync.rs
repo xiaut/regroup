@@ -1,6 +1,16 @@
 //! Discovery and sync loop module
 //!
 //! This module contains the main discovery and synchronization loop.
+//!
+//! Critical design note: SSH config (~/.ssh/config) MUST be updated BEFORE
+//! any git operations, because git uses SSH to connect to remotes and
+//! requires the SSH config to know how to reach each machine.
+//!
+//! Order of operations:
+//! 1. Discovery (UDP beacons + TCP scan) - find machines and their IPs
+//! 2. Update SSH config - so git knows how to connect to each machine
+//! 3. Refresh git remotes - ensure git knows about all machines
+//! 4. Git sync (pull/push) - exchange configuration files
 
 use std::collections::HashSet;
 use std::env;
@@ -14,6 +24,41 @@ use crate::cli::{ask_conflict_resolution, die, warn};
 use crate::config::{Conf, CONFIG_DIR, DEVICES_DIR, GLOBAL_CONFIG_FILE, MAX_SYNC_ITERATIONS, load_config, read_device_file_content};
 use crate::git::{git_add_and_commit_file, get_modified_config_files, git_push_all, has_unstaged_changes, is_git_repo, refresh_git_remotes, sync_with_remotes};
 use crate::ssh::update_block;
+
+/// Verify that SSH config contains entries for all machines
+/// Returns list of machine names missing from SSH config
+fn verify_ssh_config_complete(ssh_config: &Path, machines: &[crate::config::Machine]) -> Vec<String> {
+    let ssh_content = match fs::read_to_string(ssh_config) {
+        Ok(c) => c,
+        Err(_) => return machines.iter().map(|m| m.name.clone()).collect(),
+    };
+    
+    let mut missing = Vec::new();
+    for m in machines {
+        // Skip local machine - it shouldn't be in SSH config pointing to itself
+        if !ssh_content.contains(&format!("Host {}", m.name)) {
+            missing.push(m.name.clone());
+        }
+    }
+    missing
+}
+
+/// Force SSH config file to be written to disk
+fn flush_ssh_config(ssh_config: &Path) -> std::io::Result<()> {
+    // Open in append mode to ensure file exists, then sync
+    let file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(ssh_config)?;
+    file.sync_all()?;
+    Ok(())
+}
+
+/// Log the current phase of the sync process
+fn log_phase(verbose: bool, iteration: usize, phase: u8, total_phases: u8, message: &str) {
+    if verbose || iteration == 1 {
+        println!("[{}={}] {}", phase, total_phases, message);
+    }
+}
 
 /// Run discovery and sync in a loop until no new devices are found
 pub fn discovery_sync_loop(
@@ -125,7 +170,12 @@ pub fn discovery_sync_loop(
             }
         }
         
-        // --- announce (background thread) + listen, same window ---
+        // ============================================================
+        // PHASE 1: Discovery
+        // ============================================================
+        // Find machines and their current IPs via UDP beacons and TCP scanning
+        // This does NOT require SSH to be configured
+        // ============================================================
         if verbose {
             println!("== Iteration {}: Announcing + listening for beacons ({} s, UDP port {}) ==",
                 iteration, current_conf.wait_secs, current_conf.udp_port);
@@ -278,6 +328,19 @@ pub fn discovery_sync_loop(
             }
         }
 
+        // ============================================================
+        // PHASE 2: Update SSH config
+        // ============================================================
+        // Update ~/.ssh/config with discovered IPs so that git can connect
+        // This MUST happen BEFORE any git operations (pull/push)
+        // ============================================================
+        if iteration == 1 || verbose {
+            log_phase(verbose, iteration, 2, 4, "Updating SSH config (~/.ssh/config)");
+        }
+        
+        let mut ssh_updated = 0;
+        let mut ssh_failed: Vec<String> = Vec::new();
+        
         // --- machines ---
         if iteration == 1 {
             println!("== Machines ==");
@@ -347,10 +410,12 @@ pub fn discovery_sync_loop(
                                     println!("  + {} -> {}  (~/.ssh/config updated)", m.name, ip);
                                 }
                                 iteration_found += 1;
+                                ssh_updated += 1;
                             }
                             Err(e) => {
-                                warn(&format!("could not write ~/.ssh/config: {}", e));
+                                warn(&format!("could not write ~/.ssh/config for {}: {}", m.name, e));
                                 iteration_missing += 1;
+                                ssh_failed.push(m.name.clone());
                                 continue;
                             }
                         }
@@ -359,16 +424,52 @@ pub fn discovery_sync_loop(
             }
         }
         
-        // Update git remotes and sync after discovery
+        // Force SSH config to be written to disk before git operations
+        if !dry_run && ssh_updated > 0 {
+            if let Err(e) = flush_ssh_config(ssh_config) {
+                warn(&format!("Failed to flush SSH config to disk: {}", e));
+            }
+        }
+        
+        // Check if SSH config is complete for all machines
+        if !dry_run && !ssh_failed.is_empty() {
+            warn(&format!(
+                "SSH config update failed for: {}. Git sync may not work for these machines.",
+                ssh_failed.join(", ")
+            ));
+        }
+        
+        found = iteration_found;
+        missing = iteration_missing;
+        
+        // ============================================================
+        // PHASE 3: Git remotes configuration
+        // ============================================================
+        // Configure git remotes for all machines
+        // Requires SSH config to be up to date (Phase 2)
+        // ============================================================
         if !dry_run {
+            log_phase(verbose, iteration, 3, 4, "Configuring git remotes");
+            
+            // Verify SSH config is complete before git operations
+            let ssh_missing = verify_ssh_config_complete(ssh_config, &current_conf.machines);
+            if !ssh_missing.is_empty() {
+                warn(&format!(
+                    "SSH config missing entries for: {}. Git operations may fail for these machines.",
+                    ssh_missing.join(", ")
+                ));
+            }
+            
             let errors = refresh_git_remotes(&config_dir, &current_conf.machines, local_name);
             for error in &errors {
                 warn(&format!("git remote refresh: {}", error));
             }
             
-            // Sync with remotes after discovery
+            // Sync with remotes after discovery and SSH config update
             // On first iteration, only sync if initial_refresh flag is set
             if iteration > 1 || initial_refresh {
+                log_phase(verbose, iteration, 4, 4, "Syncing with git remotes (pull/push)");
+                
                 let sync_errors = sync_with_remotes(&config_dir, has_local_changes);
                 for error in &sync_errors {
                     // Always warn about sync errors, even in non-verbose mode
@@ -436,9 +537,6 @@ pub fn discovery_sync_loop(
                 }
             }
         }
-        
-        found = iteration_found;
-        missing = iteration_missing;
         
         // Check if we found new devices by comparing current device files with previous
         let mut current_device_files: HashSet<String> = HashSet::new();
