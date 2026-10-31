@@ -45,6 +45,7 @@ use serde_json::{Map, Value};
 // Data types
 // ============================================================
 
+#[derive(Clone)]
 struct Machine {
     name: String,
     fingerprint: String,
@@ -53,6 +54,7 @@ struct Machine {
     port_explicit: bool,
 }
 
+#[derive(Clone)]
 struct Conf {
     udp_port: u16,
     wait_secs: u64,
@@ -394,6 +396,71 @@ fn git_list_remotes(repo_path: &Path) -> Vec<String> {
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
                 .collect()
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// Check if there are any unstaged changes in the git repository
+/// Returns true if there are modified, added, or deleted files not yet committed
+fn has_unstaged_changes(repo_path: &Path) -> bool {
+    if !is_git_repo(repo_path) {
+        return false;
+    }
+    
+    let output = Command::new("git")
+        .current_dir(repo_path)
+        .arg("status")
+        .arg("--porcelain")
+        .output();
+    
+    match output {
+        Ok(o) if o.status.success() => {
+            let status = String::from_utf8_lossy(&o.stdout);
+            !status.trim().is_empty()
+        }
+        _ => false,
+    }
+}
+
+/// Get list of modified configuration files (settings.json and devices/*.json)
+/// Returns paths relative to repo_path
+fn get_modified_config_files(repo_path: &Path) -> Vec<PathBuf> {
+    if !is_git_repo(repo_path) {
+        return Vec::new();
+    }
+    
+    let output = Command::new("git")
+        .current_dir(repo_path)
+        .arg("status")
+        .arg("--porcelain")
+        .output();
+    
+    match output {
+        Ok(o) if o.status.success() => {
+            let status = String::from_utf8_lossy(&o.stdout);
+            let mut modified_files = Vec::new();
+            
+            for line in status.lines() {
+                if line.trim().is_empty() {
+                    continue;
+                }
+                // Porcelain format: "<index_status><workspace_status> <file>"
+                // We're interested in modified (M) or added (A) files
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() < 2 {
+                    continue;
+                }
+                let _file_status = parts[0];
+                let file_path = parts[1];
+                
+                // Check if it's a config file we care about
+                if file_path == GLOBAL_CONFIG_FILE || 
+                   file_path.starts_with(&format!("{}/", DEVICES_DIR)) {
+                    modified_files.push(PathBuf::from(file_path));
+                }
+            }
+            modified_files
         }
         _ => Vec::new(),
     }
@@ -856,43 +923,6 @@ fn load_config() -> Conf {
     }
 }
 
-/// Git add and commit helper (commits all changes)
-/// DEPRECATED: Use git_add_and_commit_file for individual files to prevent conflicts
-fn git_add_and_commit(repo_path: &Path, message: &str) -> io::Result<()> {
-    if !is_git_repo(repo_path) {
-        return Ok(());
-    }
-    
-    let status = Command::new("git")
-        .current_dir(repo_path)
-        .arg("add")
-        .arg(".")
-        .status()?;
-    
-    if !status.success() {
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
-            "git add failed",
-        ));
-    }
-    
-    let status = Command::new("git")
-        .current_dir(repo_path)
-        .arg("commit")
-        .arg("-m")
-        .arg(message)
-        .status()?;
-    
-    if !status.success() {
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
-            "git commit failed",
-        ));
-    }
-    
-    Ok(())
-}
-
 /// Git add and commit a specific file (for device files and shared files separately)
 /// This ensures device-owned files are in separate commits from shared files,
 /// preventing conflicts during decentralized sync.
@@ -1276,6 +1306,21 @@ fn discovery_sync_loop(
     let config_dir = PathBuf::from(&home).join(CONFIG_DIR);
     let devices_dir = config_dir.join(DEVICES_DIR);
     
+    // Start with the initial configuration
+    let mut current_conf = conf.clone();
+    
+    // Check if there are unstaged changes to config files and load them
+    if has_unstaged_changes(&config_dir) {
+        if verbose {
+            println!("Detected unstaged config changes - reloading configuration");
+        }
+        // Reload config to pick up local modifications
+        current_conf = load_config();
+        if verbose {
+            println!("Configuration reloaded with local changes");
+        }
+    }
+    
     // Get initial list of device files
     let mut previous_device_files: std::collections::HashSet<String> = std::collections::HashSet::new();
     if devices_dir.exists() {
@@ -1298,8 +1343,18 @@ fn discovery_sync_loop(
     let mut new_devices_found = true;
     let mut has_local_changes = false;
     
+    // Check if there are local config changes (unstaged) at the start
+    // This includes settings.json modifications and new device files
+    if is_git_repo(&config_dir) && has_unstaged_changes(&config_dir) {
+        has_local_changes = true;
+        if verbose {
+            let modified = get_modified_config_files(&config_dir);
+            println!("Local config changes detected: {:?}", modified);
+        }
+    }
+    
     // Check if this device is alone in the config (only itself configured)
-    let is_alone = conf.machines.len() == 1 && conf.machines[0].name == local_name;
+    let is_alone = current_conf.machines.len() == 1 && current_conf.machines[0].name == local_name;
     
     // Save the current state of our device file before any operations
     let local_device_path = config_dir.join(DEVICES_DIR).join(format!("{}.json", local_name));
@@ -1309,25 +1364,55 @@ fn discovery_sync_loop(
         String::new()
     };
     
+    // Track settings.json for changes
+    let settings_path = config_dir.join(GLOBAL_CONFIG_FILE);
+    let _our_initial_settings = if settings_path.exists() {
+        read_device_file_content(&settings_path)
+    } else {
+        String::new()
+    };
+    
     while (new_devices_found || (is_alone && iteration < 2)) && iteration < MAX_SYNC_ITERATIONS {
         iteration += 1;
         new_devices_found = false;
         
+        // Check for new unstaged config changes at the start of each iteration
+        // This allows immediate use of modified settings (e.g., new subnets) without requiring a commit
+        if is_git_repo(&config_dir) && has_unstaged_changes(&config_dir) {
+            let modified_files = get_modified_config_files(&config_dir);
+            let settings_modified = modified_files.iter().any(|p| p == Path::new(GLOBAL_CONFIG_FILE));
+            let devices_modified = modified_files.iter().any(|p| p.to_string_lossy().starts_with(&format!("{}/", DEVICES_DIR)));
+            
+            if settings_modified || devices_modified {
+                if verbose {
+                    println!("  . Detected config changes: {:?}", modified_files);
+                }
+                // Reload configuration to pick up the changes
+                current_conf = load_config();
+                has_local_changes = true;
+                
+                // Update is_alone flag with new config
+                if current_conf.machines.len() == 1 && current_conf.machines[0].name == local_name {
+                    // Still alone, but we'll continue with the loop
+                }
+            }
+        }
+        
         // --- announce (background thread) + listen, same window ---
         if verbose {
             println!("== Iteration {}: Announcing + listening for beacons ({} s, UDP port {}) ==",
-                iteration, conf.wait_secs, conf.udp_port);
+                iteration, current_conf.wait_secs, current_conf.udp_port);
         } else if iteration == 1 {
             println!(
                 "== Announcing + listening for beacons ({} s, UDP port {}) ==",
-                conf.wait_secs, conf.udp_port
+                current_conf.wait_secs, current_conf.udp_port
             );
         }
         
         let announcer = match local_ip.clone() {
             Some(ip) => {
-                let port = conf.udp_port;
-                let secs = conf.wait_secs;
+                let port = current_conf.udp_port;
+                let secs = current_conf.wait_secs;
                 let name = local_name.to_string();
                 Some(thread::spawn(move || {
                     announce_beacon(port, secs, &name, &ip)
@@ -1341,7 +1426,7 @@ fn discovery_sync_loop(
             }
         };
         
-        let beacons = listen_beacons(conf.udp_port, conf.wait_secs);
+        let beacons = listen_beacons(current_conf.udp_port, current_conf.wait_secs);
         if let Some(h) = announcer {
             let _ = h.join();
         }
@@ -1358,7 +1443,7 @@ fn discovery_sync_loop(
         }
         
         // --- candidates: beacons x ports ---
-        let mut ports: Vec<u16> = conf.machines.iter().map(|m| m.port).collect();
+        let mut ports: Vec<u16> = current_conf.machines.iter().map(|m| m.port).collect();
         ports.sort_unstable();
         ports.dedup();
 
@@ -1379,7 +1464,7 @@ fn discovery_sync_loop(
                     a
                 )),
             },
-            None => nets.extend(conf.subnets.iter().cloned()),
+            None => nets.extend(current_conf.subnets.iter().cloned()),
         }
         let force_scan = net_arg.is_some();
         if (candidates.is_empty() || force_scan) && !nets.is_empty() {
@@ -1394,7 +1479,7 @@ fn discovery_sync_loop(
                     println!("  scanning {}.0/24 (port {}) ...", net, ports[0]);
                 }
                 for p in &ports {
-                    candidates.extend(scan_subnet(net, *p, conf.batch_size));
+                    candidates.extend(scan_subnet(net, *p, current_conf.batch_size));
                 }
             }
         }
@@ -1411,7 +1496,7 @@ fn discovery_sync_loop(
         if iteration == 1 {
             println!("== Fingerprinting candidates ==");
         }
-        let md5_needed = conf
+        let md5_needed = current_conf
             .machines
             .iter()
             .any(|m| m.fingerprint.starts_with("MD5:"));
@@ -1470,7 +1555,7 @@ fn discovery_sync_loop(
         let mut iteration_found = 0;
         let mut iteration_missing = 0;
         
-        for m in &conf.machines {
+        for m in &current_conf.machines {
             // (a) pre-check: this machine offers the configured key itself
             if local_fps
                 .iter()
@@ -1546,7 +1631,7 @@ fn discovery_sync_loop(
         
         // Update git remotes and sync after discovery
         if !dry_run {
-            let errors = refresh_git_remotes(&config_dir, &conf.machines, local_name);
+            let errors = refresh_git_remotes(&config_dir, &current_conf.machines, local_name);
             for error in &errors {
                 warn(&format!("git remote refresh: {}", error));
             }
