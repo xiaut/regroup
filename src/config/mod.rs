@@ -39,9 +39,12 @@ pub const MAX_SYNC_ITERATIONS: usize = 10;
 // Submodules
 // ============================================================
 
+pub mod device;
+pub mod json_helpers;
 pub mod loading;
+pub mod settings;
 pub mod validation;
 
 // Re-export commonly used items
-pub use loading::{load_config, read_device_file_content};
-pub use validation::validate_machine;
+pub use loading::load_config;
+pub use device::read_device_file_content;
