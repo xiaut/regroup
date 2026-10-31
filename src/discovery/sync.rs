@@ -121,7 +121,7 @@ pub fn discovery_sync_loop(
         new_devices_found = false;
         
         // Check for new unstaged config changes at the start of each iteration
-        // This allows immediate use of modified settings (e.g., new subnets) without requiring a commit
+        // This allows immediate use of new device configs without requiring a commit
         if is_git_repo(&config_dir) && has_unstaged_changes(&config_dir) {
             let modified_files = get_modified_config_files(&config_dir);
             let settings_modified = modified_files.iter().any(|p| p == Path::new(GLOBAL_CONFIG_FILE));
@@ -215,7 +215,14 @@ pub fn discovery_sync_loop(
                     ));
                 }
             },
-            None => nets.extend(current_conf.subnets.iter().cloned()),
+            None => {
+                // Use local interfaces to get network prefixes for fallback scan
+                for (ip, _) in get_local_interfaces() {
+                    if let Some(n) = net_valid(&net_prefix(&ip)) {
+                        nets.push(n);
+                    }
+                }
+            },
         }
         let force_scan = net_arg.is_some();
         if (candidates.is_empty() || force_scan) && !nets.is_empty() {

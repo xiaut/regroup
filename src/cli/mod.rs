@@ -163,7 +163,7 @@ Usage:
   ./regroup setup-cd       install 'regroup-cd' shell function to change to config directory
   ./regroup -h             this help\n
 Config repository structure (~/.regroup-config/):
-  settings.json           (optional: udp_port, wait_secs, batch_size, subnets)
+  settings.json           (optional: udp_port, wait_secs, batch_size)
   devices/
     <hostname>.json       (each device's config: name, fingerprint, user, port)\n
 Git remotes (automatically managed using hostnames):
