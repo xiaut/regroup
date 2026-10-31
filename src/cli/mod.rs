@@ -115,7 +115,7 @@ pub fn run_selftest() -> ! {
             println!("device file creation — FAIL ({})", e);
             ok = false;
         } else {
-            match crate::config::loading::load_device_file(&device_file) {
+            match crate::config::device::load_device_file(&device_file) {
                 Ok(m) => {
                     let device_ok = m.name == "test" 
                         && m.fingerprint == "SHA256:abc"
