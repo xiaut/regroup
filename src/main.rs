@@ -41,36 +41,9 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value};
 
-// ============================================================
-// Data types
-// ============================================================
+use config::{Conf, Machine, CONFIG_DIR, DEVICES_DIR, GLOBAL_CONFIG_FILE, MAX_SYNC_ITERATIONS};
 
-#[derive(Clone)]
-struct Machine {
-    name: String,
-    fingerprint: String,
-    user: String,
-    port: u16,
-    port_explicit: bool,
-}
-
-#[derive(Clone)]
-struct Conf {
-    udp_port: u16,
-    wait_secs: u64,
-    batch_size: usize,
-    subnets: Vec<String>,
-    machines: Vec<Machine>,
-}
-
-// ============================================================
-// Configuration constants
-// ============================================================
-
-const CONFIG_DIR: &str = ".regroup-config";
-const DEVICES_DIR: &str = "devices";
-const GLOBAL_CONFIG_FILE: &str = "settings.json";
-const MAX_SYNC_ITERATIONS: usize = 10;
+mod config;
 
 // ============================================================
 // Error handling
