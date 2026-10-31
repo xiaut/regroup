@@ -248,6 +248,8 @@ pub fn setup_cd() -> ! {
                 "✓ 'regroup-cd' function installed in ~/{}",
                 config_file.file_name().unwrap_or_default().to_string_lossy()
             );
+            println!("Run 'source ~/{}' or open a new terminal to start using it.",
+                config_file.file_name().unwrap_or_default().to_string_lossy());
             println!("Use: regroup-cd");
         }
         Err(e) => die(&format!(
