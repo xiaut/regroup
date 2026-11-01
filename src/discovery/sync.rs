@@ -341,7 +341,7 @@ pub fn discovery_sync_loop(
                     {
                         Ok(()) => {
                             if iteration == 1 {
-                                println!("  + {} -> {}  (~/.ssh/config updated)", m.name, beacon.ip);
+                                println!("  ~ {} -> {}  (~/.ssh/config updated)", m.name, beacon.ip);
                             }
                             iteration_found += 1;
                             ssh_updated += 1;
