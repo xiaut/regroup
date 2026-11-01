@@ -226,6 +226,7 @@ fn main() {
                         refresh_git(&home);
                     }
                     "q" => {
+                        println!();
                         // Quit
                         break;
                     }
@@ -253,9 +254,11 @@ fn main() {
             if io::stdin().read_line(&mut input).is_ok() {
                 match input.trim().to_lowercase().as_str() {
                     "q" | "quit" => {
+                        println!();
                         break;
                     }
                     "r" | "refresh" => {
+                        println!();
                         refresh_git(&home);
                     }
                     _ => {
