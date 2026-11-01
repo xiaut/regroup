@@ -137,9 +137,11 @@ fn main() {
     let local_name = host_name();
     let local_ip = my_ip();
     
-    // Get SSH server public key - this is the UNIQUE identifier for this machine
+    // Get SSH server PUBLIC KEY (full key, not fingerprint) - this is the UNIQUE identifier for this machine
     // Returns None if no SSH server is installed/configured
-    let local_public_key = match public_key::get_ssh_server_fingerprint() {
+    // NOTE: We use get_ssh_server_public_key() NOT get_ssh_server_fingerprint()
+    // because the beacon format expects the full public key, not the fingerprint.
+    let local_public_key = match public_key::get_ssh_server_public_key() {
         Some(key) => key,
         None => {
             // No SSH server public key found - device cannot accept SSH connections
