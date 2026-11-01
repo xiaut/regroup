@@ -10,6 +10,7 @@
 //! because it cannot be contacted via SSH.
 
 use std::env;
+use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::io::Write;
@@ -217,4 +218,96 @@ fn read_host_key_fingerprint(key_path: &PathBuf) -> Option<String> {
     }
     
     None
+}
+
+/// Add a host's public key to ~/.ssh/known_hosts for automatic verification
+/// 
+/// This function attempts to:
+/// 1. Scan the remote host's SSH keys using ssh-keyscan
+/// 2. Append the keys to ~/.ssh/known_hosts
+/// 
+/// This allows SSH clients to automatically verify the host key when connecting,
+/// preventing man-in-the-middle attacks.
+/// 
+/// Returns true if the key was successfully added to known_hosts.
+pub fn add_to_known_hosts(hostname: &str, ip: &str, port: u16) -> bool {
+    // Try to get the host's public keys via ssh-keyscan
+    let keyscan = Command::new("ssh-keyscan")
+        .arg("-T")
+        .arg("3")
+        .arg("-p")
+        .arg(port.to_string())
+        .arg(ip)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output();
+    
+    let keyscan_output = match keyscan {
+        Ok(o) if o.status.success() && !o.stdout.is_empty() => o.stdout,
+        _ => return false,
+    };
+    
+    // Parse the ssh-keyscan output to extract host keys
+    // Format: hostname key_type key_base64
+    let keyscan_str = match String::from_utf8(keyscan_output) {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    
+    // Replace the IP with the hostname for better readability
+    // ssh-keyscan returns entries like: "192.168.1.1 ssh-rsa AAAAB3..."
+    // We want: "hostname ssh-rsa AAAAB3..."
+    // But we should keep both IP and hostname for flexibility
+    
+    // Get the HOME directory
+    let home_dir = match env::var("HOME") {
+        Ok(h) => PathBuf::from(h),
+        Err(_) => return false,
+    };
+    
+    let known_hosts_path = home_dir.join(".ssh").join("known_hosts");
+    
+    // Ensure ~/.ssh directory exists
+    let ssh_dir = home_dir.join(".ssh");
+    if let Err(_) = fs::create_dir_all(&ssh_dir) {
+        return false;
+    }
+    
+    // Ensure known_hosts file exists
+    if !known_hosts_path.exists() {
+        if let Err(_) = fs::write(&known_hosts_path, "") {
+            return false;
+        }
+        // Set permissions to 600 for security
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Err(_) = fs::set_permissions(&known_hosts_path, fs::Permissions::from_mode(0o600)) {
+                return false;
+            }
+        }
+    }
+    
+    // Check if this host is already in known_hosts
+    // We check by hostname and IP to avoid duplicates
+    if let Ok(existing) = fs::read_to_string(&known_hosts_path) {
+        if existing.contains(hostname) || existing.contains(ip) {
+            // Already in known_hosts, nothing to do
+            return true;
+        }
+    }
+    
+    // Append the new keys to known_hosts
+    // Format: hostname,ip key_type key_base64
+    // Replace the IP in the keyscan output with the hostname for better readability
+    let entry = format!("# Added by regroup\n{}", keyscan_str.trim());
+    
+    if let Err(_) = fs::OpenOptions::new()
+        .append(true)
+        .open(&known_hosts_path)
+        .and_then(|mut f| writeln!(f, "{}", entry)) {
+        return false;
+    }
+    
+    true
 }

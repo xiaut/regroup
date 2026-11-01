@@ -306,6 +306,14 @@ pub fn add_device_to_config(
             } else {
                 println!("  + Added {} -> {} (~/.ssh/config updated)", device.name, device.ip);
             }
+            
+            // Add to known_hosts for automatic SSH key verification
+            if crate::ssh::public_key::add_to_known_hosts(&device.name, &device.ip, 22) {
+                println!("  + Added {} to ~/.ssh/known_hosts for SSH verification", device.name);
+            } else {
+                warn(&format!("could not add {} to ~/.ssh/known_hosts (device may be offline)", device.name));
+            }
+            
             known_keys.insert(device.public_key.clone());
             *new_count += 1;
         }
