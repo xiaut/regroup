@@ -9,6 +9,62 @@ use std::process::Command;
 use crate::discovery::fingerprint::fingerprints;
 use crate::discovery::net::NetworkInterface;
 
+/// Get a persistent identifier for Termux
+/// This ensures the same identifier is used across restarts
+fn get_termux_persistent_id() -> String {
+    // Try to get ANDROID_ID (most reliable on Android)
+    if let Ok(android_id) = env::var("ANDROID_ID") {
+        if !android_id.is_empty() && android_id != "0" {
+            return format!("termux-{}", android_id);
+        }
+    }
+    
+    // Try to get device serial
+    if let Ok(serial) = Command::new("getprop").arg("ro.serialno").output() {
+        if serial.status.success() {
+            let s = String::from_utf8_lossy(&serial.stdout).trim().to_string();
+            if !s.is_empty() && s != "unknown" && s != "0" {
+                return format!("termux-{}", s);
+            }
+        }
+    }
+    
+    // Try to get device model
+    if let Ok(model) = env::var("ANDROID_DEVICE") {
+        if !model.is_empty() {
+            // Also try to get user to make it more unique
+            if let Ok(user) = env::var("USER") {
+                if !user.is_empty() {
+                    return format!("termux-{}-{}", model, user);
+                }
+            }
+            return format!("termux-{}", model);
+        }
+    }
+    
+    // Fallback: use USER if available
+    if let Ok(user) = env::var("USER") {
+        if !user.is_empty() {
+            return format!("termux-{}", user);
+        }
+    }
+    
+    // Last resort: generate a semi-persistent ID based on PREFIX path
+    // The PREFIX path is relatively stable in Termux
+    if let Ok(prefix) = env::var("PREFIX") {
+        // Hash the prefix path to get a consistent identifier
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut hasher = DefaultHasher::new();
+        prefix.hash(&mut hasher);
+        let hash = hasher.finish();
+        return format!("termux-{:x}", hash);
+    }
+    
+    // Absolute last resort (should never happen)
+    format!("termux-{}", std::process::id())
+}
+
 /// Get the local hostname
 pub fn host_name() -> String {
     // Check if we're running in Termux
@@ -63,8 +119,8 @@ pub fn host_name() -> String {
             }
         }
         
-        // Last resort for Termux
-        return format!("termux-{}", std::process::id());
+        // Last resort for Termux - use persistent identifier
+        return get_termux_persistent_id();
     }
     
     // Standard hostname detection

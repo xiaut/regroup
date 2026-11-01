@@ -49,8 +49,8 @@ use cli::{add_device_to_config, die, refresh_git, run_selftest, setup_cd, usage}
 use config::{load_config, Machine};
 use discovery::beacon::{announce_beacon, BeaconDevice};
 use ssh::config::update_block;
+use ssh::public_key;
 use discovery::{get_local_interfaces, host_name, my_ip};
-use discovery::local::get_local_fingerprint;
 
 fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
@@ -128,12 +128,7 @@ fn main() {
     // --- local identity ---
     let local_name = host_name();
     let local_ip = my_ip();
-    let local_ssh_port = conf.machines
-        .iter()
-        .find(|m| m.name == local_name)
-        .map(|m| m.port)
-        .unwrap_or(22);
-    let local_public_key = get_local_fingerprint(local_ssh_port).unwrap_or_default();
+    let local_public_key = public_key::get_local_public_key_fingerprint().unwrap_or_default();
 
     if verbose {
         println!(
