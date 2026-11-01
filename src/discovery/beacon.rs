@@ -107,9 +107,11 @@ const MAX_BEACON_AGE: u64 = 300;
 /// Listens for signed beacon messages during the window. Returns BeaconDevice list,
 /// deduplicated by IP. Only beacons with valid signatures are accepted.
 /// 
+/// Beacons from the local machine (self-detection) are filtered out.
+/// 
 /// Expected format: name\tsigning_public_key_b64\tssh_public_key\tip\tport\ttimestamp\tsignature_b64
 /// Signed message: "name|ssh_public_key|ip|port|timestamp"
-pub fn listen_beacons(port: u16, secs: u64) -> Vec<BeaconDevice> {
+pub fn listen_beacons(port: u16, secs: u64, local_name: &str, local_ip: &str) -> Vec<BeaconDevice> {
     use crate::signing;
     
     let mut beacons: Vec<BeaconDevice> = Vec::new();
@@ -161,6 +163,11 @@ pub fn listen_beacons(port: u16, secs: u64) -> Vec<BeaconDevice> {
                             continue;
                         }
                         
+                        // Filter out self-detection: ignore beacons from our own machine
+                        if name == local_name || ip == local_ip {
+                            continue;
+                        }
+                        
                         // Check if we already have this device by IP
                         if !beacons.iter().any(|b| b.ip == ip) {
                             beacons.push(BeaconDevice {
@@ -189,7 +196,13 @@ pub fn listen_beacons(port: u16, secs: u64) -> Vec<BeaconDevice> {
 /// Runs indefinitely until channel is disconnected.
 /// 
 /// Only beacons with valid signatures are forwarded via the channel.
-pub fn listen_beacons_continuous(port: u16, sender: std::sync::mpsc::Sender<BeaconDevice>) {
+/// Beacons from the local machine (self-detection) are filtered out.
+pub fn listen_beacons_continuous(
+    port: u16,
+    sender: std::sync::mpsc::Sender<BeaconDevice>,
+    local_name: String,
+    local_ip: String,
+) {
     use crate::signing;
     
     let sock = match std::net::UdpSocket::bind(("0.0.0.0", port)) {
@@ -236,6 +249,11 @@ pub fn listen_beacons_continuous(port: u16, sender: std::sync::mpsc::Sender<Beac
                         if ip_verified != ip {
                             eprintln!("WARNING: beacon IP mismatch - claimed: {}, verified: {}", 
                                 ip, ip_verified);
+                            continue;
+                        }
+                        
+                        // Filter out self-detection: ignore beacons from our own machine
+                        if name == local_name || ip == local_ip {
                             continue;
                         }
                         

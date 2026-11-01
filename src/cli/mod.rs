@@ -342,16 +342,10 @@ pub fn refresh_git(home: &str) {
     
     println!("\nRefreshing git...");
     
-    // Pull from remotes
-    let sync_errors = git::sync_with_remotes(&config_dir, git::has_unstaged_changes(&config_dir));
+    // Sync with remotes (pull then push)
+    let sync_errors = git::sync_with_remotes(&config_dir);
     for error in &sync_errors {
         warn(&format!("[sync] {}", error));
-    }
-    
-    // Push to remotes
-    let push_errors = git::git_push_all(&config_dir);
-    for error in &push_errors {
-        warn(&format!("[push] {}", error));
     }
     
     println!("Git refresh complete.");

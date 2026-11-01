@@ -7,6 +7,7 @@ description = "Find machines by SSH host key fingerprint and update ~/.ssh/confi
 homepage = "https://github.com/yourusername/regroup"
 
 [dependencies]
+serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.154"
 ed25519-dalek = "2.2.0"
 rand_core = { version = "0.6.4", features = ["getrandom"] }

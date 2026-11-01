@@ -14,7 +14,7 @@
 // ============================================================
 
 /// Represents a machine/device in the network
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Machine {
     pub name: String,
     pub ssh_public_key: String,

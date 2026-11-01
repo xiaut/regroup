@@ -207,7 +207,7 @@ pub fn discovery_sync_loop(
             }
         };
         
-        let beacons = listen_beacons(current_conf.udp_port, current_conf.wait_secs);
+        let beacons = listen_beacons(current_conf.udp_port, current_conf.wait_secs, local_name, &local_ip);
         
         // Join the announcer thread if it exists
         if let Some(h) = announcer {
@@ -422,7 +422,7 @@ pub fn discovery_sync_loop(
             );
             
             if iteration > 1 || initial_refresh {
-                let sync_errors = sync_with_remotes(&config_dir, has_local_changes);
+                let sync_errors = sync_with_remotes(&config_dir);
                 for error in &sync_errors {
                     // Always warn about sync errors, even in non-verbose mode
                     // The error message already includes SSH auth setup hint
