@@ -8,12 +8,22 @@
 //!
 //! Order of operations:
 //! 1. Discovery (UDP beacons only - no TCP scanning) - devices announce themselves
-//!    with name, public_key, and IP. Each device detects its own public key locally.
-//! 2. Auto-add new devices - devices with unknown public keys are automatically
+//!    with name, ssh_public_key, and IP. Each device detects its own SSH public key locally.
+//! 2. Auto-add new devices - devices with unknown SSH public keys are automatically
 //!    added to local configuration (config is backup, not source of truth).
 //! 3. Update SSH config - so git knows how to connect to each machine
 //! 4. Refresh git remotes - ensure git knows about all machines
 //! 5. Git sync (pull/push) - exchange configuration files
+//!
+//! # Machine Identification
+//!
+//! **IMPORTANT**: Machines are uniquely identified by their SSH public key.
+//! - Hostname CAN change (Termux randomizes it on each launch)
+//! - IP address CAN change (different networks, DHCP, etc.)
+//! - SSH public key is PERSISTENT and uniquely identifies a machine
+//!
+//! Therefore, all self-detection and device identification MUST use the SSH public key,
+//! never hostname or IP address.
 
 use std::collections::HashSet;
 use std::env;
@@ -207,7 +217,16 @@ pub fn discovery_sync_loop(
             }
         };
         
-        let beacons = listen_beacons(current_conf.udp_port, current_conf.wait_secs, local_name, &local_ip);
+        // Get local SSH public key for self-detection filtering
+        // IMPORTANT: We pass the SSH public key, not hostname/IP, because the SSH public key
+        // is the unique identifier for a machine. Hostname can change (especially in Termux),
+        // and IP can change with network changes. The SSH key is what uniquely identifies "me".
+        let local_ssh_public_key_for_filtering = match local_ssh_public_key {
+            Some(ref key) => key.clone(),
+            None => String::new(),
+        };
+        
+        let beacons = listen_beacons(current_conf.udp_port, current_conf.wait_secs, &local_ssh_public_key_for_filtering);
         
         // Join the announcer thread if it exists
         if let Some(h) = announcer {
@@ -215,10 +234,8 @@ pub fn discovery_sync_loop(
         }
         
         // If we couldn't get SSH public key or signing keys, continue with listening only
-        let local_ssh_public_key = match local_ssh_public_key {
-            Some(key) => key,
-            None => String::new(),
-        };
+        // Use the filtering key (which is already set to empty string if None)
+        let local_ssh_public_key_for_display = local_ssh_public_key_for_filtering.clone();
         
         if verbose {
             println!("  . {} beacon(s) received", beacons.len());
@@ -237,8 +254,10 @@ pub fn discovery_sync_loop(
         
         // Find new devices (beacons with unknown SSH public keys)
         // Note: BeaconDevice uses 'ssh_public_key' field for SSH public key
+        // IMPORTANT: We filter out our own machine by SSH public key - this is the unique identifier.
+        // Hostname and IP can change, but the SSH key remains the same for a machine.
         let new_devices: Vec<&BeaconDevice> = beacons.iter()
-            .filter(|b| !known_keys.contains(&b.ssh_public_key) && !b.ssh_public_key.is_empty() && b.ssh_public_key != local_ssh_public_key)
+            .filter(|b| !known_keys.contains(&b.ssh_public_key) && !b.ssh_public_key.is_empty() && b.ssh_public_key != local_ssh_public_key_for_display)
             .collect();
         
         // Ask user to confirm new devices (identified by unknown public key)

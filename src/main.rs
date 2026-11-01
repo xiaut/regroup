@@ -127,18 +127,23 @@ fn main() {
     }
 
     // --- local identity ---
-    // IMPORTANT: We need the SSH *server* host key to identify this machine.
-    // Without it, the device cannot accept SSH connections and should NOT announce itself.
+    // IMPORTANT: We need the SSH *server* public key to uniquely identify this machine.
+    // This is CRITICAL for self-detection filtering.
+    // - Hostname CANNOT be used (Termux randomizes it on each launch)
+    // - IP address CANNOT be used (changes with network)
+    // - SSH public key IS PERSISTENT and uniquely identifies a machine
+    // Without a valid SSH server public key, the device cannot be uniquely identified
+    // and should NOT announce itself (as it cannot accept SSH connections anyway).
     let local_name = host_name();
     let local_ip = my_ip();
     
-    // Get SSH server host key fingerprint - this identifies the machine
+    // Get SSH server public key - this is the UNIQUE identifier for this machine
     // Returns None if no SSH server is installed/configured
     let local_public_key = match public_key::get_ssh_server_fingerprint() {
         Some(key) => key,
         None => {
-            // No SSH server host key found - device cannot accept SSH connections
-            // Do NOT announce, but continue listening for other devices
+            // No SSH server public key found - device cannot accept SSH connections
+            // and cannot be uniquely identified - do NOT announce
             eprintln!("WARNING: No SSH server host key found. This device will NOT announce itself.");
             eprintln!("         Other devices can still discover and connect to this machine if they have its IP.");
             eprintln!("         To fix: Install and configure an SSH server (e.g., 'pkg install openssh' in Termux).");
@@ -149,7 +154,7 @@ fn main() {
     if verbose {
         if !local_public_key.is_empty() {
             println!(
-                "  . this machine: {} / {} (key: {})",
+                "  . this machine: {} / {} (SSH key: {})",
                 local_name,
                 local_ip.as_deref().unwrap_or("unknown IP"),
                 &local_public_key[..16.min(local_public_key.len())]
@@ -266,7 +271,10 @@ fn main() {
         // Check for new beacons from the listener
         match rx.try_recv() {
             Ok(device) => {
-                // Skip if this is us
+                // IMPORTANT: Filter out self-detection using SSH public key only.
+                // The SSH public key is the unique identifier for a machine.
+                // We cannot use hostname (Termux changes it) or IP (network changes).
+                // If the device's SSH public key matches ours, this beacon is from us - ignore it.
                 if device.ssh_public_key == local_public_key {
                     continue;
                 }

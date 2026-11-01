@@ -6,6 +6,16 @@
 //! name\tsigning_public_key_b64\tssh_public_key\tip\tport\ttimestamp\tsignature_b64
 //!
 //! The signed message is: "name|ssh_public_key|ip|port|timestamp"
+//!
+//! # Machine Identification
+//!
+//! **CRITICAL**: Machines are uniquely identified by their SSH public key, NOT by hostname or IP.
+//! - Hostname can change (especially in Termux where it may be randomized on each launch)
+//! - IP addresses can change with network changes (WiFi, VPN, DHCP, etc.)
+//! - SSH public key is persistent and uniquely identifies a machine
+//!
+//! This is why self-detection filtering MUST use the SSH public key to determine
+//! "this beacon is from me" rather than comparing hostname or IP address.
 
 use std::net::SocketAddr;
 use std::time::{Duration, Instant, SystemTime};
@@ -107,11 +117,13 @@ const MAX_BEACON_AGE: u64 = 300;
 /// Listens for signed beacon messages during the window. Returns BeaconDevice list,
 /// deduplicated by IP. Only beacons with valid signatures are accepted.
 /// 
-/// Beacons from the local machine (self-detection) are filtered out.
+/// Beacons from the local machine (self-detection) are filtered out based on SSH public key.
+/// The SSH public key is the unique identifier for a machine - this is what defines
+/// "this is me" and not name or IP (which can change).
 /// 
 /// Expected format: name\tsigning_public_key_b64\tssh_public_key\tip\tport\ttimestamp\tsignature_b64
 /// Signed message: "name|ssh_public_key|ip|port|timestamp"
-pub fn listen_beacons(port: u16, secs: u64, local_name: &str, local_ip: &str) -> Vec<BeaconDevice> {
+pub fn listen_beacons(port: u16, secs: u64, local_ssh_public_key: &str) -> Vec<BeaconDevice> {
     use crate::signing;
     
     let mut beacons: Vec<BeaconDevice> = Vec::new();
@@ -163,8 +175,11 @@ pub fn listen_beacons(port: u16, secs: u64, local_name: &str, local_ip: &str) ->
                             continue;
                         }
                         
-                        // Filter out self-detection: ignore beacons from our own machine
-                        if name == local_name || ip == local_ip {
+                        // IMPORTANT: Filter out self-detection based on SSH public key only.
+                        // The SSH public key is the unique identifier for a machine.
+                        // We cannot rely on hostname (changes in Termux) or IP (changes with network).
+                        // If the beacon's SSH public key matches our own, this is us - ignore it.
+                        if ssh_public_key == local_ssh_public_key {
                             continue;
                         }
                         
@@ -196,12 +211,13 @@ pub fn listen_beacons(port: u16, secs: u64, local_name: &str, local_ip: &str) ->
 /// Runs indefinitely until channel is disconnected.
 /// 
 /// Only beacons with valid signatures are forwarded via the channel.
-/// Beacons from the local machine (self-detection) are filtered out.
+/// Beacons from the local machine (self-detection) are filtered out based on SSH public key.
+/// The SSH public key is the unique identifier for a machine - this is what defines
+/// "this is me" and not name or IP (which can change).
 pub fn listen_beacons_continuous(
     port: u16,
     sender: std::sync::mpsc::Sender<BeaconDevice>,
-    local_name: String,
-    local_ip: String,
+    local_ssh_public_key: String,
 ) {
     use crate::signing;
     
@@ -252,8 +268,11 @@ pub fn listen_beacons_continuous(
                             continue;
                         }
                         
-                        // Filter out self-detection: ignore beacons from our own machine
-                        if name == local_name || ip == local_ip {
+                        // IMPORTANT: Filter out self-detection based on SSH public key only.
+                        // The SSH public key is the unique identifier for a machine.
+                        // We cannot rely on hostname (changes in Termux) or IP (changes with network).
+                        // If the beacon's SSH public key matches our own, this is us - ignore it.
+                        if ssh_public_key == local_ssh_public_key {
                             continue;
                         }
                         
