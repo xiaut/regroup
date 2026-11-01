@@ -9,7 +9,6 @@
 pub mod repo;
 pub mod remote;
 pub mod sync;
-pub mod changes;
 
 // Re-export commonly used functions for backward compatibility
 pub use repo::{is_git_repo, git_init};

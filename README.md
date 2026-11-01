@@ -11,7 +11,7 @@ Find machines by their SSH host key and update `~/.ssh/config`.
   listens continuously and prompts for each new device
 - Git remotes are **automatically configured** for all other devices (using hostnames)
 - Each device **owns** its own config file and can overwrite only it
-- If local device config differs from remote, user is **prompted** to resolve
+- If a new device's **name is already taken**, it is **renamed** automatically (`name-2`, `name-3`, ...)
 
 ## Quick Start
 
@@ -115,14 +115,15 @@ This handles:
    
    **Note**: With `pull.rebase = true`, manual `git pull` commands will use rebase automatically.
 
-### Device Ownership
+### Device Ownership & Name Conflicts
 
-- Each device owns its own config file (`devices/<hostname>.json`)
-- A device can only overwrite its own file
-- If remote config differs from local, user is prompted to resolve:
-  - Keep local version
-  - Use remote version
-  - Abort
+- Each device owns its own config file (`devices/<name>.json`)
+- When you accept a new device whose name is already used by another machine,
+  regroup renames the new device: `laptop` becomes `laptop-2`, `-3`, ... until
+  the name is free. A name is considered taken when it matches:
+  - a machine in the regroup config (`devices/` directory), or
+  - an existing `Host` block in `~/.ssh/config` (regroup-managed or your own)
+- Existing entries are never overwritten
 
 ## Usage
 
@@ -318,22 +319,16 @@ These are expected if:
 
 Regroup handles these gracefully with warnings. The sync will work through other paths.
 
-### Conflict resolution
-When your device's config differs from the remote, you'll be prompted:
-```
-CONFLICT: Device config for 'yourhost' differs from remote
-Local version:
-{...}
+### Name conflicts
+Two machines may share a hostname (e.g. two devices with the same default
+name). When you accept a device whose name is already taken, regroup renames
+it automatically: you will see
 
-Remote version:
-{...}
-
-Options:
-  1. Keep local version
-  2. Use remote version
-  3. Abort
-Choice [1/2/3]:
 ```
+  ! Name 'laptop' already used by another machine or an existing ~/.ssh/config entry — saved as 'laptop-2'
+```
+
+and both machines keep working under their own names.
 
 ## License
 

@@ -367,21 +367,15 @@ fn main() {
                     let input = input.trim().to_lowercase();
                     match input.as_str() {
                         "y" | "yes" => {
-                            // Add to known keys so future beacons will auto-update IP
-                            known_keys.insert(device_ssh_public_key.clone());
-                            // The beacon explicitly carries the device's SSH port:
-                            // mark it explicit so ~/.ssh/config and the device file
-                            // keep it (otherwise Termux port 8022 would be lost).
-                            let machine = Machine {
-                                name: device_name.clone(),
-                                ssh_public_key: device_ssh_public_key.clone(),
-                                user: String::new(),
-                                port: device.port,
-                                port_explicit: true,
-                            };
-                            key_to_machine.insert(device_ssh_public_key.clone(), machine);
-                            known_ip.insert(device_ssh_public_key.clone(), device.ip.clone());
-                            add_device_to_config(&home, &ssh_config, &device, &mut known_keys, &mut new_count);
+                            // Add the device; if its name collides with an existing
+                            // machine (regroup config or ~/.ssh/config), it is renamed.
+                            if let Some(machine) = add_device_to_config(&home, &ssh_config, &device, &mut new_count) {
+                                // Remember the machine under its final (possibly renamed)
+                                // name so future beacons update the right ~/.ssh/config block.
+                                known_keys.insert(device_ssh_public_key.clone());
+                                key_to_machine.insert(device_ssh_public_key.clone(), machine);
+                                known_ip.insert(device_ssh_public_key.clone(), device.ip.clone());
+                            }
                         }
                         "r" => {
                             pending_devices.push_front(device);

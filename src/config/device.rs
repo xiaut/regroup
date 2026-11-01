@@ -110,8 +110,3 @@ pub fn save_device_file(path: &Path, machine: &Machine) -> io::Result<()> {
     fs::write(path, serde_json::to_string_pretty(&value)?)?;
     Ok(())
 }
-
-/// Read device file content as string
-pub fn read_device_file_content(path: &Path) -> String {
-    fs::read_to_string(path).unwrap_or_default()
-}

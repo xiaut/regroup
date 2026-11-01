@@ -6,7 +6,6 @@ use std::env;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
-use std::collections::HashSet;
 
 use crate::config::{load_config, CONFIG_DIR, DEVICES_DIR, GIT_DIR, Machine};
 use crate::discovery::host_name;
@@ -34,38 +33,6 @@ pub fn warn(msg: &str) {
 // ============================================================
 // User interaction
 // ============================================================
-
-/// Ask user to resolve a conflict
-/// Returns: true = keep local, false = use remote, None = abort
-pub fn ask_conflict_resolution(device_name: &str, local_content: &str, remote_content: &str) -> Option<bool> {
-    use std::io::Write;
-    
-    println!("\nCONFLICT: Device config for '{}' differs from remote", device_name);
-    println!("Local version:");
-    println!("{}", local_content);
-    println!("\nRemote version:");
-    println!("{}", remote_content);
-    println!("\nOptions:");
-    println!("  1. Keep local version");
-    println!("  2. Use remote version");
-    println!("  3. Abort");
-    print!("\nChoice [1/2/3]: ");
-    std::io::stdout().flush().ok();
-    
-    let mut input = String::new();
-    if std::io::stdin().read_line(&mut input).is_ok() {
-        match input.trim() {
-            "1" => Some(true),
-            "2" => Some(false),
-            "3" => None,
-            _ => Some(true), // Default to keep local
-        }
-    } else {
-        Some(true)
-    }
-}
-
-
 
 // ============================================================
 // Selftest
@@ -230,29 +197,87 @@ pub fn setup_cd() -> ! {
 // Device management
 // ============================================================
 
-/// Add a device to configuration and SSH config
-/// Returns true if device was added successfully
+/// Check whether ~/.ssh/config content contains a "Host <name>" block.
+/// Mirrors the block detection used by update_block, so that a name which
+/// would overwrite an existing block is considered taken.
+fn ssh_config_has_host(ssh_content: &str, name: &str) -> bool {
+    for line in ssh_content.lines() {
+        let words: Vec<&str> = line.split_whitespace().collect();
+        if !words.is_empty() && words[0] == "Host" && words[1..].iter().any(|w| *w == name) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Pick a device name that does not collide with an existing machine.
+///
+/// A name is taken when it is already used by:
+/// - a machine in the regroup config (devices loaded from `devices/`),
+/// - an existing `devices/<name>.json` file (even one that failed to load), or
+/// - an existing "Host <name>" block in ~/.ssh/config, whether regroup-managed
+///   or configured by the user for an unrelated host.
+///
+/// Returns `desired` if free, otherwise "name-2", "name-3", ... — the first
+/// free candidate. This protects existing entries from being overwritten:
+/// device files are per-name and update_block replaces Host blocks by name.
+pub fn unique_device_name(desired: &str, ssh_config: &PathBuf, devices_dir: &PathBuf) -> String {
+    let ssh_content = fs::read_to_string(ssh_config).unwrap_or_default();
+    let known_machines = load_config().machines;
+    let taken = |name: &str| {
+        known_machines.iter().any(|m| m.name == name)
+            || devices_dir.join(format!("{}.json", name)).exists()
+            || ssh_config_has_host(&ssh_content, name)
+    };
+    if !taken(desired) {
+        return desired.to_string();
+    }
+    let mut n = 2;
+    while n < 1000 && taken(&format!("{}-{}", desired, n)) {
+        n += 1;
+    }
+    format!("{}-{}", desired, n)
+}
+
+/// Add an accepted device to the configuration (device file, ~/.ssh/config,
+/// known_hosts) and commit it to the config git repository.
+///
+/// If the device's name is already used by another machine — in the regroup
+/// config, in an existing device file, or in an existing ~/.ssh/config Host
+/// block — the device is renamed ("name-2", "name-3", ...) so existing
+/// entries are never overwritten.
+///
+/// Returns the machine as actually saved (with its final name), or None if
+/// the device file could not be written.
 pub fn add_device_to_config(
     home: &str,
     ssh_config: &PathBuf,
     device: &BeaconDevice,
-    known_keys: &mut HashSet<crate::ssh::keys::SshPublicKey>,
     new_count: &mut usize,
-) {
+) -> Option<Machine> {
     let config_dir = PathBuf::from(home).join(CONFIG_DIR).join(GIT_DIR);
     let devices_dir = config_dir.join(DEVICES_DIR);
     
     // Ensure devices directory exists
     if let Err(e) = fs::create_dir_all(&devices_dir) {
         warn(&format!("could not create devices directory: {}", e));
-        return;
+        return None;
     }
     
-    let device_path = devices_dir.join(format!("{}.json", device.name));
+    // Rename the device if another machine already uses its name
+    let name = unique_device_name(&device.name, ssh_config, &devices_dir);
+    if name != device.name {
+        println!(
+            "  ! Name '{}' already used by another machine or an existing ~/.ssh/config entry — saved as '{}'",
+            device.name, name
+        );
+    }
+    
+    let device_path = devices_dir.join(format!("{}.json", name));
     // The beacon explicitly carries the device's SSH port: mark it explicit so
     // ~/.ssh/config and the device file keep it (e.g. Termux port 8022).
     let machine = Machine {
-        name: device.name.clone(),
+        name: name.clone(),
         ssh_public_key: device.ssh_public_key.clone(),
         user: String::new(),
         port: device.port,
@@ -262,32 +287,33 @@ pub fn add_device_to_config(
     match save_device_file(&device_path, &machine) {
         Ok(_) => {
             // Update SSH config
-            if let Err(e) = update_block(ssh_config, &device.name, &device.ip, &machine.user, machine.port, machine.port_explicit) {
-                warn(&format!("could not update SSH config for {}: {}", device.name, e));
+            if let Err(e) = update_block(ssh_config, &name, &device.ip, &machine.user, machine.port, machine.port_explicit) {
+                warn(&format!("could not update SSH config for {}: {}", name, e));
             } else {
-                println!("  + Added {} -> {} (~/.ssh/config updated)", device.name, device.ip);
+                println!("  + Added {} -> {} (~/.ssh/config updated)", name, device.ip);
             }
             
             // Add to known_hosts using ssh-keyscan for MITM protection
-            match public_key::add_to_known_hosts(&device.name, &device.ip, device.port) {
+            match public_key::add_to_known_hosts(&name, &device.ip, device.port) {
                 true => {
-                    println!("  + Added {} to ~/.ssh/known_hosts for SSH verification", device.name);
+                    println!("  + Added {} to ~/.ssh/known_hosts for SSH verification", name);
                 }
                 false => {
-                    warn(&format!("could not add {} to ~/.ssh/known_hosts", device.name));
+                    warn(&format!("could not add {} to ~/.ssh/known_hosts", name));
                 }
             }
             
             // Commit to git so changes persist across runs
-            if let Err(e) = git_add_and_commit_file(&config_dir, &device_path, &format!("Add device {}", device.name)) {
-                warn(&format!("could not commit device config for {}: {}", device.name, e));
+            if let Err(e) = git_add_and_commit_file(&config_dir, &device_path, &format!("Add device {}", name)) {
+                warn(&format!("could not commit device config for {}: {}", name, e));
             }
             
-            known_keys.insert(device.ssh_public_key.clone());
             *new_count += 1;
+            Some(machine)
         }
         Err(e) => {
-            warn(&format!("could not save device config for {}: {}", device.name, e));
+            warn(&format!("could not save device config for {}: {}", name, e));
+            None
         }
     }
 }
