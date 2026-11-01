@@ -88,3 +88,38 @@ pub fn listen_beacons(port: u16, secs: u64) -> Vec<BeaconDevice> {
     }
     beacons
 }
+
+/// Listens for beacons continuously and sends each via channel.
+/// Runs indefinitely until channel is disconnected.
+pub fn listen_beacons_continuous(port: u16, sender: std::sync::mpsc::Sender<BeaconDevice>) {
+    let sock = match std::net::UdpSocket::bind(("0.0.0.0", port)) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("WARNING: cannot listen on UDP port {} ({}) — beacons ignored", port, e);
+            return;
+        }
+    };
+    let _ = sock.set_read_timeout(Some(Duration::from_millis(200)));
+    let mut buf = [0u8; 4096];
+    
+    loop {
+        match sock.recv_from(&mut buf) {
+            Ok((n, _)) => {
+                let text = String::from_utf8_lossy(&buf[..n]);
+                let parts: Vec<&str> = text.split('\t').collect();
+                if parts.len() >= 3 {
+                    let device = BeaconDevice {
+                        name: parts[0].to_string(),
+                        public_key: parts[1].to_string(),
+                        ip: parts[2].to_string(),
+                    };
+                    let _ = sender.send(device);
+                }
+            }
+            Err(_) => {
+                // Read timeout, sleep briefly to avoid busy loop
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+    }
+}
