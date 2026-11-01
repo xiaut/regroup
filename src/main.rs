@@ -425,9 +425,14 @@ fn main() {
                     }
                     "r" | "refresh" => {
                         println!();
-                        refresh_git(&home);
-                        // A pull may have brought new device configs: reload
-                        reload_known_devices(&mut known_keys, &mut key_to_machine);
+                        // Dry run must not modify anything: skip git refresh
+                        if dry_run {
+                            println!("  (dry run - git refresh skipped)");
+                        } else {
+                            refresh_git(&home);
+                            // A pull may have brought new device configs: reload
+                            reload_known_devices(&mut known_keys, &mut key_to_machine);
+                        }
                     }
                     _ => {}
                 }

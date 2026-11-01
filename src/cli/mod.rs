@@ -8,8 +8,8 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::collections::HashSet;
 
-use crate::config::{CONFIG_DIR, DEVICES_DIR, GIT_DIR, Machine};
-use crate::discovery::{net_prefix, net_valid};
+use crate::config::{load_config, CONFIG_DIR, DEVICES_DIR, GIT_DIR, Machine};
+use crate::discovery::{host_name, net_prefix, net_valid};
 use crate::discovery::beacon::BeaconDevice;
 use crate::config::device::save_device_file;
 use crate::ssh::config::update_block;
@@ -306,7 +306,8 @@ pub fn add_device_to_config(
 // Git operations
 // ============================================================
 
-/// Refresh git remotes: pull from all remotes, then push to all remotes
+/// Refresh git remotes: configure remotes for all known devices (except self),
+/// then pull from all remotes and push to all remotes.
 pub fn refresh_git(home: &str) {
     // The git repository lives in ~/.regroup-config/git (not the root directory)
     let config_dir = PathBuf::from(home).join(CONFIG_DIR).join(GIT_DIR);
@@ -318,11 +319,45 @@ pub fn refresh_git(home: &str) {
     
     println!("\nRefreshing git...");
     
+    // Configure remotes for all known machines before syncing: pull/push can
+    // only reach devices that already have a remote.
+    let remote_errors = configure_remotes(&config_dir);
+    for error in &remote_errors {
+        warn(&format!("[sync] {}", error));
+    }
+    
     // Sync with remotes (pull then push)
     let sync_errors = git::sync_with_remotes(&config_dir);
     for error in &sync_errors {
         warn(&format!("[sync] {}", error));
     }
     
+    // A pull may have brought device files for machines we did not know yet:
+    // configure their remotes so the next refresh reaches them too.
+    let remote_errors = configure_remotes(&config_dir);
+    for error in &remote_errors {
+        warn(&format!("[sync] {}", error));
+    }
+    
     println!("Git refresh complete.");
+}
+
+/// Configure git remotes for all known machines except this device.
+///
+/// Self-detection uses both the hostname and the SSH public key: a stale
+/// device file written under an old hostname (hostnames can change, e.g.
+/// Termux) must not come back as a remote pointing at ourselves.
+fn configure_remotes(config_dir: &PathBuf) -> Vec<String> {
+    let conf = load_config();
+    let local_name = host_name();
+    let local_ssh_public_key = public_key::get_ssh_server_public_key();
+    let machines: Vec<Machine> = conf
+        .machines
+        .into_iter()
+        .filter(|m| {
+            m.name != local_name
+                && local_ssh_public_key.as_deref() != Some(m.ssh_public_key.as_str())
+        })
+        .collect();
+    git::refresh_git_remotes(config_dir, &machines, &local_name)
 }

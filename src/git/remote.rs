@@ -2,29 +2,38 @@
 //!
 //! This module handles git remote operations.
 
+use std::env;
 use std::io;
 use std::path::Path;
 use std::process::Command;
 
 use crate::config::{CONFIG_DIR, GIT_DIR, Machine};
 
-/// Add a git remote for a machine
-pub fn git_add_remote(repo_path: &Path, remote_name: &str, remote_url: &str) -> io::Result<()> {
-    if !super::repo::is_git_repo(repo_path) {
-        return Ok(());
-    }
-    
-    // Check if remote already exists
-    let check = Command::new("git")
+/// Get the URL of an existing remote, or None if it doesn't exist
+fn git_get_remote_url(repo_path: &Path, remote_name: &str) -> Option<String> {
+    let output = Command::new("git")
         .current_dir(repo_path)
         .arg("remote")
         .arg("get-url")
         .arg(remote_name)
         .output();
-    
-    match check {
+
+    match output {
         Ok(o) if o.status.success() => {
-            let existing_url = String::from_utf8_lossy(&o.stdout).trim().to_string();
+            Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
+        }
+        _ => None,
+    }
+}
+
+/// Add a git remote for a machine (updates the URL if it already exists)
+pub fn git_add_remote(repo_path: &Path, remote_name: &str, remote_url: &str) -> io::Result<()> {
+    if !super::repo::is_git_repo(repo_path) {
+        return Ok(());
+    }
+
+    match git_get_remote_url(repo_path, remote_name) {
+        Some(existing_url) => {
             if existing_url != remote_url {
                 // Update existing remote
                 let status = Command::new("git")
@@ -40,7 +49,7 @@ pub fn git_add_remote(repo_path: &Path, remote_name: &str, remote_url: &str) -> 
             }
             Ok(())
         }
-        _ => {
+        None => {
             // Add new remote
             let status = Command::new("git")
                 .current_dir(repo_path)
@@ -122,8 +131,15 @@ pub fn refresh_git_remotes(repo_path: &Path, machines: &[Machine], local_hostnam
         
         let has_machine = machines.iter().any(|m| m.name == *remote);
         if !has_machine {
-            if let Err(e) = git_remove_remote(repo_path, remote) {
-                errors.push(format!("failed to remove stale remote {}: {}", remote, e));
+            // Only remove remotes pointing at a regroup config repository
+            // (stale device remotes); leave remotes the user configured for
+            // other purposes (e.g. a backup repo) untouched.
+            let is_regroup_remote = git_get_remote_url(repo_path, remote)
+                .map_or(true, |url| url.contains(CONFIG_DIR));
+            if is_regroup_remote {
+                if let Err(e) = git_remove_remote(repo_path, remote) {
+                    errors.push(format!("failed to remove stale remote {}: {}", remote, e));
+                }
             }
         }
     }
@@ -134,18 +150,26 @@ pub fn refresh_git_remotes(repo_path: &Path, machines: &[Machine], local_hostnam
             continue; // Skip self
         }
         
-        // A remote URL without a user is invalid: skip with an error so the
-        // caller knows this machine cannot be synced yet
-        if machine.user.is_empty() {
+        // The remote URL needs an SSH user. Devices discovered via beacon carry
+        // none (the beacon format has no user field), so fall back to the
+        // current local user; "user" in the device file overrides it.
+        let user = if machine.user.is_empty() {
+            env::var("USER")
+                .or_else(|_| env::var("LOGNAME"))
+                .unwrap_or_default()
+        } else {
+            machine.user.clone()
+        };
+        if user.is_empty() {
             errors.push(format!(
                 "no SSH user configured for {} — set \"user\" in its device file to sync with it",
                 machine.name
             ));
             continue;
         }
-        
+
         // Construct SSH URL for the machine's config git repository (using hostname, not IP)
-        let remote_url = format!("{}@{}:~/{}/{}", machine.user, machine.name, CONFIG_DIR, GIT_DIR);
+        let remote_url = format!("{}@{}:~/{}/{}", user, machine.name, CONFIG_DIR, GIT_DIR);
         
         if let Err(e) = git_add_remote(repo_path, &machine.name, &remote_url) {
             errors.push(format!("failed to add remote for {}: {}", machine.name, e));

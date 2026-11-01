@@ -98,6 +98,12 @@ This handles:
 
 1. **Remote URLs** use the format: `user@hostname:~/.regroup-config/git`
 
+   Devices without a `user` field (e.g. added via beacon) fall back to the
+   current local user for the remote URL; set `"user"` in the device file to
+   override. Remotes pointing at a regroup config repository are removed when
+   the corresponding device disappears from the config; other remotes (e.g.
+   a backup repo you added yourself) are left untouched.
+
 2. **Sync operations** (triggered with 'r' in interactive mode):
    - `git pull` from all remotes
    - `git push` to all remotes
