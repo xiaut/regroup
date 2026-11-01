@@ -2,6 +2,24 @@
 //!
 //! This module provides newtype wrappers to prevent confusion between
 //! different key formats and ensure type safety when passing keys around.
+//!
+//! # Usage
+//!
+//! Instead of passing raw strings for keys, use these wrapper types:
+//!
+//! ```rust
+//! use crate::ssh::keys::{SshPublicKey, SigningPublicKeyB64};
+//!
+//! // Create a new SSH public key
+//! let ssh_key = SshPublicKey::new("ssh-rsa AAAAB3NzaC1yc2E...".to_string());
+//!
+//! // Pass it to functions - type system ensures you can't accidentally
+//! // pass a fingerprint where a public key is expected
+//! some_function(&ssh_key);
+//! ```
+//!
+//! This prevents bugs like the one where `get_ssh_server_fingerprint()` was used
+//! instead of `get_ssh_server_public_key()`, causing devices to not find each other.
 
 use std::fmt;
 
