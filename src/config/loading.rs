@@ -162,7 +162,7 @@ pub fn load_config() -> Conf {
     machines.sort_by(|a, b| a.name.cmp(&b.name));
     
     if machines.is_empty() {
-        die(&format!(
+        warn(&format!(
             "no devices configured in {} — first device will be auto-created on first run",
             config_dir.display()
         ));
