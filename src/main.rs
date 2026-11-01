@@ -43,7 +43,7 @@ mod ssh;
 use cli::{die, run_selftest, setup_cd, usage};
 use config::{load_config, CONFIG_DIR};
 use discovery::{host_name, my_ip};
-use discovery::sync::discovery_sync_loop;
+use discovery::{DiscoveryResult, sync::discovery_sync_loop};
 use git::{git_list_remotes, is_git_repo};
 
 fn main() {
@@ -137,7 +137,7 @@ fn main() {
     }
 
     // --- Discovery and sync loop ---
-    let (found, missing) = discovery_sync_loop(&conf, &ssh_config, &local_name, &local_ip, dry_run, verbose, refresh, &net_arg);
+    let DiscoveryResult { found, missing } = discovery_sync_loop(&conf, &ssh_config, &local_name, &local_ip, dry_run, verbose, refresh, &net_arg);
 
     // Check if this device is alone (only found itself, no remotes configured)
     if !dry_run && found == 1 && missing == 0 {

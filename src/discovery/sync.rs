@@ -7,10 +7,13 @@
 //! requires the SSH config to know how to reach each machine.
 //!
 //! Order of operations:
-//! 1. Discovery (UDP beacons + TCP scan) - find machines and their IPs
-//! 2. Update SSH config - so git knows how to connect to each machine
-//! 3. Refresh git remotes - ensure git knows about all machines
-//! 4. Git sync (pull/push) - exchange configuration files
+//! 1. Discovery (UDP beacons only - no TCP scanning) - devices announce themselves
+//!    with name, public_key, and IP. Each device detects its own public key locally.
+//! 2. Auto-add new devices - devices with unknown public keys are automatically
+//!    added to local configuration (config is backup, not source of truth).
+//! 3. Update SSH config - so git knows how to connect to each machine
+//! 4. Refresh git remotes - ensure git knows about all machines
+//! 5. Git sync (pull/push) - exchange configuration files
 
 use std::collections::HashSet;
 use std::env;
@@ -19,8 +22,9 @@ use std::path::{Path, PathBuf};
 use std::process;
 use std::thread;
 
-use super::{announce_beacon, fingerprints, get_local_interfaces, listen_beacons, net_prefix, net_valid, scan_subnet};
+use super::{announce_beacon, get_local_interfaces, listen_beacons, BeaconDevice, DiscoveryResult};
 use crate::cli::{ask_conflict_resolution, die, warn};
+use crate::discovery::local::get_local_fingerprint;
 use crate::config::{Conf, CONFIG_DIR, DEVICES_DIR, GLOBAL_CONFIG_FILE, MAX_SYNC_ITERATIONS, load_config, read_device_file_content};
 use crate::git::{git_add_and_commit_file, get_modified_config_files, git_push_all, has_unstaged_changes, is_git_repo, refresh_git_remotes, sync_with_remotes};
 use crate::ssh::{flush_ssh_config, update_block, verify_ssh_config_complete};
@@ -41,8 +45,8 @@ pub fn discovery_sync_loop(
     dry_run: bool,
     verbose: bool,
     initial_refresh: bool,
-    net_arg: &Option<String>,
-) -> (usize, usize) {
+    _net_arg: &Option<String>,
+) -> DiscoveryResult {
     let home = match env::var("HOME") {
         Ok(h) => h,
         Err(_) => die("HOME variable not set"),
@@ -145,19 +149,27 @@ pub fn discovery_sync_loop(
         // ============================================================
         // PHASE 1: Discovery
         // ============================================================
-        // Find machines and their current IPs via UDP beacons and TCP scanning
-        // This does NOT require SSH to be configured
+        // Find machines via UDP beacons only (no TCP scanning)
         // ============================================================
         log_phase(verbose, iteration, 1, 4, "Discovery");
+        
+        // Get local public key by self-detection on port 22
+        let local_ssh_port = current_conf.machines
+            .iter()
+            .find(|m| m.name == local_name)
+            .map(|m| m.port)
+            .unwrap_or(22);
+        let local_public_key = get_local_fingerprint(local_ssh_port).unwrap_or_default();
         
         let local_interfaces = get_local_interfaces();
         let announcer = if !local_interfaces.is_empty() {
             let port = current_conf.udp_port;
             let secs = current_conf.wait_secs;
             let name = local_name.to_string();
+            let public_key = local_public_key.clone();
             let interfaces = local_interfaces.clone();
             Some(thread::spawn(move || {
-                announce_beacon(port, secs, &name, &interfaces)
+                announce_beacon(port, secs, &name, &public_key, &interfaces)
             }))
         } else {
             if iteration == 1 {
@@ -173,130 +185,67 @@ pub fn discovery_sync_loop(
         
         if verbose {
             println!("  . {} beacon(s) received", beacons.len());
-            for (n, ip) in &beacons {
-                println!(
-                    "  . beacon: {} ({})",
-                    if n.is_empty() { "?" } else { n.as_str() },
-                    ip
-                );
+            for b in &beacons {
+                println!("  . beacon: {} ({}, key: {})", b.name, b.ip, &b.public_key[..8.min(b.public_key.len())]);
             }
         }
         
-        // --- candidates: beacons x ports ---
-        let mut ports: Vec<u16> = current_conf.machines.iter().map(|m| m.port).collect();
-        ports.sort_unstable();
-        ports.dedup();
-
-        let mut candidates: Vec<(String, u16)> = Vec::new();
-        for (_, ip) in &beacons {
-            for p in &ports {
-                candidates.push((ip.clone(), *p));
+        // Build set of known public keys from config
+        let known_keys: HashSet<String> = current_conf.machines.iter().map(|m| m.fingerprint.clone()).collect();
+        
+        // Find new devices (beacons with unknown public keys)
+        let new_devices: Vec<&BeaconDevice> = beacons.iter()
+            .filter(|b| !known_keys.contains(&b.public_key) && b.public_key != local_public_key)
+            .collect();
+        
+        // Auto-add new devices (identified by unknown public key)
+        if !new_devices.is_empty() && iteration == 1 {
+            println!("== New devices detected ==");
+            let mut devices_to_add: Vec<BeaconDevice> = Vec::new();
+            
+            for (i, device) in new_devices.iter().enumerate() {
+                println!("  {}: {} ({})", i + 1, device.name, device.ip);
+                
+                // Auto-add: since we trust the beacon's public key, we can add it
+                devices_to_add.push((*device).clone());
             }
-        }
-
-        // --- fallback (or requested) subnet scan ---
-        let mut nets: Vec<String> = Vec::new();
-        match net_arg {
-            Some(a) => {
-                if let Some(n) = net_valid(&net_prefix(a)) {
-                    nets.push(n);
+            
+            // Add new devices to config
+            for device in &devices_to_add {
+                use crate::config::device::save_device_file;
+                use crate::config::Machine;
+                
+                let device_path = devices_dir.join(format!("{}.json", device.name));
+                let machine = Machine {
+                    name: device.name.clone(),
+                    fingerprint: device.public_key.clone(),
+                    user: String::new(),
+                    port: 22,
+                    port_explicit: false,
+                };
+                
+                if let Err(e) = save_device_file(&device_path, &machine) {
+                    warn(&format!("could not save device config for {}: {}", device.name, e));
                 } else {
-                    die(&format!(
-                        "argument \"{}\" is not a valid /24 prefix (e.g. 192.168.43)",
-                        a
-                    ));
-                }
-            },
-            None => {
-                // Use local interfaces to get network prefixes for fallback scan
-                for (ip, _) in get_local_interfaces() {
-                    if let Some(n) = net_valid(&net_prefix(&ip)) {
-                        nets.push(n);
-                    }
-                }
-            },
-        }
-        let force_scan = net_arg.is_some();
-        if (candidates.is_empty() || force_scan) && !nets.is_empty() {
-            if iteration == 1 {
-                println!(
-                    "== Subnet scan ({}) ==",
-                    if force_scan { "requested" } else { "fallback" }
-                );
-            }
-            for net in &nets {
-                if verbose {
-                    println!("  scanning {}.0/24 (port {}) ...", net, ports[0]);
-                }
-                for p in &ports {
-                    candidates.extend(scan_subnet(net, *p, current_conf.batch_size));
+                    println!("  + Added {} to config", device.name);
+                    current_conf.machines.push(machine);
+                    has_local_changes = true;
                 }
             }
-        }
-        candidates.sort();
-        candidates.dedup();
-        if verbose {
-            println!("  . {} candidate(s) in total", candidates.len());
-            for (ip, p) in &candidates {
-                println!("  . candidate {}:{}", ip, p);
+            
+            if !devices_to_add.is_empty() {
+                println!("  New devices added. Commit and push to share with other machines.");
             }
         }
         
-        // --- fingerprints of the candidates ---
-        if iteration == 1 {
-            println!("== Fingerprinting candidates ==");
+        if beacons.is_empty() && iteration == 1 {
+            warn("no beacons received — run regroup on other machines during the window");
         }
-        let md5_needed = current_conf
-            .machines
-            .iter()
-            .any(|m| m.fingerprint.starts_with("MD5:"));
-        let mut seen: Vec<(String, u16, String)> = Vec::new();
-        for (ip, port) in &candidates {
-            let fps = fingerprints(ip, *port, false);
-            if fps.is_empty() {
-                warn(&format!(
-                    "port open on {}:{} but no SSH key received (not an SSH server?)",
-                    ip, port
-                ));
-                continue;
-            }
-            for f in fps {
-                seen.push((ip.clone(), *port, f));
-            }
-            if md5_needed {
-                for f in fingerprints(ip, *port, true) {
-                    seen.push((ip.clone(), *port, f));
-                }
-            }
-        }
-        if verbose {
-            println!("  . {} fingerprint(s) collected", seen.len());
-            for (ip, p, f) in &seen {
-                println!("  . fingerprint {}:{} {}", ip, p, f);
-            }
-        }
-        if candidates.is_empty() && iteration == 1 {
-            warn(
-                "no beacons received and no open ports found — run regroup on the other machine during the window, or pass a subnet: ./regroup 192.168.43",
-            );
-        } else if seen.is_empty() && iteration == 1 {
-            warn("open ports found but no SSH server responded");
-        }
-
-        // --- fingerprints of this machine's own IP, for local detection ---
-        let mut local_fps: Vec<(u16, String)> = Vec::new();
-        if let Some(ip) = local_ip {
-            for p in &ports {
-                for f in fingerprints(ip, *p, false) {
-                    local_fps.push((*p, f));
-                }
-                if md5_needed {
-                    for f in fingerprints(ip, *p, true) {
-                        local_fps.push((*p, f));
-                    }
-                }
-            }
-        }
+        
+        // Build a map from public_key to beacon for easy lookup
+        let beacon_map: std::collections::HashMap<String, &BeaconDevice> = beacons.iter()
+            .map(|b| (b.public_key.clone(), b))
+            .collect();
 
         // ============================================================
         // PHASE 2: Update SSH config
@@ -317,78 +266,50 @@ pub fn discovery_sync_loop(
         let mut iteration_missing = 0;
         
         for m in &current_conf.machines {
-            // (a) pre-check: this machine offers the configured key itself
-            if local_fps
-                .iter()
-                .any(|(p, f)| *p == m.port && *f == m.fingerprint)
-            {
+            // Find matching beacon by public key
+            if let Some(beacon) = beacon_map.get(&m.fingerprint) {
+                // Check if this is the local machine
+                if local_ip.as_deref() == Some(beacon.ip.as_str()) {
+                    if iteration == 1 {
+                        println!(
+                            "  o {}: this is the local machine (this host), config unchanged",
+                            m.name
+                        );
+                    }
+                    // Don't count local machine in the found total
+                    continue;
+                }
+                
+                // Found a matching beacon
+                if dry_run {
+                    if iteration == 1 {
+                        println!("  ~ {} -> {} (test mode, config not modified)", m.name, beacon.ip);
+                    }
+                    iteration_found += 1;
+                } else {
+                    match update_block(&ssh_config, &m.name, &beacon.ip, &m.user, m.port, m.port_explicit)
+                    {
+                        Ok(()) => {
+                            if iteration == 1 {
+                                println!("  + {} -> {}  (~/.ssh/config updated)", m.name, beacon.ip);
+                            }
+                            iteration_found += 1;
+                            ssh_updated += 1;
+                        }
+                        Err(e) => {
+                            warn(&format!("could not write ~/.ssh/config for {}: {}", m.name, e));
+                            iteration_missing += 1;
+                            ssh_failed.push(m.name.clone());
+                            continue;
+                        }
+                    }
+                }
+            } else {
+                // No matching beacon found
                 if iteration == 1 {
-                    println!(
-                        "  o {}: this is the local machine (this host), config unchanged",
-                        m.name
-                    );
+                    println!("  x {}: not found (no beacon with matching public key)", m.name);
                 }
-                // Don't count local machine in the found total
-                continue;
-            }
-            // resolution by fingerprint among the candidates
-            let mut matched: Option<String> = None;
-            for (ip, p, f) in &seen {
-                if *p == m.port && *f == m.fingerprint {
-                    matched = Some(ip.clone());
-                    break;
-                }
-            }
-            match matched {
-                None => {
-                    let servers = seen.iter().filter(|(_, p, _)| *p == m.port).count();
-                    if servers > 0 && iteration == 1 {
-                        println!(
-                            "  x {}: {} SSH server(s) seen on port {}, none with a matching key",
-                            m.name, servers, m.port
-                        );
-                    } else if iteration == 1 {
-                        println!(
-                            "  x {}: not found (no SSH server on port {})",
-                            m.name, m.port
-                        );
-                    }
-                    iteration_missing += 1;
-                }
-                Some(ip) => {
-                    // (b) the resolved machine is this machine
-                    if local_ip.as_deref() == Some(ip.as_str()) {
-                        if iteration == 1 {
-                            println!(
-                                "  o {}: this is the local machine (this host), config unchanged",
-                                m.name
-                            );
-                        }
-                        // Don't count local machine in the found total
-                    } else if dry_run {
-                        if iteration == 1 {
-                            println!("  ~ {} -> {} (test mode, config not modified)", m.name, ip);
-                        }
-                        iteration_found += 1;
-                    } else {
-                        match update_block(&ssh_config, &m.name, &ip, &m.user, m.port, m.port_explicit)
-                        {
-                            Ok(()) => {
-                                if iteration == 1 {
-                                    println!("  + {} -> {}  (~/.ssh/config updated)", m.name, ip);
-                                }
-                                iteration_found += 1;
-                                ssh_updated += 1;
-                            }
-                            Err(e) => {
-                                warn(&format!("could not write ~/.ssh/config for {}: {}", m.name, e));
-                                iteration_missing += 1;
-                                ssh_failed.push(m.name.clone());
-                                continue;
-                            }
-                        }
-                    }
-                }
+                iteration_missing += 1;
             }
         }
         
@@ -543,5 +464,5 @@ pub fn discovery_sync_loop(
         previous_device_files = current_device_files;
     }
     
-    (found, missing)
+    DiscoveryResult { found, missing }
 }
