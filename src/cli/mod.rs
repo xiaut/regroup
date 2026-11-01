@@ -308,54 +308,13 @@ pub fn add_device_to_config(
                 println!("  + Added {} -> {} (~/.ssh/config updated)", device.name, device.ip);
             }
             
-            // For backward compatibility: if device has an old-style fingerprint, use it
-            // Otherwise, we now store the full SSH public key
-            let ssh_public_key_for_verification = &device.ssh_public_key;
-            
-            // Verify the announced SSH key matches the actual SSH server key
-            // This is a CRITICAL security check to prevent MITM attacks
-            // Note: verify_and_add_to_known_hosts expects a fingerprint, but we now store the full key
-            // We need to extract the fingerprint from the public key or skip this check
-            // For now, skip the verification if we have the full key
-            if !ssh_public_key_for_verification.starts_with("SHA256:") && 
-               !ssh_public_key_for_verification.starts_with("MD5:") {
-                // It's a full public key, not a fingerprint - skip fingerprint verification
-                // but still add to known_hosts
-                match public_key::add_to_known_hosts(&device.name, &device.ip, device.port) {
-                    true => {
-                        println!("  + Added {} to ~/.ssh/known_hosts for SSH verification", device.name);
-                    }
-                    false => {
-                        warn(&format!("could not add {} to ~/.ssh/known_hosts", device.name));
-                    }
+            // Add to known_hosts using ssh-keyscan for MITM protection
+            match public_key::add_to_known_hosts(&device.name, &device.ip, device.port) {
+                true => {
+                    println!("  + Added {} to ~/.ssh/known_hosts for SSH verification", device.name);
                 }
-            } else {
-                // It's a fingerprint - use the old verification
-                match public_key::verify_and_add_to_known_hosts(
-                    &device.name, 
-                    &device.ip, 
-                    device.port, 
-                    ssh_public_key_for_verification
-                ) {
-                    public_key::HostKeyVerification::Success => {
-                        println!("  + Added {} to ~/.ssh/known_hosts for SSH verification", device.name);
-                    }
-                    public_key::HostKeyVerification::HostUnreachable => {
-                        warn(&format!("{} is offline - cannot verify SSH key (will retry later)", device.name));
-                    }
-                    public_key::HostKeyVerification::FingerprintMismatch { expected, actual } => {
-                        // SECURITY ALERT: The fingerprint doesn't match!
-                        // This could be a MITM attack or the device was replaced
-                        eprintln!("\n!!! SECURITY ALERT !!!");
-                        eprintln!("Device {} announced fingerprint: {}", device.name, expected);
-                        eprintln!("But actual SSH server key fingerprint is: {}", actual);
-                        eprintln!("This could indicate a man-in-the-middle attack or device replacement!");
-                        eprintln!("Device NOT added to configuration.\n");
-                        return;
-                    }
-                    public_key::HostKeyVerification::WriteError => {
-                        warn(&format!("could not write to ~/.ssh/known_hosts for {}", device.name));
-                    }
+                false => {
+                    warn(&format!("could not add {} to ~/.ssh/known_hosts", device.name));
                 }
             }
             

@@ -468,8 +468,8 @@ fn start_beacon_listener(
                     let text = String::from_utf8_lossy(&buf[..n]);
                     let parts: Vec<&str> = text.split('\t').collect();
                     
-                    // New format: name\tsigning_public_key_b64\tssh_public_key\tip\tport\ttimestamp\tsignature_b64
-                    if parts.len() >= 7 {
+                    // Format: name\tsigning_public_key_b64\tssh_public_key\tip\tport\ttimestamp\tsignature_b64
+                    if parts.len() == 7 {
                         let device = BeaconDevice {
                             name: parts[0].to_string(),
                             signing_public_key: parts[1].to_string(),
@@ -478,20 +478,6 @@ fn start_beacon_listener(
                             port: parts[4].parse().unwrap_or(22),
                             timestamp: parts[5].to_string(),
                             signature: parts[6].to_string(),
-                        };
-                        if sender.send(device).is_err() {
-                            break;
-                        }
-                    } else if parts.len() >= 3 {
-                        // Old format for backward compatibility
-                        let device = BeaconDevice {
-                            name: parts[0].to_string(),
-                            signing_public_key: String::new(),
-                            ssh_public_key: parts[1].to_string(),
-                            ip: parts[2].to_string(),
-                            port: 22,
-                            timestamp: String::new(),
-                            signature: String::new(),
                         };
                         if sender.send(device).is_err() {
                             break;

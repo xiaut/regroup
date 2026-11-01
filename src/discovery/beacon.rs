@@ -101,6 +101,9 @@ fn chrono_timestamp() -> String {
     now.as_secs().to_string()
 }
 
+/// Maximum age for beacon messages (5 minutes = 300 seconds)
+const MAX_BEACON_AGE: u64 = 300;
+
 /// Listens for signed beacon messages during the window. Returns BeaconDevice list,
 /// deduplicated by IP. Only beacons with valid signatures are accepted.
 /// 
@@ -121,8 +124,6 @@ pub fn listen_beacons(port: u16, secs: u64) -> Vec<BeaconDevice> {
     let deadline = Instant::now() + Duration::from_secs(secs);
     let mut buf = [0u8; 4096];
     
-    // Maximum age for beacon messages (5 minutes = 300 seconds)
-    let max_beacon_age = 300u64;
     let now = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap_or_default()
@@ -135,63 +136,46 @@ pub fn listen_beacons(port: u16, secs: u64) -> Vec<BeaconDevice> {
                 let parts: Vec<&str> = text.split('\t').collect();
                 
                 // Expected: name\tsigning_public_key_b64\tssh_public_key\tip\tport\ttimestamp\tsignature_b64
-                if parts.len() >= 7 {
-                    let ip = parts[3].to_string();
-                    let _port: u16 = parts[4].parse().unwrap_or(22);
-                    let timestamp: u64 = parts[5].parse().unwrap_or(0);
-                    
-                    // Check if beacon is too old
-                    if now.saturating_sub(timestamp) > max_beacon_age {
-                        eprintln!("WARNING: received expired beacon from {} (age: {}s)", 
-                            ip, now.saturating_sub(timestamp));
-                        continue;
-                    }
-                    
-                    // Verify the signature
-                    let beacon_str = parts.join("\t");
-                    match signing::verify_beacon(&beacon_str, None) {
-                        Ok((name, ssh_public_key, ip_verified, verified_port, timestamp_str)) => {
-                            // Check IP consistency
-                            if ip_verified != ip {
-                                eprintln!("WARNING: beacon IP mismatch - claimed: {}, verified: {}", 
-                                    ip, ip_verified);
-                                continue;
-                            }
-                            
-                            // Check if we already have this device by IP
-                            if !beacons.iter().any(|b| b.ip == ip) {
-                                beacons.push(BeaconDevice {
-                                    name,
-                                    signing_public_key: parts[1].to_string(),
-                                    ssh_public_key,
-                                    ip,
-                                    port: verified_port,
-                                    timestamp: timestamp_str,
-                                    signature: parts[6].to_string(),
-                                });
-                            }
+                if parts.len() != 7 {
+                    continue; // Invalid format
+                }
+                
+                let ip = parts[3].to_string();
+                let timestamp: u64 = parts[5].parse().unwrap_or(0);
+                
+                // Check if beacon is too old
+                if now.saturating_sub(timestamp) > MAX_BEACON_AGE {
+                    eprintln!("WARNING: received expired beacon from {} (age: {}s)", 
+                        ip, now.saturating_sub(timestamp));
+                    continue;
+                }
+                
+                // Verify the signature
+                let beacon_str = parts.join("\t");
+                match signing::verify_beacon(&beacon_str, None) {
+                    Ok((name, ssh_public_key, ip_verified, port, timestamp_str)) => {
+                        // Check IP consistency
+                        if ip_verified != ip {
+                            eprintln!("WARNING: beacon IP mismatch - claimed: {}, verified: {}", 
+                                ip, ip_verified);
+                            continue;
                         }
-                        Err(e) => {
-                            eprintln!("WARNING: invalid beacon signature from {}: {}", ip, e);
-                        }
-                    }
-                } else {
-                    // Old format (name\tpublic_key\tip) - backward compatibility
-                    if parts.len() >= 3 {
-                        eprintln!("WARNING: received beacon in old format from {}", parts[2]);
-                        // For backward compatibility, accept but mark as unverified
-                        let ip = parts[2].to_string();
+                        
+                        // Check if we already have this device by IP
                         if !beacons.iter().any(|b| b.ip == ip) {
                             beacons.push(BeaconDevice {
-                                name: parts[0].to_string(),
-                                signing_public_key: String::new(),
-                                ssh_public_key: parts[1].to_string(),
+                                name,
+                                signing_public_key: parts[1].to_string(),
+                                ssh_public_key,
                                 ip,
-                                port: 22,
-                                timestamp: String::new(),
-                                signature: String::new(),
+                                port,
+                                timestamp: timestamp_str,
+                                signature: parts[6].to_string(),
                             });
                         }
+                    }
+                    Err(e) => {
+                        eprintln!("WARNING: invalid beacon signature from {}: {}", ip, e);
                     }
                 }
             }
@@ -218,9 +202,6 @@ pub fn listen_beacons_continuous(port: u16, sender: std::sync::mpsc::Sender<Beac
     let _ = sock.set_read_timeout(Some(Duration::from_millis(200)));
     let mut buf = [0u8; 4096];
     
-    // Maximum age for beacon messages (5 minutes = 300 seconds)
-    let max_beacon_age = 300u64;
-    
     loop {
         match sock.recv_from(&mut buf) {
             Ok((n, _)) => {
@@ -228,63 +209,49 @@ pub fn listen_beacons_continuous(port: u16, sender: std::sync::mpsc::Sender<Beac
                 let parts: Vec<&str> = text.split('\t').collect();
                 
                 // Expected format: name\tsigning_public_key_b64\tssh_public_key\tip\tport\ttimestamp\tsignature_b64
-                if parts.len() >= 7 {
-                    let ip = parts[3].to_string();
-                    let _port: u16 = parts[4].parse().unwrap_or(22);
-                    let timestamp: u64 = parts[5].parse().unwrap_or(0);
-                    
-                    // Check beacon age
-                    let now = SystemTime::now()
-                        .duration_since(SystemTime::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs();
-                    
-                    if now.saturating_sub(timestamp) > max_beacon_age {
-                        eprintln!("WARNING: received expired beacon from {} (age: {}s)", 
-                            ip, now.saturating_sub(timestamp));
-                        continue;
-                    }
-                    
-                    // Verify the signature
-                    let beacon_str = parts.join("\t");
-                    match signing::verify_beacon(&beacon_str, None) {
-                        Ok((name, ssh_public_key, ip_verified, verified_port, timestamp_str)) => {
-                            // Check IP consistency
-                            if ip_verified != ip {
-                                eprintln!("WARNING: beacon IP mismatch - claimed: {}, verified: {}", 
-                                    ip, ip_verified);
-                                continue;
-                            }
-                            
-                            let device = BeaconDevice {
-                                name,
-                                signing_public_key: parts[1].to_string(),
-                                ssh_public_key,
-                                ip,
-                                port: verified_port,
-                                timestamp: timestamp_str,
-                                signature: parts[6].to_string(),
-                            };
-                            let _ = sender.send(device);
+                if parts.len() != 7 {
+                    continue; // Invalid format
+                }
+                
+                let ip = parts[3].to_string();
+                let timestamp: u64 = parts[5].parse().unwrap_or(0);
+                
+                // Check beacon age
+                let now = SystemTime::now()
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                
+                if now.saturating_sub(timestamp) > MAX_BEACON_AGE {
+                    eprintln!("WARNING: received expired beacon from {} (age: {}s)", 
+                        ip, now.saturating_sub(timestamp));
+                    continue;
+                }
+                
+                // Verify the signature
+                let beacon_str = parts.join("\t");
+                match signing::verify_beacon(&beacon_str, None) {
+                    Ok((name, ssh_public_key, ip_verified, port, timestamp_str)) => {
+                        // Check IP consistency
+                        if ip_verified != ip {
+                            eprintln!("WARNING: beacon IP mismatch - claimed: {}, verified: {}", 
+                                ip, ip_verified);
+                            continue;
                         }
-                        Err(e) => {
-                            eprintln!("WARNING: invalid beacon signature from {}: {}", ip, e);
-                        }
-                    }
-                } else {
-                    // Old format - backward compatibility
-                    if parts.len() >= 3 {
-                        eprintln!("WARNING: received beacon in old format from {}", parts[2]);
+                        
                         let device = BeaconDevice {
-                            name: parts[0].to_string(),
-                            signing_public_key: String::new(),
-                            ssh_public_key: parts[1].to_string(),
-                            ip: parts[2].to_string(),
-                            port: 22,
-                            timestamp: String::new(),
-                            signature: String::new(),
+                            name,
+                            signing_public_key: parts[1].to_string(),
+                            ssh_public_key,
+                            ip,
+                            port,
+                            timestamp: timestamp_str,
+                            signature: parts[6].to_string(),
                         };
                         let _ = sender.send(device);
+                    }
+                    Err(e) => {
+                        eprintln!("WARNING: invalid beacon signature from {}: {}", ip, e);
                     }
                 }
             }
