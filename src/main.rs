@@ -40,14 +40,14 @@ mod ssh;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{self, Write};
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::Duration;
 
 use cli::{add_device_to_config, die, refresh_git, run_selftest, setup_cd, usage};
 use config::{load_config, Machine};
 use discovery::beacon::{announce_beacon, BeaconDevice};
-use discovery::beacon::listen_beacons_continuous;
 use ssh::config::update_block;
 use discovery::{get_local_interfaces, host_name, my_ip};
 use discovery::local::get_local_fingerprint;
@@ -149,8 +149,13 @@ fn main() {
     // Create channel for beacon notifications
     let (tx, rx) = mpsc::channel::<BeaconDevice>();
     
+    // Flag to signal threads to stop
+    let running = Arc::new(AtomicBool::new(true));
+    let running_listener = running.clone();
+    let running_announcer = running.clone();
+    
     // Start beacon listener in background
-    let listen_thread = start_beacon_listener(conf.udp_port, conf.wait_secs, tx.clone());
+    let listen_thread = start_beacon_listener(conf.udp_port, running_listener, tx.clone());
     
     // Start beacon announcer in background
     let announce_thread = start_beacon_announcer(
@@ -158,6 +163,7 @@ fn main() {
         conf.wait_secs,
         local_name.clone(),
         local_public_key.clone(),
+        running_announcer,
     );
 
     // Build lookup maps from config
@@ -337,6 +343,7 @@ fn main() {
                 match input.as_str() {
                     "q" | "quit" => {
                         println!();
+                        println!("Stopping...");
                         break;
                     }
                     "r" | "refresh" => {
@@ -358,9 +365,26 @@ fn main() {
     }
     
     // Clean up threads
+    println!("Waiting for beacon threads to stop...");
     drop(tx);
-    let _ = listen_thread.join();
-    let _ = announce_thread.join();
+    running.store(false, Ordering::Relaxed);
+    
+    // Wait for threads with timeout
+    let timeout = Duration::from_secs(2);
+    let start = std::time::Instant::now();
+    
+    let _ = listen_thread.join().map_err(|_| {
+        if start.elapsed() >= timeout {
+            eprintln!("  Listener thread did not stop cleanly");
+        }
+    });
+    let _ = announce_thread.join().map_err(|_| {
+        if start.elapsed() >= timeout {
+            eprintln!("  Announcer thread did not stop cleanly");
+        }
+    });
+    
+    println!("Done.");
     
     // Calculate final statistics
     // missing = original machines that were not seen
@@ -372,18 +396,59 @@ fn main() {
 }
 
 /// Start beacon listener thread - continuous mode with short timeout
-fn start_beacon_listener(port: u16, _secs: u64, sender: mpsc::Sender<BeaconDevice>) -> thread::JoinHandle<()> {
+fn start_beacon_listener(
+    port: u16,
+    running: Arc<AtomicBool>,
+    sender: mpsc::Sender<BeaconDevice>
+) -> thread::JoinHandle<()> {
     thread::spawn(move || {
-        listen_beacons_continuous(port, sender);
+        let sock = match std::net::UdpSocket::bind(("0.0.0.0", port)) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("WARNING: cannot listen on UDP port {} ({}) — beacons ignored", port, e);
+                return;
+            }
+        };
+        let _ = sock.set_read_timeout(Some(Duration::from_millis(200)));
+        let mut buf = [0u8; 4096];
+        
+        while running.load(Ordering::Relaxed) {
+            match sock.recv_from(&mut buf) {
+                Ok((n, _)) => {
+                    let text = String::from_utf8_lossy(&buf[..n]);
+                    let parts: Vec<&str> = text.split('\t').collect();
+                    if parts.len() >= 3 {
+                        let device = BeaconDevice {
+                            name: parts[0].to_string(),
+                            public_key: parts[1].to_string(),
+                            ip: parts[2].to_string(),
+                        };
+                        if sender.send(device).is_err() {
+                            break;
+                        }
+                    }
+                }
+                Err(_) => {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            }
+        }
     })
 }
 
 /// Start beacon announcer thread
-fn start_beacon_announcer(port: u16, secs: u64, name: String, public_key: String) -> thread::JoinHandle<()> {
+fn start_beacon_announcer(
+    port: u16,
+    secs: u64,
+    name: String,
+    public_key: String,
+    running: Arc<AtomicBool>,
+) -> thread::JoinHandle<()> {
     let interfaces = get_local_interfaces();
     thread::spawn(move || {
-        loop {
+        while running.load(Ordering::Relaxed) {
             announce_beacon(port, secs, &name, &public_key, &interfaces);
+            std::thread::sleep(Duration::from_millis(100));
         }
     })
 }
