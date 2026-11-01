@@ -137,10 +137,10 @@ fn main() {
     }
 
     // --- Discovery and sync loop ---
-    let DiscoveryResult { found, missing } = discovery_sync_loop(&conf, &ssh_config, &local_name, &local_ip, dry_run, verbose, refresh, &net_arg);
+    let DiscoveryResult { new, updated, missing } = discovery_sync_loop(&conf, &ssh_config, &local_name, &local_ip, dry_run, verbose, refresh, &net_arg);
 
     // Check if this device is alone (only found itself, no remotes configured)
-    if !dry_run && found == 1 && missing == 0 {
+    if !dry_run && updated == 1 && missing == 0 && new == 0 {
         let config_dir = PathBuf::from(&home).join(CONFIG_DIR);
         if is_git_repo(&config_dir) {
             let remotes = git_list_remotes(&config_dir);
@@ -160,6 +160,6 @@ fn main() {
         }
     }
 
-    println!("== {} found, {} missing ==", found, missing);
+    println!("== {} new, {} updated, {} missing ==", new, updated, missing);
     std::process::exit(if missing == 0 { 0 } else { 1 });
 }

@@ -21,7 +21,8 @@ pub use net::NetworkInterface;
 /// Result of a discovery sync operation
 #[derive(Clone, Debug)]
 pub struct DiscoveryResult {
-    pub found: usize,
+    pub new: usize,
+    pub updated: usize,
     pub missing: usize,
 }
 

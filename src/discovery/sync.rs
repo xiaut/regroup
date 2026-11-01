@@ -18,11 +18,13 @@
 use std::collections::HashSet;
 use std::env;
 use std::fs;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process;
 use std::thread;
 
-use super::{announce_beacon, get_local_interfaces, listen_beacons, BeaconDevice, DiscoveryResult};
+use super::{announce_beacon, get_local_interfaces, listen_beacons, BeaconDevice};
+use crate::discovery::DiscoveryResult;
 use crate::cli::{ask_conflict_resolution, die, warn};
 use crate::discovery::local::get_local_fingerprint;
 use crate::config::{Conf, CONFIG_DIR, DEVICES_DIR, GLOBAL_CONFIG_FILE, MAX_SYNC_ITERATIONS, load_config, read_device_file_content};
@@ -86,7 +88,9 @@ pub fn discovery_sync_loop(
     }
     
     let mut found = 0;
+    let mut updated = 0;
     let mut missing = 0;
+    let mut new_count = 0;
     let mut iteration = 0;
     let mut new_devices_found = true;
     let mut has_local_changes = false;
@@ -198,43 +202,89 @@ pub fn discovery_sync_loop(
             .filter(|b| !known_keys.contains(&b.public_key) && b.public_key != local_public_key)
             .collect();
         
-        // Auto-add new devices (identified by unknown public key)
+        // Ask user to confirm new devices (identified by unknown public key)
         if !new_devices.is_empty() && iteration == 1 {
             println!("== New devices detected ==");
-            let mut devices_to_add: Vec<BeaconDevice> = Vec::new();
-            
             for (i, device) in new_devices.iter().enumerate() {
                 println!("  {}: {} ({})", i + 1, device.name, device.ip);
-                
-                // Auto-add: since we trust the beacon's public key, we can add it
-                devices_to_add.push((*device).clone());
             }
             
-            // Add new devices to config
-            for device in &devices_to_add {
-                use crate::config::device::save_device_file;
-                use crate::config::Machine;
+            // Ask user if they want to add these devices (skip in dry run)
+            if !dry_run {
+                print!("\nAdd these devices to config? [y/N/individual]: ");
+                io::stdout().flush().ok();
                 
-                let device_path = devices_dir.join(format!("{}.json", device.name));
-                let machine = Machine {
-                    name: device.name.clone(),
-                    fingerprint: device.public_key.clone(),
-                    user: String::new(),
-                    port: 22,
-                    port_explicit: false,
-                };
-                
-                if let Err(e) = save_device_file(&device_path, &machine) {
-                    warn(&format!("could not save device config for {}: {}", device.name, e));
-                } else {
-                    println!("  + Added {} to config", device.name);
-                    current_conf.machines.push(machine);
-                    has_local_changes = true;
+                let mut input = String::new();
+                if io::stdin().read_line(&mut input).is_ok() {
+                    match input.trim().to_lowercase().as_str() {
+                        "y" | "yes" => {
+                            // Add all devices
+                            let mut devices_added = 0;
+                            for device in &new_devices {
+                                use crate::config::device::save_device_file;
+                                use crate::config::Machine;
+                                
+                                let device_path = devices_dir.join(format!("{}.json", device.name));
+                                let machine = Machine {
+                                    name: device.name.clone(),
+                                    fingerprint: device.public_key.clone(),
+                                    user: String::new(),
+                                    port: 22,
+                                    port_explicit: false,
+                                };
+                                
+                                if let Err(e) = save_device_file(&device_path, &machine) {
+                                    warn(&format!("could not save device config for {}: {}", device.name, e));
+                                } else {
+                                    println!("  + Added {} to config", device.name);
+                                    current_conf.machines.push(machine);
+                                    has_local_changes = true;
+                                    devices_added += 1;
+                                }
+                            }
+                            new_count = devices_added;
+                            println!("  {} device(s) added. Commit and push to share with other machines.", new_count);
+                        }
+                        "individual" | "i" => {
+                            // Ask for each device individually
+                            for device in &new_devices {
+                                print!("Add {} ({})? [y/N]: ", device.name, device.ip);
+                                io::stdout().flush().ok();
+                                
+                                let mut answer = String::new();
+                                if io::stdin().read_line(&mut answer).is_ok() {
+                                    if answer.trim().to_lowercase() == "y" || answer.trim().to_lowercase() == "yes" {
+                                        use crate::config::device::save_device_file;
+                                        use crate::config::Machine;
+                                        
+                                        let device_path = devices_dir.join(format!("{}.json", device.name));
+                                        let machine = Machine {
+                                            name: device.name.clone(),
+                                            fingerprint: device.public_key.clone(),
+                                            user: String::new(),
+                                            port: 22,
+                                            port_explicit: false,
+                                        };
+                                        
+                                        if let Err(e) = save_device_file(&device_path, &machine) {
+                                            warn(&format!("could not save device config for {}: {}", device.name, e));
+                                        } else {
+                                            println!("  + Added {} to config", device.name);
+                                            current_conf.machines.push(machine);
+                                            has_local_changes = true;
+                                            new_count += 1;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        _ => {
+                            println!("  No devices added.");
+                        }
+                    }
                 }
-            }
-            
-            if !devices_to_add.is_empty() {
-                println!("  New devices added. Commit and push to share with other machines.");
+            } else {
+                println!("  (dry run - not adding devices)");
             }
         }
         
@@ -328,7 +378,7 @@ pub fn discovery_sync_loop(
             ));
         }
         
-        found = iteration_found;
+        updated = iteration_found;
         missing = iteration_missing;
         
         // ============================================================
@@ -464,5 +514,5 @@ pub fn discovery_sync_loop(
         previous_device_files = current_device_files;
     }
     
-    DiscoveryResult { found, missing }
+    DiscoveryResult { new: new_count, updated, missing }
 }
