@@ -15,18 +15,20 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::io::Write;
 
+use super::keys::{SshFingerprint, SshPublicKey};
+
 /// Get the local SSH server's public host key fingerprint.
-/// 
+///
 /// This function attempts to find the SSH server host key by checking:
 /// 1. System SSH host keys in /etc/ssh/ssh_host_*_key.pub
 /// 2. Termux SSH host keys in $PREFIX/etc/ssh/ssh_host_*_key.pub
 /// 3. Running ssh-keyscan on localhost (if SSH server is running)
-/// 
+///
 /// Returns None if no SSH server host key can be found.
-/// 
+///
 /// NOTE: If this returns None, the device should NOT announce itself via UDP
 /// beacon because it cannot accept SSH connections.
-pub fn get_ssh_server_fingerprint() -> Option<String> {
+pub fn get_ssh_server_fingerprint() -> Option<SshFingerprint> {
     // Try to read SSH server host keys from standard locations
     if let Some(fingerprint) = get_server_fingerprint_from_files() {
         return Some(fingerprint);
@@ -56,7 +58,7 @@ pub fn get_ssh_server_fingerprint() -> Option<String> {
 /// 
 /// NOTE: If this returns None, the device should NOT announce itself via UDP
 /// beacon because it cannot accept SSH connections.
-pub fn get_ssh_server_public_key() -> Option<String> {
+pub fn get_ssh_server_public_key() -> Option<SshPublicKey> {
     // Try to read SSH server host keys from standard locations
     if let Some(public_key) = get_server_public_key_from_files() {
         return Some(public_key);
@@ -75,7 +77,7 @@ pub fn get_ssh_server_public_key() -> Option<String> {
 /// Checks standard locations where SSH server host keys are stored:
 /// - /etc/ssh/ssh_host_*_key.pub (standard Linux/Unix)
 /// - $PREFIX/etc/ssh/ssh_host_*_key.pub (Termux Android)
-fn get_server_fingerprint_from_files() -> Option<String> {
+fn get_server_fingerprint_from_files() -> Option<SshFingerprint> {
     // SSH server host key file patterns
     // These are the public keys corresponding to the private host keys
     let host_key_patterns = [
@@ -124,7 +126,7 @@ fn get_server_fingerprint_from_files() -> Option<String> {
 }
 
 /// Read SSH server host key public key from known file locations
-fn get_server_public_key_from_files() -> Option<String> {
+fn get_server_public_key_from_files() -> Option<SshPublicKey> {
     // SSH server host key file patterns
     let host_key_patterns = [
         "ssh_host_rsa_key.pub",
@@ -172,7 +174,7 @@ fn get_server_public_key_from_files() -> Option<String> {
 }
 
 /// Use ssh-keyscan to get the server host public key from localhost
-fn get_server_public_key_via_keyscan() -> Option<String> {
+fn get_server_public_key_via_keyscan() -> Option<SshPublicKey> {
     // Try to scan localhost for SSH host keys
     let scan = Command::new("ssh-keyscan")
         .arg("-T")
@@ -194,7 +196,7 @@ fn get_server_public_key_via_keyscan() -> Option<String> {
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.len() >= 3 {
             // The key is parts[1] and parts[2] (key_type and key_base64)
-            return Some(format!("{}", parts[1..].join(" ")));
+            return Some(SshPublicKey::from(parts[1..].join(" ")));
         }
     }
     None
@@ -202,7 +204,7 @@ fn get_server_public_key_via_keyscan() -> Option<String> {
 
 /// Read the content of an SSH host key public key file
 /// Returns the full key in OpenSSH format (key_type key_base64)
-fn read_host_key(key_path: &PathBuf) -> Option<String> {
+fn read_host_key(key_path: &PathBuf) -> Option<SshPublicKey> {
     if !key_path.exists() || !key_path.is_file() {
         return None;
     }
@@ -218,9 +220,9 @@ fn read_host_key(key_path: &PathBuf) -> Option<String> {
                 // Split by whitespace and take key_type and key_base64
                 let parts: Vec<&str> = trimmed.split_whitespace().collect();
                 if parts.len() >= 2 {
-                    return Some(parts[0..2].join(" "));
+                    return Some(SshPublicKey::from(parts[0..2].join(" ")));
                 }
-                return Some(trimmed);
+                return Some(SshPublicKey::from(trimmed));
             }
             None
         }
@@ -234,7 +236,7 @@ fn read_host_key(key_path: &PathBuf) -> Option<String> {
 /// For example: "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQ..."
 /// 
 /// Uses ssh-keygen -lf to compute the fingerprint.
-fn compute_fingerprint_from_public_key(public_key: &str) -> Option<String> {
+fn compute_fingerprint_from_public_key(public_key: &str) -> Option<SshFingerprint> {
     use std::process::Stdio;
     
     // ssh-keygen -lf expects the key to be passed via stdin or as a file
@@ -275,20 +277,20 @@ fn compute_fingerprint_from_public_key(public_key: &str) -> Option<String> {
     for line in stdout.lines() {
         for field in line.split_whitespace() {
             if field.starts_with("SHA256:") {
-                return Some(field.to_string());
+                return Some(SshFingerprint::from(field));
             }
         }
     }
-    
+
     // Fallback to MD5
     for line in stdout.lines() {
         for field in line.split_whitespace() {
             if field.starts_with("MD5:") {
-                return Some(field.to_string());
+                return Some(SshFingerprint::from(field));
             }
         }
     }
-    
+
     None
 }
 
@@ -299,7 +301,7 @@ fn compute_fingerprint_from_public_key(public_key: &str) -> Option<String> {
 /// - An SSH server is running on this machine
 /// - It's listening on 127.0.0.1
 /// - We can connect to it (no firewall blocking)
-fn get_server_fingerprint_via_keyscan() -> Option<String> {
+fn get_server_fingerprint_via_keyscan() -> Option<SshFingerprint> {
     // Try to scan localhost for SSH host keys
     let scan = Command::new("ssh-keyscan")
         .arg("-T")  // Timeout for connection
@@ -348,11 +350,11 @@ fn get_server_fingerprint_via_keyscan() -> Option<String> {
         let fields: Vec<&str> = line.split_whitespace().collect();
         for field in &fields {
             if field.starts_with("SHA256:") {
-                return Some(field.to_string());
+                return Some(SshFingerprint::from(*field));
             }
         }
     }
-    
+
     None
 }
 
@@ -360,7 +362,7 @@ fn get_server_fingerprint_via_keyscan() -> Option<String> {
 /// 
 /// Uses ssh-keygen -lf to compute the SHA256 fingerprint of the key.
 /// Returns None if the file doesn't exist, can't be read, or ssh-keygen fails.
-fn read_host_key_fingerprint(key_path: &PathBuf) -> Option<String> {
+fn read_host_key_fingerprint(key_path: &PathBuf) -> Option<SshFingerprint> {
     // Check if the file exists and is readable
     if !key_path.exists() {
         return None;
@@ -400,17 +402,17 @@ fn read_host_key_fingerprint(key_path: &PathBuf) -> Option<String> {
     let fields: Vec<&str> = lines[0].split_whitespace().collect();
     for field in &fields {
         if field.starts_with("SHA256:") {
-            return Some(field.to_string());
+            return Some(SshFingerprint::from(*field));
         }
     }
-    
+
     // Fallback to MD5 if SHA256 not found (older systems)
     for field in &fields {
         if field.starts_with("MD5:") {
-            return Some(field.to_string());
+            return Some(SshFingerprint::from(*field));
         }
     }
-    
+
     None
 }
 
@@ -546,7 +548,7 @@ pub fn verify_and_add_to_known_hosts(
     hostname: &str,
     ip: &str,
     port: u16,
-    expected_fingerprint: &str,
+    expected_fingerprint: &SshFingerprint,
 ) -> HostKeyVerification {
     // Try to get the host's public keys via ssh-keyscan
     let keyscan = Command::new("ssh-keyscan")
@@ -597,10 +599,10 @@ pub fn verify_and_add_to_known_hosts(
     
     // Compare with expected fingerprint
     // Both should be in format "SHA256:..." or "MD5:..."
-    if actual_fingerprint != expected_fingerprint {
+    if &actual_fingerprint != expected_fingerprint {
         return HostKeyVerification::FingerprintMismatch {
-            expected: expected_fingerprint.to_string(),
-            actual: actual_fingerprint,
+            expected: expected_fingerprint.0.clone(),
+            actual: actual_fingerprint.0.clone(),
         };
     }
     

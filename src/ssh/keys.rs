@@ -27,7 +27,8 @@ use std::fmt;
 /// 
 /// This is the UNIQUE identifier for a machine. Machines are identified by their SSH public key,
 /// not by hostname (which can change in Termux) or IP address (which can change with network).
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
 pub struct SshPublicKey(pub String);
 
 impl SshPublicKey {
@@ -69,7 +70,8 @@ impl From<&str> for SshPublicKey {
 /// 
 /// Fingerprints are used for display and verification, but NOT for machine identification.
 /// Machine identification MUST use the full SSH public key, not the fingerprint.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
 pub struct SshFingerprint(pub String);
 
 impl SshFingerprint {
@@ -77,7 +79,7 @@ impl SshFingerprint {
     pub fn new(fingerprint: String) -> Self {
         Self(fingerprint)
     }
-    
+
     /// Get the inner string
     pub fn as_str(&self) -> &str {
         &self.0
@@ -90,11 +92,24 @@ impl fmt::Display for SshFingerprint {
     }
 }
 
+impl From<String> for SshFingerprint {
+    fn from(fingerprint: String) -> Self {
+        Self(fingerprint)
+    }
+}
+
+impl From<&str> for SshFingerprint {
+    fn from(fingerprint: &str) -> Self {
+        Self(fingerprint.to_string())
+    }
+}
+
 /// Wrapper for ed25519 signing public key in base64 format
 /// 
 /// This is used for signing beacon messages. It's separate from the SSH public key
 /// which is used for machine identification.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
 pub struct SigningPublicKeyB64(pub String);
 
 impl SigningPublicKeyB64 {
@@ -102,7 +117,7 @@ impl SigningPublicKeyB64 {
     pub fn new(key: String) -> Self {
         Self(key)
     }
-    
+
     /// Get the inner string
     pub fn as_str(&self) -> &str {
         &self.0
@@ -115,8 +130,21 @@ impl fmt::Display for SigningPublicKeyB64 {
     }
 }
 
+impl From<String> for SigningPublicKeyB64 {
+    fn from(key: String) -> Self {
+        Self(key)
+    }
+}
+
+impl From<&str> for SigningPublicKeyB64 {
+    fn from(key: &str) -> Self {
+        Self(key.to_string())
+    }
+}
+
 /// Wrapper for ed25519 signature in base64 format
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
 pub struct SignatureB64(pub String);
 
 impl SignatureB64 {
@@ -124,7 +152,7 @@ impl SignatureB64 {
     pub fn new(sig: String) -> Self {
         Self(sig)
     }
-    
+
     /// Get the inner string
     pub fn as_str(&self) -> &str {
         &self.0
@@ -134,5 +162,17 @@ impl SignatureB64 {
 impl fmt::Display for SignatureB64 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
+    }
+}
+
+impl From<String> for SignatureB64 {
+    fn from(sig: String) -> Self {
+        Self(sig)
+    }
+}
+
+impl From<&str> for SignatureB64 {
+    fn from(sig: &str) -> Self {
+        Self(sig.to_string())
     }
 }

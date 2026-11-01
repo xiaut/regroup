@@ -21,6 +21,7 @@ use zeroize::Zeroizing;
 use base64::Engine as _;
 
 use crate::config::CONFIG_DIR;
+use crate::ssh::keys::{SignatureB64, SigningPublicKeyB64, SshPublicKey};
 
 // ============================================================
 // Constants
@@ -184,28 +185,28 @@ pub fn load_public_key() -> Option<VerifyingKey> {
 // ============================================================
 
 /// Sign a message with the given signing key
-/// 
+///
 /// The message format for beacon signing is: "name|ssh_public_key|ip|port|timestamp"
-pub fn sign_message(message: &str, signing_key: &SigningKey) -> Result<String, String> {
+pub fn sign_message(message: &str, signing_key: &SigningKey) -> Result<SignatureB64, String> {
     let signature = signing_key.sign(message.as_bytes());
-    
+
     // Encode signature as base64 for transmission
     let signature_bytes = signature.to_bytes();
     let base64_engine = base64::engine::general_purpose::STANDARD;
-    Ok(base64_engine.encode(&signature_bytes))
+    Ok(SignatureB64::new(base64_engine.encode(&signature_bytes)))
 }
 
 /// Verify a message signature with the given public key
-/// 
+///
 /// Returns true if the signature is valid
 pub fn verify_signature(
     message: &str,
-    signature_b64: &str,
+    signature_b64: &SignatureB64,
     verifying_key: &VerifyingKey,
 ) -> Result<bool, String> {
     let base64_engine = base64::engine::general_purpose::STANDARD;
-    
-    let signature_bytes = match base64_engine.decode(signature_b64) {
+
+    let signature_bytes = match base64_engine.decode(signature_b64.as_str()) {
         Ok(b) => b,
         Err(e) => return Err(format!("invalid base64 signature: {}", e)),
     };
@@ -233,7 +234,7 @@ pub fn verify_signature(
 /// "name\tsigning_public_key_b64\tssh_public_key\tip\tport\ttimestamp\tsignature_b64"
 pub fn sign_beacon(
     name: &str,
-    ssh_public_key: &str,
+    ssh_public_key: &SshPublicKey,
     ip: &str,
     port: u16,
     timestamp: &str,
@@ -273,22 +274,22 @@ pub fn sign_beacon(
 pub fn verify_beacon(
     beacon_str: &str,
     expected_signing_public_key: Option<&VerifyingKey>,
-) -> Result<(String, String, String, u16, String), String> {
+) -> Result<(String, SshPublicKey, String, u16, String), String> {
     let parts: Vec<&str> = beacon_str.split('\t').collect();
-    
+
     // Expected format: name\tsigning_public_key_b64\tssh_public_key\tip\tport\ttimestamp\tsignature_b64
     // That's 7 fields total
     if parts.len() != 7 {
         return Err(format!("invalid beacon format: expected 7 fields, got {}", parts.len()));
     }
-    
+
     let name = parts[0].to_string();
     let signing_public_key_b64 = parts[1];
-    let ssh_public_key = parts[2].to_string();
+    let ssh_public_key = SshPublicKey::from(parts[2]);
     let ip = parts[3].to_string();
     let port: u16 = parts[4].parse().map_err(|_| "invalid port number".to_string())?;
     let timestamp = parts[5].to_string();
-    let signature_b64 = parts[6];
+    let signature_b64 = SignatureB64::from(parts[6]);
     
     // Decode the signing public key
     let base64_engine = base64::engine::general_purpose::STANDARD;
@@ -314,7 +315,7 @@ pub fn verify_beacon(
     let message = format!("{}|{}|{}|{}|{}", name, ssh_public_key, ip, port, timestamp);
     
     // Verify the signature
-    let is_valid = verify_signature(&message, signature_b64, &signing_public_key)?;
+    let is_valid = verify_signature(&message, &signature_b64, &signing_public_key)?;
     
     if is_valid {
         Ok((name, ssh_public_key, ip, port, timestamp))
@@ -328,9 +329,9 @@ pub fn verify_beacon(
 // ============================================================
 
 /// Get the signing public key in base64 format for display
-pub fn get_signing_public_key_b64() -> Option<String> {
+pub fn get_signing_public_key_b64() -> Option<SigningPublicKeyB64> {
     let base64_engine = base64::engine::general_purpose::STANDARD;
-    load_public_key().map(|key| base64_engine.encode(&key.to_bytes()))
+    load_public_key().map(|key| SigningPublicKeyB64::new(base64_engine.encode(&key.to_bytes())))
 }
 
 /// Check if signing keys exist

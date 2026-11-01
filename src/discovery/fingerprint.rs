@@ -5,10 +5,12 @@
 use std::io::Write;
 use std::process::{Command, Stdio};
 
+use crate::ssh::keys::SshFingerprint;
+
 /// Collects the fingerprints of every host key offered by ip:port, using
 /// OpenSSH itself: ssh-keyscan fetches the keys, ssh-keygen -lf - prints
 /// "bits SHA256:... comment (type)" lines.
-pub fn fingerprints(ip: &str, port: u16, md5: bool) -> Vec<String> {
+pub fn fingerprints(ip: &str, port: u16, md5: bool) -> Vec<SshFingerprint> {
     let scan = Command::new("ssh-keyscan")
         .arg("-T")
         .arg("3")
@@ -43,11 +45,11 @@ pub fn fingerprints(ip: &str, port: u16, md5: bool) -> Vec<String> {
         Err(_) => return Vec::new(),
     };
     let wanted = if md5 { "MD5:" } else { "SHA256:" };
-    let mut fps: Vec<String> = Vec::new();
+    let mut fps: Vec<SshFingerprint> = Vec::new();
     for line in String::from_utf8_lossy(&out.stdout).lines() {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.len() >= 2 && fields[1].starts_with(wanted) {
-            let f = fields[1].to_string();
+            let f = SshFingerprint::from(fields[1]);
             if !fps.contains(&f) {
                 fps.push(f);
             }

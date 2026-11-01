@@ -36,6 +36,7 @@ use std::thread;
 use super::{announce_beacon, get_local_interfaces, listen_beacons, BeaconDevice};
 use crate::discovery::DiscoveryResult;
 use crate::cli::{ask_conflict_resolution, die, warn};
+use crate::ssh::keys::SshPublicKey;
 use crate::ssh::public_key::get_ssh_server_public_key;
 use crate::signing;
 use crate::config::{Conf, CONFIG_DIR, DEVICES_DIR, GLOBAL_CONFIG_FILE, MAX_SYNC_ITERATIONS, load_config, read_device_file_content};
@@ -223,7 +224,7 @@ pub fn discovery_sync_loop(
         // and IP can change with network changes. The SSH key is what uniquely identifies "me".
         let local_ssh_public_key_for_filtering = match local_ssh_public_key {
             Some(ref key) => key.clone(),
-            None => String::new(),
+            None => SshPublicKey::from(""),
         };
         
         let beacons = listen_beacons(current_conf.udp_port, current_conf.wait_secs, &local_ssh_public_key_for_filtering);
@@ -240,17 +241,17 @@ pub fn discovery_sync_loop(
         if verbose {
             println!("  . {} beacon(s) received", beacons.len());
             for b in &beacons {
-                let key_preview = if b.ssh_public_key.len() > 8 {
-                    format!("{}...", &b.ssh_public_key[..8])
+                let key_preview = if b.ssh_public_key.as_str().len() > 8 {
+                    format!("{}...", &b.ssh_public_key.as_str()[..8])
                 } else {
-                    b.ssh_public_key.clone()
+                    b.ssh_public_key.to_string()
                 };
                 println!("  . beacon: {} ({}, key: {})", b.name, b.ip, key_preview);
             }
         }
         
         // Build set of known SSH public keys from config
-        let known_keys: HashSet<String> = current_conf.machines.iter().map(|m| m.ssh_public_key.clone()).collect();
+        let known_keys: HashSet<SshPublicKey> = current_conf.machines.iter().map(|m| m.ssh_public_key.clone()).collect();
         
         // Find new devices (beacons with unknown SSH public keys)
         // Note: BeaconDevice uses 'ssh_public_key' field for SSH public key
@@ -268,10 +269,10 @@ pub fn discovery_sync_loop(
             if !dry_run {
                 for device in &new_devices {
                     // Display device info including SSH public key for verification
-                    let key_display = if device.ssh_public_key.len() > 20 {
-                        format!("{}...", &device.ssh_public_key[..17])
+                    let key_display = if device.ssh_public_key.as_str().len() > 20 {
+                        format!("{}...", &device.ssh_public_key.as_str()[..17])
                     } else {
-                        device.ssh_public_key.clone()
+                        device.ssh_public_key.to_string()
                     };
                     print!("Add {} ({}) with key {}? [y/N]: ", device.name, device.ip, key_display);
                     io::stdout().flush().ok();
@@ -317,7 +318,7 @@ pub fn discovery_sync_loop(
         }
         
         // Build a map from SSH public key to beacon for easy lookup
-        let beacon_map: std::collections::HashMap<String, &BeaconDevice> = beacons.iter()
+        let beacon_map: std::collections::HashMap<SshPublicKey, &BeaconDevice> = beacons.iter()
             .map(|b| (b.ssh_public_key.clone(), b))
             .collect();
 

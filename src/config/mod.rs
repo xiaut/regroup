@@ -17,7 +17,9 @@
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Machine {
     pub name: String,
-    pub ssh_public_key: String,
+    /// Unique identifier of the machine: its SSH *server* host public key.
+    /// Typed to prevent confusion with fingerprints or signing keys.
+    pub ssh_public_key: crate::ssh::keys::SshPublicKey,
     pub user: String,
     pub port: u16,
     pub port_explicit: bool,

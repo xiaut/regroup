@@ -11,6 +11,7 @@ use serde_json::Value;
 use super::Machine;
 use super::json_helpers::int_value;
 use super::validation::validate_machine;
+use crate::ssh::keys::SshPublicKey;
 
 /// Load a single device configuration from a JSON file
 pub fn load_device_file(path: &Path) -> Result<Machine, String> {
@@ -47,7 +48,7 @@ pub fn load_device_file(path: &Path) -> Result<Machine, String> {
     
     let ssh_public_key = match obj.get("ssh_public_key") {
         Some(v) => match v.as_str() {
-            Some(s) => s.trim().to_string(),
+            Some(s) => SshPublicKey::from(s.trim()),
             None => return Err(format!("\"ssh_public_key\" must be a string")),
         },
         None => return Err(format!("\"ssh_public_key\" is required")),
@@ -95,7 +96,7 @@ pub fn load_device_file(path: &Path) -> Result<Machine, String> {
 pub fn save_device_file(path: &Path, machine: &Machine) -> io::Result<()> {
     let mut obj = serde_json::Map::new();
     obj.insert("name".to_string(), serde_json::Value::String(machine.name.clone()));
-    obj.insert("ssh_public_key".to_string(), serde_json::Value::String(machine.ssh_public_key.clone()));
+    obj.insert("ssh_public_key".to_string(), serde_json::Value::String(machine.ssh_public_key.0.clone()));
     
     if !machine.user.is_empty() {
         obj.insert("user".to_string(), serde_json::Value::String(machine.user.clone()));

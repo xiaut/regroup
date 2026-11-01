@@ -8,6 +8,7 @@ use std::process::Command;
 
 use crate::discovery::fingerprint::fingerprints;
 use crate::discovery::net::NetworkInterface;
+use crate::ssh::keys::SshFingerprint;
 
 /// Get a persistent identifier for Termux
 /// This ensures the same identifier is used across restarts
@@ -222,7 +223,7 @@ pub fn my_ip() -> Option<String> {
 }
 
 /// Get the fingerprint of the local machine
-pub fn get_local_fingerprint(port: u16) -> Option<String> {
+pub fn get_local_fingerprint(port: u16) -> Option<SshFingerprint> {
     if let Some(ip) = my_ip() {
         let fps = fingerprints(&ip, port, false);
         if !fps.is_empty() {

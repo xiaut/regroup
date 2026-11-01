@@ -123,7 +123,7 @@ pub fn run_selftest() -> ! {
             match crate::config::device::load_device_file(&device_file) {
                 Ok(m) => {
                     let device_ok = m.name == "test" 
-                        && m.ssh_public_key == "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAAB"
+                        && m.ssh_public_key.as_str() == "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAAB"
                         && m.user == "testuser"
                         && m.port == 22
                         && m.port_explicit;
@@ -246,7 +246,7 @@ pub fn add_device_to_config(
     home: &str,
     ssh_config: &PathBuf,
     device: &BeaconDevice,
-    known_keys: &mut HashSet<String>,
+    known_keys: &mut HashSet<crate::ssh::keys::SshPublicKey>,
     new_count: &mut usize,
 ) {
     let config_dir = PathBuf::from(home).join(CONFIG_DIR).join(GIT_DIR);
@@ -356,7 +356,7 @@ fn configure_remotes(config_dir: &PathBuf) -> Vec<String> {
         .into_iter()
         .filter(|m| {
             m.name != local_name
-                && local_ssh_public_key.as_deref() != Some(m.ssh_public_key.as_str())
+                && local_ssh_public_key.as_ref() != Some(&m.ssh_public_key)
         })
         .collect();
     git::refresh_git_remotes(config_dir, &machines, &local_name)

@@ -7,7 +7,7 @@ use super::Machine;
 /// Validate a machine configuration
 pub fn validate_machine(machine: &Machine) -> Result<(), String> {
     // Check for placeholder SSH public key
-    if machine.ssh_public_key == "SSH-PUBLIC-KEY-PLACEHOLDER" ||
+    if machine.ssh_public_key.as_str() == "SSH-PUBLIC-KEY-PLACEHOLDER" ||
        machine.ssh_public_key.is_empty() {
         return Err(format!(
             "Device '{}' has a placeholder or empty SSH public key. Please ensure the SSH server is running and the key can be detected.",

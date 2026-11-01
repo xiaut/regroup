@@ -50,6 +50,7 @@ use cli::{add_device_to_config, die, refresh_git, run_selftest, setup_cd, usage}
 use config::{load_config, Machine};
 use discovery::beacon::{announce_beacon, listen_beacons_continuous, BeaconDevice};
 use ssh::config::update_block;
+use ssh::keys::SshPublicKey;
 use ssh::public_key;
 use discovery::{get_local_interfaces, host_name, my_ip};
 
@@ -149,7 +150,7 @@ fn main() {
             eprintln!("WARNING: No SSH server host key found. This device will NOT announce itself.");
             eprintln!("         Other devices can still discover and connect to this machine if they have its IP.");
             eprintln!("         To fix: Install and configure an SSH server (e.g., 'pkg install openssh' in Termux).");
-            String::new() // Empty string signals "do not announce"
+            SshPublicKey::from("") // Empty key signals "do not announce"
         }
     };
 
@@ -159,7 +160,7 @@ fn main() {
                 "  . this machine: {} / {} (SSH key: {})",
                 local_name,
                 local_ip.as_deref().unwrap_or("unknown IP"),
-                &local_public_key[..16.min(local_public_key.len())]
+                &local_public_key.as_str()[..16.min(local_public_key.as_str().len())]
             );
         } else {
             println!("  . this machine: {} / {} (NO SSH SERVER - not announcing)",
@@ -221,13 +222,13 @@ fn main() {
     };
 
     // Build lookup maps from config
-    let mut known_keys: HashSet<String> = conf.machines
+    let mut known_keys: HashSet<SshPublicKey> = conf.machines
         .iter()
         .map(|m| m.ssh_public_key.clone())
         .collect();
     
     // Map from SSH public key to machine info for known devices
-    let mut key_to_machine: HashMap<String, Machine> = conf.machines
+    let mut key_to_machine: HashMap<SshPublicKey, Machine> = conf.machines
         .iter()
         .map(|m| (m.ssh_public_key.clone(), m.clone()))
         .collect();
@@ -236,13 +237,13 @@ fn main() {
     let mut pending_devices: VecDeque<BeaconDevice> = VecDeque::new();
     
     // Track pending devices by public key to prevent duplicates
-    let mut pending_keys: HashSet<String> = HashSet::new();
+    let mut pending_keys: HashSet<SshPublicKey> = HashSet::new();
     
     // Track last known IP for known devices to avoid redundant notifications
-    let mut known_ip: HashMap<String, String> = HashMap::new();
+    let mut known_ip: HashMap<SshPublicKey, String> = HashMap::new();
     
     // Track rejected devices to avoid re-asking
-    let mut rejected_keys: HashSet<String> = HashSet::new();
+    let mut rejected_keys: HashSet<SshPublicKey> = HashSet::new();
     
     // Statistics
     let mut new_count = 0;
@@ -324,10 +325,10 @@ fn main() {
                     pending_devices.push_back(device);
                     if !dry_run {
                         let added_device = pending_devices.back().unwrap();
-                        let key_preview = if added_device.ssh_public_key.len() > 16 {
-                            format!("{}...", &added_device.ssh_public_key[..13])
+                        let key_preview = if added_device.ssh_public_key.as_str().len() > 16 {
+                            format!("{}...", &added_device.ssh_public_key.as_str()[..13])
                         } else {
-                            added_device.ssh_public_key.clone()
+                            added_device.ssh_public_key.to_string()
                         };
                         println!("\n[!] New device: {} ({}) - key: {}", 
                             added_device.name, added_device.ip, key_preview);
@@ -404,10 +405,10 @@ fn main() {
                 // Dry run: show all devices as they are detected
                 let device = pending_devices.pop_front().unwrap();
                 pending_keys.remove(&device.ssh_public_key);
-                let key_preview = if device.ssh_public_key.len() > 16 {
-                    format!("{}...", &device.ssh_public_key[..13])
+                let key_preview = if device.ssh_public_key.as_str().len() > 16 {
+                    format!("{}...", &device.ssh_public_key.as_str()[..13])
                 } else {
-                    device.ssh_public_key.clone()
+                    device.ssh_public_key.to_string()
                 };
                 println!("\n[DRY RUN] New device: {} ({}) - key: {}", 
                     device.name, device.ip, key_preview);
@@ -480,7 +481,7 @@ fn start_beacon_listener(
     port: u16,
     running: Arc<AtomicBool>,
     sender: mpsc::Sender<BeaconDevice>,
-    local_ssh_public_key: String,
+    local_ssh_public_key: SshPublicKey,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         listen_beacons_continuous(port, sender, local_ssh_public_key, running);
@@ -492,7 +493,7 @@ fn start_beacon_announcer(
     port: u16,
     secs: u64,
     name: String,
-    ssh_public_key: String,
+    ssh_public_key: SshPublicKey,
     ip: String,
     ssh_port: u16,
     signing_key: ed25519_dalek::SigningKey,
@@ -510,8 +511,8 @@ fn start_beacon_announcer(
 /// Reload device configuration from disk (e.g. after a git refresh pulled new
 /// device files) and rebuild the lookup maps used by the interactive loop.
 fn reload_known_devices(
-    known_keys: &mut HashSet<String>,
-    key_to_machine: &mut HashMap<String, Machine>,
+    known_keys: &mut HashSet<SshPublicKey>,
+    key_to_machine: &mut HashMap<SshPublicKey, Machine>,
 ) {
     let conf = load_config();
     *known_keys = conf.machines.iter().map(|m| m.ssh_public_key.clone()).collect();

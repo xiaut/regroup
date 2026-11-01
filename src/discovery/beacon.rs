@@ -23,17 +23,18 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 use super::NetworkInterface;
+use crate::ssh::keys::{SignatureB64, SigningPublicKeyB64, SshPublicKey};
 
 /// Represents a device announced via UDP beacon
 #[derive(Clone, Debug)]
 pub struct BeaconDevice {
     pub name: String,
-    pub signing_public_key: String,
-    pub ssh_public_key: String,
+    pub signing_public_key: SigningPublicKeyB64,
+    pub ssh_public_key: SshPublicKey,
     pub ip: String,
     pub port: u16,
     pub timestamp: String,
-    pub signature: String,
+    pub signature: SignatureB64,
 }
 
 /// Broadcasts signed beacon message every 2 s until the deadline on all local interfaces.
@@ -49,7 +50,7 @@ pub fn announce_beacon(
     port: u16,
     secs: u64,
     name: &str,
-    ssh_public_key: &str,
+    ssh_public_key: &SshPublicKey,
     ip: &str,
     port_ssh: u16,
     signing_key: &ed25519_dalek::SigningKey,
@@ -133,7 +134,7 @@ const MAX_BEACON_AGE: u64 = 300;
 /// 
 /// Expected format: name\tsigning_public_key_b64\tssh_public_key\tip\tport\ttimestamp\tsignature_b64
 /// Signed message: "name|ssh_public_key|ip|port|timestamp"
-pub fn listen_beacons(port: u16, secs: u64, local_ssh_public_key: &str) -> Vec<BeaconDevice> {
+pub fn listen_beacons(port: u16, secs: u64, local_ssh_public_key: &SshPublicKey) -> Vec<BeaconDevice> {
     use crate::signing;
     
     let mut beacons: Vec<BeaconDevice> = Vec::new();
@@ -189,7 +190,7 @@ pub fn listen_beacons(port: u16, secs: u64, local_ssh_public_key: &str) -> Vec<B
                         // The SSH public key is the unique identifier for a machine.
                         // We cannot rely on hostname (changes in Termux) or IP (changes with network).
                         // If the beacon's SSH public key matches our own, this is us - ignore it.
-                        if ssh_public_key == local_ssh_public_key {
+                        if &ssh_public_key == local_ssh_public_key {
                             continue;
                         }
                         
@@ -197,12 +198,12 @@ pub fn listen_beacons(port: u16, secs: u64, local_ssh_public_key: &str) -> Vec<B
                         if !beacons.iter().any(|b| b.ip == ip) {
                             beacons.push(BeaconDevice {
                                 name,
-                                signing_public_key: parts[1].to_string(),
+                                signing_public_key: SigningPublicKeyB64::from(parts[1]),
                                 ssh_public_key,
                                 ip,
                                 port,
                                 timestamp: timestamp_str,
-                                signature: parts[6].to_string(),
+                                signature: SignatureB64::from(parts[6]),
                             });
                         }
                     }
@@ -227,7 +228,7 @@ pub fn listen_beacons(port: u16, secs: u64, local_ssh_public_key: &str) -> Vec<B
 pub fn listen_beacons_continuous(
     port: u16,
     sender: std::sync::mpsc::Sender<BeaconDevice>,
-    local_ssh_public_key: String,
+    local_ssh_public_key: SshPublicKey,
     running: Arc<AtomicBool>,
 ) {
     use crate::signing;
@@ -292,12 +293,12 @@ pub fn listen_beacons_continuous(
                         
                         let device = BeaconDevice {
                             name,
-                            signing_public_key: parts[1].to_string(),
+                            signing_public_key: SigningPublicKeyB64::from(parts[1]),
                             ssh_public_key,
                             ip,
                             port,
                             timestamp: timestamp_str,
-                            signature: parts[6].to_string(),
+                            signature: SignatureB64::from(parts[6]),
                         };
                         // If the channel is disconnected, the main loop is gone: stop
                         if sender.send(device).is_err() {
