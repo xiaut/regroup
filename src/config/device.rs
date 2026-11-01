@@ -63,11 +63,11 @@ pub fn load_device_file(path: &Path) -> Result<Machine, String> {
     };
 
     let signing_public_key = match obj.get("signing_public_key") {
-        None => None,
         Some(v) => match v.as_str() {
-            Some(s) => Some(SigningPublicKeyB64::from(s.trim())),
+            Some(s) => SigningPublicKeyB64::from(s.trim()),
             None => return Err(format!("\"signing_public_key\" must be a string")),
         },
+        None => return Err(format!("\"signing_public_key\" is required")),
     };
     
     let (port, port_explicit) = match obj.get("port") {
@@ -106,10 +106,7 @@ pub fn save_device_file(path: &Path, machine: &Machine) -> io::Result<()> {
     let mut obj = serde_json::Map::new();
     obj.insert("name".to_string(), serde_json::Value::String(machine.name.clone()));
     obj.insert("ssh_public_key".to_string(), serde_json::Value::String(machine.ssh_public_key.0.clone()));
-
-    if let Some(signing_public_key) = &machine.signing_public_key {
-        obj.insert("signing_public_key".to_string(), serde_json::Value::String(signing_public_key.0.clone()));
-    }
+    obj.insert("signing_public_key".to_string(), serde_json::Value::String(machine.signing_public_key.0.clone()));
     
     if !machine.user.is_empty() {
         obj.insert("user".to_string(), serde_json::Value::String(machine.user.clone()));

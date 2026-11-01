@@ -181,6 +181,7 @@ Each device file (`devices/<name>.json`) contains:
 {
   "name": "hostname",
   "ssh_public_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA...",
+  "signing_public_key": "MCowBQYDK2VwAyEA...",
   "user": "username",
   "port": 22
 }
@@ -189,7 +190,7 @@ Each device file (`devices/<name>.json`) contains:
 Fields:
 - `name`: Device hostname (auto-detected) - **required**
 - `ssh_public_key`: SSH server host public key (OpenSSH format) - **required**; this is the unique identifier of a machine (hostnames and IPs can change)
-- `signing_public_key`: Ed25519 signing public key (base64) the machine used in its beacon when accepted — written by regroup; beacons signed with any other key trigger a confirmation prompt (reinstall or spoofing)
+- `signing_public_key`: Ed25519 signing public key (base64, **required**) — written by regroup when the device file is created; beacons signed with any other key trigger a confirmation prompt (reinstall or spoofing)
 - `user`: SSH username (defaults to current user for auto-created devices, omitted if empty)
 - `port`: SSH port (defaults to 22; devices discovered via beacon keep their announced port, e.g. Termux's 8022)
 

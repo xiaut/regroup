@@ -72,7 +72,7 @@ pub fn run_selftest() -> ! {
         let _ = fs::create_dir_all(&devices_dir);
         
         let device_file = devices_dir.join("test.json");
-        let device_config = r#"{"name": "test", "ssh_public_key": "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAAB", "user": "testuser", "port": 22}"#;
+        let device_config = r#"{"name": "test", "ssh_public_key": "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAAB", "signing_public_key": "MCowBQYDK2VwAyEAGXNlbGZ0ZXN0a2V5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXk=", "user": "testuser", "port": 22}"#;
         if let Err(e) = fs::write(&device_file, device_config) {
             println!("device file creation — FAIL ({})", e);
             ok = false;
@@ -372,7 +372,7 @@ pub fn add_device_to_config(
     let machine = Machine {
         name: name.to_string(),
         ssh_public_key: device.ssh_public_key.clone(),
-        signing_public_key: Some(device.signing_public_key.clone()),
+        signing_public_key: device.signing_public_key.clone(),
         user: String::new(),
         port: device.port,
         port_explicit: true,
@@ -438,8 +438,7 @@ pub fn add_device_to_config(
 }
 
 /// Persist a device's signing public key in its device file and commit the
-/// change. Used when the user accepts a new signing key (machine reinstall)
-/// and when adopting the key of a device accepted before pinning existed.
+/// change. Used when the user accepts a new signing key (machine reinstall).
 pub fn trust_new_signing_key(home: &str, device: &BeaconDevice) {
     let conf = load_config();
     let machine = conf
@@ -451,7 +450,7 @@ pub fn trust_new_signing_key(home: &str, device: &BeaconDevice) {
         Some(m) => m,
         None => return,
     };
-    machine.signing_public_key = Some(device.signing_public_key.clone());
+    machine.signing_public_key = device.signing_public_key.clone();
     
     let config_dir = PathBuf::from(home).join(CONFIG_DIR).join(GIT_DIR);
     let device_path = config_dir.join(DEVICES_DIR).join(format!("{}.json", machine.name));

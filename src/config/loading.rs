@@ -12,6 +12,7 @@ use super::{Conf, GlobalSettings, Machine, CONFIG_DIR, DEVICES_DIR, GLOBAL_CONFI
 use super::device::{load_device_file, save_device_file};
 use super::settings::{load_global_settings, save_default_global_settings};
 use crate::discovery::local::host_name;
+use crate::ssh::keys::SigningPublicKeyB64;
 use crate::ssh::public_key::get_ssh_server_public_key;
 use crate::git::git_init;
 
@@ -53,6 +54,18 @@ pub fn create_device_config(config_dir: &PathBuf) -> Result<Machine, String> {
     let ssh_public_key = get_ssh_server_public_key().ok_or_else(|| {
         "Could not detect SSH public key. Ensure SSH server is running on this machine.".to_string()
     })?;
+
+    // Pin our own signing key in the device file: the machines that accept
+    // this device verify our beacons against it.
+    let signing_public_key = match crate::signing::initialize_signing_keys() {
+        Ok((_signing_key, verifying_key)) => {
+            use base64::Engine;
+            SigningPublicKeyB64::from(
+                base64::engine::general_purpose::STANDARD.encode(verifying_key.to_bytes()),
+            )
+        }
+        Err(e) => return Err(format!("cannot initialize signing keys: {}", e)),
+    };
     
     // Determine the current user
     let current_user = env::var("USER").unwrap_or_else(|_| env::var("LOGNAME").unwrap_or_default());
@@ -60,9 +73,7 @@ pub fn create_device_config(config_dir: &PathBuf) -> Result<Machine, String> {
     let machine = Machine {
         name: hostname.clone(),
         ssh_public_key,
-        // Our own signing key is irrelevant for pinning (we self-filter our
-        // own beacons by SSH key); it is pinned by the machines that accept us.
-        signing_public_key: None,
+        signing_public_key,
         user: current_user,
         port: 22,
         port_explicit: false,

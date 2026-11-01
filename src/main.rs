@@ -239,11 +239,7 @@ fn main() {
     // spoofing (reject).
     let mut pinned_signing_keys: HashMap<SshPublicKey, SigningPublicKeyB64> = conf.machines
         .iter()
-        .filter_map(|m| {
-            m.signing_public_key
-                .as_ref()
-                .map(|k| (m.ssh_public_key.clone(), k.clone()))
-        })
+        .map(|m| (m.ssh_public_key.clone(), m.signing_public_key.clone()))
         .collect();
     
     // Signing keys the user explicitly refused (rotation declined)
@@ -340,15 +336,6 @@ fn main() {
                             }
                         }
                         continue;
-                    }
-                } else if let Some(machine) = key_to_machine.get(&device.ssh_public_key) {
-                    // Known machine first seen since signing key pinning was
-                    // introduced: adopt its current signing key (trust on
-                    // first use), so future key changes are detected.
-                    if machine.signing_public_key.is_none() && !dry_run {
-                        pinned_signing_keys.insert(device.ssh_public_key.clone(), device.signing_public_key.clone());
-                        trust_new_signing_key(&home, &device);
-                        println!("\n[~] Pinning signing key for existing device {}", machine.name);
                     }
                 }
                 
@@ -527,9 +514,7 @@ fn main() {
                                 rename_state = Some((device, suggested));
                             } else if let Some(machine) = add_device_to_config(&home, &ssh_config, &device, &device_name, &mut new_count) {
                                 // Pin the signing key the device used when accepted
-                                if let Some(sk) = &machine.signing_public_key {
-                                    pinned_signing_keys.insert(device_ssh_public_key.clone(), sk.clone());
-                                }
+                                pinned_signing_keys.insert(device_ssh_public_key.clone(), machine.signing_public_key.clone());
                                 known_keys.insert(device_ssh_public_key.clone());
                                 key_to_machine.insert(device_ssh_public_key.clone(), machine);
                                 known_ip.insert(device_ssh_public_key.clone(), device.ip.clone());
@@ -675,11 +660,7 @@ fn reload_known_devices(
         .collect();
     *pinned_signing_keys = conf.machines
         .iter()
-        .filter_map(|m| {
-            m.signing_public_key
-                .as_ref()
-                .map(|k| (m.ssh_public_key.clone(), k.clone()))
-        })
+        .map(|m| (m.ssh_public_key.clone(), m.signing_public_key.clone()))
         .collect();
 }
 
