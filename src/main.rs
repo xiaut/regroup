@@ -46,11 +46,11 @@ use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::Duration;
 
-use cli::{add_device_to_config, device_name_taken, die, refresh_git, run_selftest, setup_cd, unique_device_name, usage};
+use cli::{add_device_to_config, device_name_taken, die, refresh_git, run_selftest, setup_cd, trust_new_signing_key, unique_device_name, usage};
 use config::{load_config, Machine};
 use discovery::beacon::{announce_beacon, listen_beacons_continuous, BeaconDevice};
 use ssh::config::update_block;
-use ssh::keys::SshPublicKey;
+use ssh::keys::{SigningPublicKeyB64, SshPublicKey};
 use ssh::public_key;
 use discovery::{get_local_interfaces, host_name, my_ip};
 
@@ -233,6 +233,25 @@ fn main() {
         .map(|m| (m.ssh_public_key.clone(), m.clone()))
         .collect();
     
+    // Pinned Ed25519 signing keys (feature D): machines are keyed by their SSH
+    // public key, and their beacons must be signed with the signing key pinned
+    // at first acceptance. A different key means reinstall (ask the user) or
+    // spoofing (reject).
+    let mut pinned_signing_keys: HashMap<SshPublicKey, SigningPublicKeyB64> = conf.machines
+        .iter()
+        .filter_map(|m| {
+            m.signing_public_key
+                .as_ref()
+                .map(|k| (m.ssh_public_key.clone(), k.clone()))
+        })
+        .collect();
+    
+    // Signing keys the user explicitly refused (rotation declined)
+    let mut rejected_signing_keys: HashSet<(SshPublicKey, SigningPublicKeyB64)> = HashSet::new();
+    
+    // Device currently prompting for a new signing key (reinstall or spoofing)
+    let mut rotation_pending: Option<BeaconDevice> = None;
+    
     // Queue for pending devices to confirm
     let mut pending_devices: VecDeque<BeaconDevice> = VecDeque::new();
     
@@ -295,6 +314,42 @@ fn main() {
                 // If the device's SSH public key matches ours, this beacon is from us - ignore it.
                 if device.ssh_public_key == local_public_key {
                     continue;
+                }
+                
+                // Signing key pinning: a beacon from a known machine must be
+                // signed with the key pinned when it was accepted.
+                if let Some(pinned) = pinned_signing_keys.get(&device.ssh_public_key) {
+                    if pinned.as_str() != device.signing_public_key.as_str() {
+                        // Either the machine was reinstalled (regroup
+                        // regenerated its signing keys) or this is spoofing.
+                        let pair = (device.ssh_public_key.clone(), device.signing_public_key.clone());
+                        if !rejected_signing_keys.contains(&pair) && rotation_pending.is_none() {
+                            if dry_run {
+                                eprintln!("\n[DRY RUN] {} announces with a NEW signing key — would ask to trust it", device.name);
+                            } else {
+                                eprintln!("\n[!] {} announces with a NEW signing key (expected: {}…, received: {}…)",
+                                    device.name,
+                                    &pinned.as_str()[..8.min(pinned.as_str().len())],
+                                    &device.signing_public_key.as_str()[..8.min(device.signing_public_key.as_str().len())]);
+                                println!("    This is expected after a reinstall (regroup regenerates its signing keys).");
+                                println!("    If you do not expect a reinstall, this may be spoofing.");
+                                print!("    Trust the new signing key for {}? [y/N]: ", device.name);
+                                io::stdout().flush().ok();
+                                last_prompt_time = std::time::Instant::now();
+                                rotation_pending = Some(device);
+                            }
+                        }
+                        continue;
+                    }
+                } else if let Some(machine) = key_to_machine.get(&device.ssh_public_key) {
+                    // Known machine first seen since signing key pinning was
+                    // introduced: adopt its current signing key (trust on
+                    // first use), so future key changes are detected.
+                    if machine.signing_public_key.is_none() && !dry_run {
+                        pinned_signing_keys.insert(device.ssh_public_key.clone(), device.signing_public_key.clone());
+                        trust_new_signing_key(&home, &device);
+                        println!("\n[~] Pinning signing key for existing device {}", machine.name);
+                    }
                 }
                 
                 // Check if this is a known device
@@ -417,6 +472,27 @@ fn main() {
                     }
                 }
             }
+        } else if rotation_pending.is_some() {
+            // Waiting for the user to decide about a new signing key
+            if user_command.is_err() && last_prompt_time.elapsed() >= PROMPT_REPEAT_INTERVAL {
+                let device = rotation_pending.as_ref().unwrap();
+                print!("\nTrust the new signing key for {}? [y/N]: ", device.name);
+                io::stdout().flush().ok();
+                last_prompt_time = std::time::Instant::now();
+            }
+            if let Ok(input) = user_command {
+                last_prompt_time = std::time::Instant::now();
+                let device = rotation_pending.take().unwrap();
+                let input = input.trim().to_lowercase();
+                if input == "y" || input == "yes" {
+                    pinned_signing_keys.insert(device.ssh_public_key.clone(), device.signing_public_key.clone());
+                    trust_new_signing_key(&home, &device);
+                    println!("  + New signing key for {} trusted — its next beacon will be processed normally.", device.name);
+                } else {
+                    rejected_signing_keys.insert((device.ssh_public_key.clone(), device.signing_public_key.clone()));
+                    println!("  New signing key for {} rejected — its beacons are ignored.", device.name);
+                }
+            }
         } else
         // Process pending devices if any
         if !pending_devices.is_empty() {
@@ -450,6 +526,10 @@ fn main() {
                                 last_prompt_time = std::time::Instant::now();
                                 rename_state = Some((device, suggested));
                             } else if let Some(machine) = add_device_to_config(&home, &ssh_config, &device, &device_name, &mut new_count) {
+                                // Pin the signing key the device used when accepted
+                                if let Some(sk) = &machine.signing_public_key {
+                                    pinned_signing_keys.insert(device_ssh_public_key.clone(), sk.clone());
+                                }
                                 known_keys.insert(device_ssh_public_key.clone());
                                 key_to_machine.insert(device_ssh_public_key.clone(), machine);
                                 known_ip.insert(device_ssh_public_key.clone(), device.ip.clone());
@@ -460,7 +540,7 @@ fn main() {
                             pending_keys.insert(device_ssh_public_key);
                             refresh_git(&home);
                             // A pull may have brought new device configs: reload
-                            reload_known_devices(&mut known_keys, &mut key_to_machine);
+                            reload_known_devices(&mut known_keys, &mut key_to_machine, &mut pinned_signing_keys);
                         }
                         "q" => {
                             println!();
@@ -504,7 +584,7 @@ fn main() {
                         } else {
                             refresh_git(&home);
                             // A pull may have brought new device configs: reload
-                            reload_known_devices(&mut known_keys, &mut key_to_machine);
+                            reload_known_devices(&mut known_keys, &mut key_to_machine, &mut pinned_signing_keys);
                         }
                     }
                     _ => {}
@@ -585,12 +665,21 @@ fn start_beacon_announcer(
 fn reload_known_devices(
     known_keys: &mut HashSet<SshPublicKey>,
     key_to_machine: &mut HashMap<SshPublicKey, Machine>,
+    pinned_signing_keys: &mut HashMap<SshPublicKey, SigningPublicKeyB64>,
 ) {
     let conf = load_config();
     *known_keys = conf.machines.iter().map(|m| m.ssh_public_key.clone()).collect();
     *key_to_machine = conf.machines
         .iter()
         .map(|m| (m.ssh_public_key.clone(), m.clone()))
+        .collect();
+    *pinned_signing_keys = conf.machines
+        .iter()
+        .filter_map(|m| {
+            m.signing_public_key
+                .as_ref()
+                .map(|k| (m.ssh_public_key.clone(), k.clone()))
+        })
         .collect();
 }
 

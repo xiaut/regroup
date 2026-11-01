@@ -60,6 +60,9 @@ pub fn create_device_config(config_dir: &PathBuf) -> Result<Machine, String> {
     let machine = Machine {
         name: hostname.clone(),
         ssh_public_key,
+        // Our own signing key is irrelevant for pinning (we self-filter our
+        // own beacons by SSH key); it is pinned by the machines that accept us.
+        signing_public_key: None,
         user: current_user,
         port: 22,
         port_explicit: false,

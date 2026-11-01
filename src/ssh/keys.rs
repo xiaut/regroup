@@ -32,11 +32,6 @@ use std::fmt;
 pub struct SshPublicKey(pub String);
 
 impl SshPublicKey {
-    /// Create a new SSH public key wrapper
-    pub fn new(key: String) -> Self {
-        Self(key)
-    }
-    
     /// Get the inner string
     pub fn as_str(&self) -> &str {
         &self.0
@@ -74,17 +69,7 @@ impl From<&str> for SshPublicKey {
 #[serde(transparent)]
 pub struct SshFingerprint(pub String);
 
-impl SshFingerprint {
-    /// Create a new SSH fingerprint wrapper
-    pub fn new(fingerprint: String) -> Self {
-        Self(fingerprint)
-    }
 
-    /// Get the inner string
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
 
 impl fmt::Display for SshFingerprint {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -113,11 +98,6 @@ impl From<&str> for SshFingerprint {
 pub struct SigningPublicKeyB64(pub String);
 
 impl SigningPublicKeyB64 {
-    /// Create a new signing public key wrapper
-    pub fn new(key: String) -> Self {
-        Self(key)
-    }
-
     /// Get the inner string
     pub fn as_str(&self) -> &str {
         &self.0

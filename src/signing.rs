@@ -21,7 +21,7 @@ use zeroize::Zeroizing;
 use base64::Engine as _;
 
 use crate::config::CONFIG_DIR;
-use crate::ssh::keys::{SignatureB64, SigningPublicKeyB64, SshPublicKey};
+use crate::ssh::keys::{SignatureB64, SshPublicKey};
 
 // ============================================================
 // Constants
@@ -173,8 +173,10 @@ pub fn load_public_key() -> Option<VerifyingKey> {
         eprintln!("WARNING: public key has unexpected length: {}", public_bytes.len());
         return None;
     }
-    
-    match VerifyingKey::from_bytes(&public_bytes.try_into().unwrap()) {
+
+    // Length is checked above; try_into cannot fail here, but do not unwrap
+    let public_array: [u8; 32] = public_bytes.try_into().ok()?;
+    match VerifyingKey::from_bytes(&public_array) {
         Ok(key) => Some(key),
         Err(_) => None,
     }
@@ -274,7 +276,7 @@ pub fn sign_beacon(
 pub fn verify_beacon(
     beacon_str: &str,
     expected_signing_public_key: Option<&VerifyingKey>,
-) -> Result<(String, SshPublicKey, String, u16, String), String> {
+) -> Result<(String, SshPublicKey, String, u16), String> {
     let parts: Vec<&str> = beacon_str.split('\t').collect();
 
     // Expected format: name\tsigning_public_key_b64\tssh_public_key\tip\tport\ttimestamp\tsignature_b64
@@ -298,8 +300,22 @@ pub fn verify_beacon(
         Ok(b) => b,
         Err(e) => return Err(format!("invalid base64 signing public key: {}", e)),
     };
-    
-    let signing_public_key = match VerifyingKey::from_bytes(&signing_public_key_bytes.try_into().unwrap()) {
+
+    // The signing public key is attacker-controlled network input: validate
+    // its length explicitly and never unwrap (a beacon with a key of the
+    // wrong length used to panic the whole process).
+    let signing_public_key_len = signing_public_key_bytes.len();
+    let signing_public_key_array: [u8; 32] = match signing_public_key_bytes.try_into() {
+        Ok(a) => a,
+        Err(_) => {
+            return Err(format!(
+                "invalid signing public key length: {} bytes (expected 32)",
+                signing_public_key_len
+            ))
+        }
+    };
+
+    let signing_public_key = match VerifyingKey::from_bytes(&signing_public_key_array) {
         Ok(key) => key,
         Err(e) => return Err(format!("invalid signing public key bytes: {}", e)),
     };
@@ -316,9 +332,9 @@ pub fn verify_beacon(
     
     // Verify the signature
     let is_valid = verify_signature(&message, &signature_b64, &signing_public_key)?;
-    
+
     if is_valid {
-        Ok((name, ssh_public_key, ip, port, timestamp))
+        Ok((name, ssh_public_key, ip, port))
     } else {
         Err("invalid signature".to_string())
     }
@@ -327,12 +343,6 @@ pub fn verify_beacon(
 // ============================================================
 // Utility functions
 // ============================================================
-
-/// Get the signing public key in base64 format for display
-pub fn get_signing_public_key_b64() -> Option<SigningPublicKeyB64> {
-    let base64_engine = base64::engine::general_purpose::STANDARD;
-    load_public_key().map(|key| SigningPublicKeyB64::new(base64_engine.encode(&key.to_bytes())))
-}
 
 /// Check if signing keys exist
 pub fn signing_keys_exist() -> bool {

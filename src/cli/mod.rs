@@ -148,6 +148,43 @@ pub fn run_selftest() -> ! {
         let _ = fs::remove_file(&pub_path);
     }
 
+    // 4. signed beacon verification (roundtrip, tampering, malformed input)
+    {
+        use crate::signing;
+        use crate::ssh::keys::SshPublicKey;
+
+        let mut beacons_ok = true;
+        if let Ok((signing_key, _)) = signing::generate_keypair() {
+            let ssh_key = SshPublicKey::from("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAISelftestKeyNotReal");
+            match signing::sign_beacon("selftest", &ssh_key, "10.1.2.3", 22, "0", &signing_key) {
+                Ok(beacon) => {
+                    // roundtrip
+                    match signing::verify_beacon(&beacon, None) {
+                        Ok((name, key, ip, port)) => {
+                            beacons_ok &= name == "selftest"
+                                && key == ssh_key
+                                && ip == "10.1.2.3"
+                                && port == 22;
+                        }
+                        Err(_) => beacons_ok = false,
+                    }
+                    // a tampered field must break the signature
+                    let tampered = beacon.replace("10.1.2.3", "10.9.9.9");
+                    beacons_ok &= signing::verify_beacon(&tampered, None).is_err();
+                }
+                Err(_) => beacons_ok = false,
+            }
+            // a malformed signing key must be rejected, never panic
+            // (regression: this used to crash the process)
+            let malformed = format!("selftest\tAAAA\tssh-ed25519 AAAA\t10.1.2.3\t22\t0\tAAAA");
+            beacons_ok &= signing::verify_beacon(&malformed, None).is_err();
+        } else {
+            beacons_ok = false;
+        }
+        println!("signed beacon verification — {}", if beacons_ok { "OK" } else { "FAIL" });
+        ok &= beacons_ok;
+    }
+
     println!("selftest: {}", if ok { "OK" } else { "FAIL" });
     std::process::exit(if ok { 0 } else { 1 });
 }
@@ -330,9 +367,12 @@ pub fn add_device_to_config(
     let device_path = devices_dir.join(format!("{}.json", name));
     // The beacon explicitly carries the device's SSH port: mark it explicit so
     // ~/.ssh/config and the device file keep it (e.g. Termux port 8022).
+    // Pin the device's Ed25519 signing key: future beacons must be signed
+    // with this same key or the user is asked to confirm the change.
     let machine = Machine {
         name: name.to_string(),
         ssh_public_key: device.ssh_public_key.clone(),
+        signing_public_key: Some(device.signing_public_key.clone()),
         user: String::new(),
         port: device.port,
         port_explicit: true,
@@ -394,6 +434,33 @@ pub fn add_device_to_config(
             warn(&format!("could not save device config for {}: {}", name, e));
             None
         }
+    }
+}
+
+/// Persist a device's signing public key in its device file and commit the
+/// change. Used when the user accepts a new signing key (machine reinstall)
+/// and when adopting the key of a device accepted before pinning existed.
+pub fn trust_new_signing_key(home: &str, device: &BeaconDevice) {
+    let conf = load_config();
+    let machine = conf
+        .machines
+        .iter()
+        .find(|m| m.ssh_public_key == device.ssh_public_key)
+        .cloned();
+    let mut machine = match machine {
+        Some(m) => m,
+        None => return,
+    };
+    machine.signing_public_key = Some(device.signing_public_key.clone());
+    
+    let config_dir = PathBuf::from(home).join(CONFIG_DIR).join(GIT_DIR);
+    let device_path = config_dir.join(DEVICES_DIR).join(format!("{}.json", machine.name));
+    if let Err(e) = save_device_file(&device_path, &machine) {
+        warn(&format!("could not update signing key for {}: {}", machine.name, e));
+        return;
+    }
+    if let Err(e) = git_add_and_commit_file(&config_dir, &device_path, &format!("Update signing key for {}", machine.name)) {
+        warn(&format!("could not commit signing key update for {}: {}", machine.name, e));
     }
 }
 

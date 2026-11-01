@@ -11,7 +11,7 @@ use serde_json::Value;
 use super::Machine;
 use super::json_helpers::int_value;
 use super::validation::validate_machine;
-use crate::ssh::keys::SshPublicKey;
+use crate::ssh::keys::{SigningPublicKeyB64, SshPublicKey};
 
 /// Load a single device configuration from a JSON file
 pub fn load_device_file(path: &Path) -> Result<Machine, String> {
@@ -61,6 +61,14 @@ pub fn load_device_file(path: &Path) -> Result<Machine, String> {
         },
         None => String::new(),
     };
+
+    let signing_public_key = match obj.get("signing_public_key") {
+        None => None,
+        Some(v) => match v.as_str() {
+            Some(s) => Some(SigningPublicKeyB64::from(s.trim())),
+            None => return Err(format!("\"signing_public_key\" must be a string")),
+        },
+    };
     
     let (port, port_explicit) = match obj.get("port") {
         None => (22u16, false),
@@ -81,6 +89,7 @@ pub fn load_device_file(path: &Path) -> Result<Machine, String> {
     let machine = Machine {
         name,
         ssh_public_key,
+        signing_public_key,
         user,
         port,
         port_explicit,
@@ -97,6 +106,10 @@ pub fn save_device_file(path: &Path, machine: &Machine) -> io::Result<()> {
     let mut obj = serde_json::Map::new();
     obj.insert("name".to_string(), serde_json::Value::String(machine.name.clone()));
     obj.insert("ssh_public_key".to_string(), serde_json::Value::String(machine.ssh_public_key.0.clone()));
+
+    if let Some(signing_public_key) = &machine.signing_public_key {
+        obj.insert("signing_public_key".to_string(), serde_json::Value::String(signing_public_key.0.clone()));
+    }
     
     if !machine.user.is_empty() {
         obj.insert("user".to_string(), serde_json::Value::String(machine.user.clone()));

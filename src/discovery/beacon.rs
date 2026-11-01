@@ -23,7 +23,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 use super::NetworkInterface;
-use crate::ssh::keys::{SignatureB64, SigningPublicKeyB64, SshPublicKey};
+use crate::ssh::keys::{SigningPublicKeyB64, SshPublicKey};
 
 /// Represents a device announced via UDP beacon
 #[derive(Clone, Debug)]
@@ -33,8 +33,6 @@ pub struct BeaconDevice {
     pub ssh_public_key: SshPublicKey,
     pub ip: String,
     pub port: u16,
-    pub timestamp: String,
-    pub signature: SignatureB64,
 }
 
 /// Broadcasts signed beacon message every 2 s until the deadline on all local interfaces.
@@ -125,6 +123,9 @@ fn chrono_timestamp() -> String {
 /// Maximum age for beacon messages (5 minutes = 300 seconds)
 const MAX_BEACON_AGE: u64 = 300;
 
+/// Maximum tolerated clock skew for beacon timestamps (seconds in the future)
+const MAX_BEACON_FUTURE: u64 = 60;
+
 /// Listens for beacons continuously and sends each via channel.
 /// Runs until the `running` flag becomes false or the channel is disconnected.
 /// 
@@ -179,10 +180,19 @@ pub fn listen_beacons_continuous(
                     continue;
                 }
                 
+                // A timestamp in the future would bypass the age check
+                // forever (saturating_sub yields 0): allow only a small
+                // clock skew between machines.
+                if timestamp > now + MAX_BEACON_FUTURE {
+                    eprintln!("WARNING: received beacon from {} with a future timestamp ({}s ahead) — rejected", 
+                        ip, timestamp - now);
+                    continue;
+                }
+                
                 // Verify the signature
                 let beacon_str = parts.join("\t");
                 match signing::verify_beacon(&beacon_str, None) {
-                    Ok((name, ssh_public_key, ip_verified, port, timestamp_str)) => {
+                    Ok((name, ssh_public_key, ip_verified, port)) => {
                         // Check IP consistency
                         if ip_verified != ip {
                             eprintln!("WARNING: beacon IP mismatch - claimed: {}, verified: {}", 
@@ -204,8 +214,6 @@ pub fn listen_beacons_continuous(
                             ssh_public_key,
                             ip,
                             port,
-                            timestamp: timestamp_str,
-                            signature: SignatureB64::from(parts[6]),
                         };
                         // If the channel is disconnected, the main loop is gone: stop
                         if sender.send(device).is_err() {

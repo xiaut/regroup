@@ -20,6 +20,12 @@ pub struct Machine {
     /// Unique identifier of the machine: its SSH *server* host public key.
     /// Typed to prevent confusion with fingerprints or signing keys.
     pub ssh_public_key: crate::ssh::keys::SshPublicKey,
+    /// Ed25519 signing public key (base64) this machine used in its beacon
+    /// when it was accepted. Pinned so that beacons signed with any other
+    /// key are detected as spoofing (or as a reinstall, which the user is
+    /// asked to confirm). None for devices accepted before pinning existed,
+    /// and for this machine's own auto-created device file.
+    pub signing_public_key: Option<crate::ssh::keys::SigningPublicKeyB64>,
     pub user: String,
     pub port: u16,
     pub port_explicit: bool,

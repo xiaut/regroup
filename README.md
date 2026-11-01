@@ -79,8 +79,11 @@ On every run, regroup enters continuous interactive mode:
 ```
 1. Announce this machine via signed UDP beacons (every ~2 s, one per interface)
 2. Listen for other machines' beacons continuously
-   - Each beacon's Ed25519 signature is verified; unsigned/forged beacons are rejected
-   - Beacons older than 5 minutes are rejected
+   - Each beacon's Ed25519 signature is verified; malformed or forged beacons are rejected
+   - Beacons from an accepted machine must be signed with the signing key
+     pinned in its device file; a different key means reinstall (you are asked)
+     or spoofing (the beacon is rejected)
+   - Beacons older than 5 minutes, or dated too far in the future, are rejected
    - Beacons announcing an SSH public key we already know only update the
      machine's IP in ~/.ssh/config (silently, when the IP changed)
 3. New machines are queued and the user is prompted (y/N) for each one
@@ -92,12 +95,16 @@ On every run, regroup enters continuous interactive mode:
 
 This handles:
 - **IP address changes**: devices are identified by SSH public key, not IP
-- **Spoofing / MITM**: beacons are age-checked, and before anything is written,
-  the host key announced in a beacon is verified against the SSH server at the
-  announced IP (`ssh-keyscan`): ~/.ssh/config and ~/.ssh/known_hosts are only
-  updated when the server really serves the announced key. A mismatch (forged
-  beacon or man-in-the-middle) aborts the add, or — for a known device whose IP
-  changed — keeps the last verified IP and warns loudly
+- **Spoofing / MITM**: two independent checks, at two different layers:
+  - *the server*: before anything is written, the host key announced in a
+    beacon is verified against the SSH server at the announced IP
+    (`ssh-keyscan`); a mismatch (forged beacon or man-in-the-middle) aborts
+    the add, or — for a known device whose IP changed — keeps the last
+    verified IP and warns loudly
+  - *the announcer*: each machine's Ed25519 signing key is pinned in its
+    device file at first acceptance; beacons signed with any other key are
+    detected instantly (no network access needed) and the user is asked to
+    confirm — expected after a reinstall, suspicious otherwise
 - **Git sync**: changes propagate through the network
 
 ### Git Remote Management
@@ -182,6 +189,7 @@ Each device file (`devices/<name>.json`) contains:
 Fields:
 - `name`: Device hostname (auto-detected) - **required**
 - `ssh_public_key`: SSH server host public key (OpenSSH format) - **required**; this is the unique identifier of a machine (hostnames and IPs can change)
+- `signing_public_key`: Ed25519 signing public key (base64) the machine used in its beacon when accepted — written by regroup; beacons signed with any other key trigger a confirmation prompt (reinstall or spoofing)
 - `user`: SSH username (defaults to current user for auto-created devices, omitted if empty)
 - `port`: SSH port (defaults to 22; devices discovered via beacon keep their announced port, e.g. Termux's 8022)
 
