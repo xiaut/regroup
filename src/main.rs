@@ -38,7 +38,7 @@ mod discovery;
 mod git;
 mod ssh;
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{self, Write};
 use std::sync::mpsc;
 use std::thread;
@@ -161,13 +161,13 @@ fn main() {
     );
 
     // Build lookup maps from config
-    let mut known_keys: std::collections::HashSet<String> = conf.machines
+    let mut known_keys: HashSet<String> = conf.machines
         .iter()
         .map(|m| m.fingerprint.clone())
         .collect();
     
     // Map from public key to machine info for known devices
-    let mut key_to_machine: std::collections::HashMap<String, Machine> = conf.machines
+    let mut key_to_machine: HashMap<String, Machine> = conf.machines
         .iter()
         .map(|m| (m.fingerprint.clone(), m.clone()))
         .collect();
@@ -176,7 +176,7 @@ fn main() {
     let mut pending_devices: VecDeque<BeaconDevice> = VecDeque::new();
     
     // Track pending devices by public key to prevent duplicates
-    let mut pending_keys: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut pending_keys: HashSet<String> = HashSet::new();
     
     // Statistics
     let mut new_count = 0;
