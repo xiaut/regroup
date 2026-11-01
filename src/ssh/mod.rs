@@ -8,4 +8,4 @@ pub mod public_key;
 
 pub use config::update_block;
 pub use config_helpers::{flush_ssh_config, verify_ssh_config_complete};
-pub use public_key::get_ssh_server_fingerprint;
+pub use public_key::{get_ssh_server_fingerprint, HostKeyVerification, verify_and_add_to_known_hosts};

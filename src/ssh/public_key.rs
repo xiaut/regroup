@@ -98,6 +98,70 @@ fn get_server_fingerprint_from_files() -> Option<String> {
     None
 }
 
+/// Compute SHA256 fingerprint from a public key string (OpenSSH format)
+/// 
+/// The public key should be in the format: "key_type key_base64"
+/// For example: "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQ..."
+/// 
+/// Uses ssh-keygen -lf to compute the fingerprint.
+fn compute_fingerprint_from_public_key(public_key: &str) -> Option<String> {
+    use std::process::Stdio;
+    
+    // ssh-keygen -lf expects the key to be passed via stdin or as a file
+    // We'll pass it via stdin
+    let mut cmd = Command::new("ssh-keygen");
+    cmd.arg("-lf")
+        .arg("-")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(_) => return None,
+    };
+    
+    // Write the public key to ssh-keygen's stdin
+    if let Some(mut stdin) = child.stdin.take() {
+        // ssh-keygen expects the key in the format that ssh-keyscan produces
+        // which is: hostname key_type key_base64
+        // But we only have key_type key_base64, so we need to add a dummy hostname
+        let key_with_hostname = format!("dummy {}", public_key);
+        if let Err(_) = stdin.write_all(key_with_hostname.as_bytes()) {
+            return None;
+        }
+    }
+    
+    let output = match child.wait_with_output() {
+        Ok(o) => o,
+        Err(_) => return None,
+    };
+    
+    if !output.status.success() {
+        return None;
+    }
+    
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for line in stdout.lines() {
+        for field in line.split_whitespace() {
+            if field.starts_with("SHA256:") {
+                return Some(field.to_string());
+            }
+        }
+    }
+    
+    // Fallback to MD5
+    for line in stdout.lines() {
+        for field in line.split_whitespace() {
+            if field.starts_with("MD5:") {
+                return Some(field.to_string());
+            }
+        }
+    }
+    
+    None
+}
+
 /// Use ssh-keyscan to get the server host key fingerprint from localhost
 /// 
 /// This is a fallback method that queries the running SSH server
@@ -220,6 +284,19 @@ fn read_host_key_fingerprint(key_path: &PathBuf) -> Option<String> {
     None
 }
 
+/// Result type for host key verification
+#[derive(Debug, Clone, PartialEq)]
+pub enum HostKeyVerification {
+    /// Key verified and added successfully
+    Success,
+    /// Host is offline or unreachable
+    HostUnreachable,
+    /// Fingerprint mismatch - POTENTIAL SECURITY THREAT
+    FingerprintMismatch { expected: String, actual: String },
+    /// Error writing to known_hosts file
+    WriteError,
+}
+
 /// Add a host's public key to ~/.ssh/known_hosts for automatic verification
 /// 
 /// This function attempts to:
@@ -231,6 +308,12 @@ fn read_host_key_fingerprint(key_path: &PathBuf) -> Option<String> {
 /// 
 /// Returns true if the key was successfully added to known_hosts.
 pub fn add_to_known_hosts(hostname: &str, ip: &str, port: u16) -> bool {
+    // Simply add to known_hosts without verification (for backward compatibility)
+    add_to_known_hosts_inner(hostname, ip, port).is_ok()
+}
+
+/// Internal function to add host to known_hosts
+fn add_to_known_hosts_inner(hostname: &str, ip: &str, port: u16) -> std::io::Result<()> {
     // Try to get the host's public keys via ssh-keyscan
     let keyscan = Command::new("ssh-keyscan")
         .arg("-T")
@@ -244,25 +327,20 @@ pub fn add_to_known_hosts(hostname: &str, ip: &str, port: u16) -> bool {
     
     let keyscan_output = match keyscan {
         Ok(o) if o.status.success() && !o.stdout.is_empty() => o.stdout,
-        _ => return false,
+        _ => return Err(std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "Host unreachable")),
     };
     
     // Parse the ssh-keyscan output to extract host keys
     // Format: hostname key_type key_base64
     let keyscan_str = match String::from_utf8(keyscan_output) {
         Ok(s) => s,
-        Err(_) => return false,
+        Err(_) => return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid key data")),
     };
-    
-    // Replace the IP with the hostname for better readability
-    // ssh-keyscan returns entries like: "192.168.1.1 ssh-rsa AAAAB3..."
-    // We want: "hostname ssh-rsa AAAAB3..."
-    // But we should keep both IP and hostname for flexibility
     
     // Get the HOME directory
     let home_dir = match env::var("HOME") {
         Ok(h) => PathBuf::from(h),
-        Err(_) => return false,
+        Err(_) => return Err(std::io::Error::new(std::io::ErrorKind::NotFound, "HOME not set")),
     };
     
     let known_hosts_path = home_dir.join(".ssh").join("known_hosts");
@@ -270,20 +348,20 @@ pub fn add_to_known_hosts(hostname: &str, ip: &str, port: u16) -> bool {
     // Ensure ~/.ssh directory exists
     let ssh_dir = home_dir.join(".ssh");
     if let Err(_) = fs::create_dir_all(&ssh_dir) {
-        return false;
+        return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "Cannot create .ssh directory"));
     }
     
     // Ensure known_hosts file exists
     if !known_hosts_path.exists() {
         if let Err(_) = fs::write(&known_hosts_path, "") {
-            return false;
+            return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "Cannot create known_hosts"));
         }
         // Set permissions to 600 for security
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             if let Err(_) = fs::set_permissions(&known_hosts_path, fs::Permissions::from_mode(0o600)) {
-                return false;
+                return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "Cannot set permissions"));
             }
         }
     }
@@ -293,21 +371,112 @@ pub fn add_to_known_hosts(hostname: &str, ip: &str, port: u16) -> bool {
     if let Ok(existing) = fs::read_to_string(&known_hosts_path) {
         if existing.contains(hostname) || existing.contains(ip) {
             // Already in known_hosts, nothing to do
-            return true;
+            return Ok(());
         }
     }
     
     // Append the new keys to known_hosts
     // Format: hostname,ip key_type key_base64
-    // Replace the IP in the keyscan output with the hostname for better readability
     let entry = format!("# Added by regroup\n{}", keyscan_str.trim());
     
-    if let Err(_) = fs::OpenOptions::new()
+    if let Err(e) = fs::OpenOptions::new()
         .append(true)
         .open(&known_hosts_path)
         .and_then(|mut f| writeln!(f, "{}", entry)) {
-        return false;
+        return Err(e);
     }
     
-    true
+    Ok(())
+}
+
+/// Verify that a remote host's SSH key fingerprint matches the expected one.
+/// 
+/// This is a CRITICAL security check. When a device announces itself via UDP beacon,
+/// it provides its SSH server host key fingerprint. When we add the device, we should
+/// verify that the actual SSH server on that IP has the same fingerprint.
+/// 
+/// If the fingerprints don't match, it could indicate:
+/// - A man-in-the-middle attack
+/// - The device has been replaced
+/// - The device's SSH keys were regenerated
+/// - Network misconfiguration
+/// 
+/// This function:
+/// 1. Scans the remote host's SSH keys using ssh-keyscan
+/// 2. Computes the SHA256 fingerprint of the first key
+/// 3. Compares it with the expected fingerprint
+/// 4. If they match, adds the key to ~/.ssh/known_hosts
+/// 
+/// Returns:
+/// - HostKeyVerification::Success if verified and added
+/// - HostKeyVerification::HostUnreachable if the host is offline
+/// - HostKeyVerification::FingerprintMismatch if the fingerprints don't match (SECURITY ALERT!)
+/// - HostKeyVerification::WriteError if we couldn't write to known_hosts
+pub fn verify_and_add_to_known_hosts(
+    hostname: &str,
+    ip: &str,
+    port: u16,
+    expected_fingerprint: &str,
+) -> HostKeyVerification {
+    // Try to get the host's public keys via ssh-keyscan
+    let keyscan = Command::new("ssh-keyscan")
+        .arg("-T")
+        .arg("3")
+        .arg("-p")
+        .arg(port.to_string())
+        .arg(ip)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output();
+    
+    let keyscan_output = match keyscan {
+        Ok(o) if o.status.success() && !o.stdout.is_empty() => o.stdout,
+        _ => return HostKeyVerification::HostUnreachable,
+    };
+    
+    // Parse the ssh-keyscan output to get the public key
+    // Format: hostname key_type key_base64
+    let keyscan_str = match String::from_utf8(keyscan_output.clone()) {
+        Ok(s) => s,
+        Err(_) => return HostKeyVerification::HostUnreachable,
+    };
+    
+    // Extract just the key part (not the hostname prefix)
+    // ssh-keyscan output: "hostname key_type key_base64\n"
+    let key_line = match keyscan_str.lines().next() {
+        Some(line) => line,
+        None => return HostKeyVerification::HostUnreachable,
+    };
+    
+    // The line format is: hostname key_type key_base64
+    // We need to extract just "key_type key_base64" for fingerprint computation
+    let key_parts: Vec<&str> = key_line.split_whitespace().collect();
+    if key_parts.len() < 3 {
+        return HostKeyVerification::HostUnreachable;
+    }
+    
+    // Reconstruct the key in the format: "key_type key_base64"
+    // This is what ssh-keygen -lf expects
+    let public_key = key_parts[1..].join(" ");
+    
+    // Compute the fingerprint of the retrieved key
+    let actual_fingerprint = match compute_fingerprint_from_public_key(&public_key) {
+        Some(fp) => fp,
+        None => return HostKeyVerification::HostUnreachable,
+    };
+    
+    // Compare with expected fingerprint
+    // Both should be in format "SHA256:..." or "MD5:..."
+    if actual_fingerprint != expected_fingerprint {
+        return HostKeyVerification::FingerprintMismatch {
+            expected: expected_fingerprint.to_string(),
+            actual: actual_fingerprint,
+        };
+    }
+    
+    // Fingerprint matches! Add to known_hosts
+    match add_to_known_hosts_inner(hostname, ip, port) {
+        Ok(_) => HostKeyVerification::Success,
+        Err(_) => HostKeyVerification::WriteError,
+    }
 }

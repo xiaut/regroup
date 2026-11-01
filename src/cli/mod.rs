@@ -307,11 +307,34 @@ pub fn add_device_to_config(
                 println!("  + Added {} -> {} (~/.ssh/config updated)", device.name, device.ip);
             }
             
-            // Add to known_hosts for automatic SSH key verification
-            if crate::ssh::public_key::add_to_known_hosts(&device.name, &device.ip, 22) {
-                println!("  + Added {} to ~/.ssh/known_hosts for SSH verification", device.name);
-            } else {
-                warn(&format!("could not add {} to ~/.ssh/known_hosts (device may be offline)", device.name));
+            // Verify the announced fingerprint matches the actual SSH server key
+            // This is a CRITICAL security check to prevent MITM attacks
+            match crate::ssh::public_key::verify_and_add_to_known_hosts(
+                &device.name, 
+                &device.ip, 
+                22, 
+                &device.public_key
+            ) {
+                crate::ssh::public_key::HostKeyVerification::Success => {
+                    println!("  + Added {} to ~/.ssh/known_hosts for SSH verification", device.name);
+                }
+                crate::ssh::public_key::HostKeyVerification::HostUnreachable => {
+                    warn(&format!("{} is offline - cannot verify SSH key (will retry later)", device.name));
+                    // Still add to config but warn user
+                }
+                crate::ssh::public_key::HostKeyVerification::FingerprintMismatch { expected, actual } => {
+                    // SECURITY ALERT: The fingerprint doesn't match!
+                    // This could be a MITM attack or the device was replaced
+                    eprintln!("\n!!! SECURITY ALERT !!!");
+                    eprintln!("Device {} announced fingerprint: {}", device.name, expected);
+                    eprintln!("But actual SSH server key fingerprint is: {}", actual);
+                    eprintln!("This could indicate a man-in-the-middle attack or device replacement!");
+                    eprintln!("Device NOT added to configuration.\n");
+                    return; // Don't add this device!
+                }
+                crate::ssh::public_key::HostKeyVerification::WriteError => {
+                    warn(&format!("could not write to ~/.ssh/known_hosts for {}", device.name));
+                }
             }
             
             known_keys.insert(device.public_key.clone());
