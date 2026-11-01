@@ -12,6 +12,7 @@ use super::{Conf, GlobalSettings, Machine, CONFIG_DIR, DEVICES_DIR};
 use super::device::{load_device_file, save_device_file};
 use super::settings::{load_global_settings, save_default_global_settings};
 use crate::discovery::local::{host_name, get_local_fingerprint};
+use crate::git::git_init;
 
 /// Track warnings that have already been displayed to avoid duplicates
 static WARNING_TRACKER: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
@@ -99,6 +100,11 @@ pub fn load_config() -> Conf {
     if !config_dir.exists() {
         if let Err(e) = fs::create_dir_all(&config_dir) {
             die(&format!("cannot initialize config directory {}: {}", config_dir.display(), e));
+        }
+        
+        // Initialize as git repository
+        if let Err(e) = git_init(&config_dir) {
+            die(&format!("cannot initialize git repository in {}: {}", config_dir.display(), e));
         }
         
         // Create default settings
