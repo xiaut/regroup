@@ -3,6 +3,8 @@
 // Configuration is stored in ~/.regroup-config/ git repository where each device
 // has its own JSON file in the devices/ directory. Git remotes are automatically
 // configured for all other devices to enable decentralized sync.
+// NOTE: Configuration files are backups of discovered information, not the primary
+// source of truth. Devices identify themselves via their public key (SSH fingerprint).
 //
 // Continuous interactive mode: listens for UDP beacons in background, prompts user
 // for each new device. User can press 'r' to sync with git, 'q' to quit.
