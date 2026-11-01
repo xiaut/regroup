@@ -249,8 +249,13 @@ fn main() {
         }
     });
 
-    // State for prompt display (to avoid duplicate prompts)
-    let mut prompt_shown = false;
+    // State for prompt display - FIFO queue for questions
+    // Timer to control how often we re-display the current question prompt
+    let mut last_prompt_time = std::time::Instant::now();
+    const PROMPT_REPEAT_INTERVAL: Duration = Duration::from_secs(2);
+    
+    // State for waiting prompt (to avoid duplicate waiting messages)
+    let mut waiting_prompt_shown = false;
     
     // Main interactive loop
     println!("\nListening for devices on UDP port {}...", conf.udp_port);
@@ -322,17 +327,18 @@ fn main() {
         // Process pending devices if any
         if !pending_devices.is_empty() {
             if !dry_run {
-                // Show prompt for the current device (first in queue)
-                if !prompt_shown && user_command.is_err() {
+                // Show prompt for the current device (first in queue) - FIFO
+                // Re-display prompt periodically (every PROMPT_REPEAT_INTERVAL) until answered
+                if user_command.is_err() && last_prompt_time.elapsed() >= PROMPT_REPEAT_INTERVAL {
                     let device = &pending_devices[0];
                     print!("\nAdd {} to config? [y/N/q/r]: ", device.name);
                     io::stdout().flush().ok();
-                    prompt_shown = true;
+                    last_prompt_time = std::time::Instant::now();
                 }
                 
                 // Process user command if available
                 if let Ok(input) = user_command {
-                    prompt_shown = false;
+                    last_prompt_time = std::time::Instant::now();
                     let device = pending_devices.pop_front().unwrap();
                     let device_name = device.name.clone();
                     let device_ssh_public_key = device.ssh_public_key.clone();
@@ -398,11 +404,11 @@ fn main() {
                     }
                     _ => {}
                 }
-                prompt_shown = false;
-            } else if !prompt_shown {
+                waiting_prompt_shown = false;
+            } else if !waiting_prompt_shown {
                 print!("Waiting for devices or command [q=quit, r=refresh git]: ");
                 io::stdout().flush().ok();
-                prompt_shown = true;
+                waiting_prompt_shown = true;
             }
         }
         
