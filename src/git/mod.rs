@@ -24,7 +24,8 @@ pub fn is_git_repo(path: &Path) -> bool {
 
 /// Initialize a git repository
 pub fn git_init(repo_path: &Path) -> io::Result<()> {
-    if repo_path.exists() {
+    // Check if already a git repo
+    if repo_path.join(".git").exists() {
         return Ok(());
     }
     
