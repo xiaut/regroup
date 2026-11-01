@@ -11,7 +11,7 @@ Find machines by their SSH host key and update `~/.ssh/config`.
   listens continuously and prompts for each new device
 - Git remotes are **automatically configured** for all other devices (using hostnames)
 - Each device **owns** its own config file and can overwrite only it
-- If a new device's **name is already taken**, it is **renamed** automatically (`name-2`, `name-3`, ...)
+- If a new device's **name is already taken**, you are **asked to choose a new name**
 
 ## Quick Start
 
@@ -119,11 +119,13 @@ This handles:
 
 - Each device owns its own config file (`devices/<name>.json`)
 - When you accept a new device whose name is already used by another machine,
-  regroup renames the new device: `laptop` becomes `laptop-2`, `-3`, ... until
-  the name is free. A name is considered taken when it matches:
+  regroup asks you to choose a new name. A name is considered taken when it
+  matches:
   - a machine in the regroup config (`devices/` directory), or
   - an existing `Host` block in `~/.ssh/config` (regroup-managed or your own)
-- Existing entries are never overwritten
+- The first free name (`laptop-2`, `-3`, ...) is suggested as the default;
+  press Enter to accept it, or type any other name. Names that are also taken
+  are rejected and you are asked again. Existing entries are never overwritten
 
 ## Usage
 
@@ -321,14 +323,17 @@ Regroup handles these gracefully with warnings. The sync will work through other
 
 ### Name conflicts
 Two machines may share a hostname (e.g. two devices with the same default
-name). When you accept a device whose name is already taken, regroup renames
-it automatically: you will see
+name). When you accept a device whose name is already taken, regroup asks
+you to pick another name:
 
 ```
-  ! Name 'laptop' already used by another machine or an existing ~/.ssh/config entry — saved as 'laptop-2'
+  ! Name 'laptop' is already used by another machine or an existing ~/.ssh/config entry.
+  New name for this device (empty = laptop-2):
 ```
 
-and both machines keep working under their own names.
+Press Enter to accept the suggested free name, or type your own. If your
+choice is also taken you will be asked again. Both machines keep working
+under their own names.
 
 ## License
 

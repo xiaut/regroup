@@ -210,49 +210,61 @@ fn ssh_config_has_host(ssh_content: &str, name: &str) -> bool {
     false
 }
 
-/// Pick a device name that does not collide with an existing machine.
+/// Path of the regroup config devices directory for the given home.
+fn devices_dir_for(home: &str) -> PathBuf {
+    PathBuf::from(home).join(CONFIG_DIR).join(GIT_DIR).join(DEVICES_DIR)
+}
+
+/// Check whether a device name is already used by another machine.
 ///
 /// A name is taken when it is already used by:
 /// - a machine in the regroup config (devices loaded from `devices/`),
 /// - an existing `devices/<name>.json` file (even one that failed to load), or
 /// - an existing "Host <name>" block in ~/.ssh/config, whether regroup-managed
 ///   or configured by the user for an unrelated host.
-///
-/// Returns `desired` if free, otherwise "name-2", "name-3", ... — the first
-/// free candidate. This protects existing entries from being overwritten:
-/// device files are per-name and update_block replaces Host blocks by name.
-pub fn unique_device_name(desired: &str, ssh_config: &PathBuf, devices_dir: &PathBuf) -> String {
+pub fn device_name_taken(name: &str, home: &str, ssh_config: &PathBuf) -> bool {
+    let ssh_content = fs::read_to_string(ssh_config).unwrap_or_default();
+    name_taken(name, &ssh_content, &devices_dir_for(home), &load_config().machines)
+}
+
+fn name_taken(name: &str, ssh_content: &str, devices_dir: &PathBuf, known_machines: &[Machine]) -> bool {
+    known_machines.iter().any(|m| m.name == name)
+        || devices_dir.join(format!("{}.json", name)).exists()
+        || ssh_config_has_host(ssh_content, name)
+}
+
+/// Suggest the first free name for a device: `desired` if free, otherwise
+/// "name-2", "name-3", ... Used as the default answer when asking the user
+/// to pick a new name for a device whose name is already taken.
+pub fn unique_device_name(desired: &str, home: &str, ssh_config: &PathBuf) -> String {
     let ssh_content = fs::read_to_string(ssh_config).unwrap_or_default();
     let known_machines = load_config().machines;
-    let taken = |name: &str| {
-        known_machines.iter().any(|m| m.name == name)
-            || devices_dir.join(format!("{}.json", name)).exists()
-            || ssh_config_has_host(&ssh_content, name)
-    };
-    if !taken(desired) {
+    let devices_dir = devices_dir_for(home);
+    if !name_taken(desired, &ssh_content, &devices_dir, &known_machines) {
         return desired.to_string();
     }
     let mut n = 2;
-    while n < 1000 && taken(&format!("{}-{}", desired, n)) {
+    while n < 1000 && name_taken(&format!("{}-{}", desired, n), &ssh_content, &devices_dir, &known_machines) {
         n += 1;
     }
     format!("{}-{}", desired, n)
 }
 
 /// Add an accepted device to the configuration (device file, ~/.ssh/config,
-/// known_hosts) and commit it to the config git repository.
+/// known_hosts) and commit it to the config git repository, under the given
+/// name.
 ///
-/// If the device's name is already used by another machine — in the regroup
-/// config, in an existing device file, or in an existing ~/.ssh/config Host
-/// block — the device is renamed ("name-2", "name-3", ...) so existing
-/// entries are never overwritten.
+/// The caller is responsible for the name: interactive mode asks the user to
+/// pick a collision-free name first (see `device_name_taken`); an unavailable
+/// name would overwrite an existing device file or ~/.ssh/config block.
 ///
-/// Returns the machine as actually saved (with its final name), or None if
-/// the device file could not be written.
+/// Returns the machine as actually saved, or None if the device file could
+/// not be written.
 pub fn add_device_to_config(
     home: &str,
     ssh_config: &PathBuf,
     device: &BeaconDevice,
+    name: &str,
     new_count: &mut usize,
 ) -> Option<Machine> {
     let config_dir = PathBuf::from(home).join(CONFIG_DIR).join(GIT_DIR);
@@ -264,20 +276,11 @@ pub fn add_device_to_config(
         return None;
     }
     
-    // Rename the device if another machine already uses its name
-    let name = unique_device_name(&device.name, ssh_config, &devices_dir);
-    if name != device.name {
-        println!(
-            "  ! Name '{}' already used by another machine or an existing ~/.ssh/config entry — saved as '{}'",
-            device.name, name
-        );
-    }
-    
     let device_path = devices_dir.join(format!("{}.json", name));
     // The beacon explicitly carries the device's SSH port: mark it explicit so
     // ~/.ssh/config and the device file keep it (e.g. Termux port 8022).
     let machine = Machine {
-        name: name.clone(),
+        name: name.to_string(),
         ssh_public_key: device.ssh_public_key.clone(),
         user: String::new(),
         port: device.port,
@@ -287,14 +290,14 @@ pub fn add_device_to_config(
     match save_device_file(&device_path, &machine) {
         Ok(_) => {
             // Update SSH config
-            if let Err(e) = update_block(ssh_config, &name, &device.ip, &machine.user, machine.port, machine.port_explicit) {
+            if let Err(e) = update_block(ssh_config, name, &device.ip, &machine.user, machine.port, machine.port_explicit) {
                 warn(&format!("could not update SSH config for {}: {}", name, e));
             } else {
                 println!("  + Added {} -> {} (~/.ssh/config updated)", name, device.ip);
             }
             
             // Add to known_hosts using ssh-keyscan for MITM protection
-            match public_key::add_to_known_hosts(&name, &device.ip, device.port) {
+            match public_key::add_to_known_hosts(name, &device.ip, device.port) {
                 true => {
                     println!("  + Added {} to ~/.ssh/known_hosts for SSH verification", name);
                 }

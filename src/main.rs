@@ -46,7 +46,7 @@ use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::Duration;
 
-use cli::{add_device_to_config, die, refresh_git, run_selftest, setup_cd, usage};
+use cli::{add_device_to_config, device_name_taken, die, refresh_git, run_selftest, setup_cd, unique_device_name, usage};
 use config::{load_config, Machine};
 use discovery::beacon::{announce_beacon, listen_beacons_continuous, BeaconDevice};
 use ssh::config::update_block;
@@ -272,6 +272,11 @@ fn main() {
     let mut last_prompt_time = std::time::Instant::now();
     const PROMPT_REPEAT_INTERVAL: Duration = Duration::from_secs(2);
     
+    // Device waiting for the user to pick a new name (device, suggested name).
+    // Set when the user accepts a device whose name is already taken; the next
+    // input line is then interpreted as the new name instead of a command.
+    let mut rename_state: Option<(BeaconDevice, String)> = None;
+    
     // State for waiting prompt (to avoid duplicate waiting messages)
     let mut waiting_prompt_shown = false;
     
@@ -345,6 +350,40 @@ fn main() {
         // Check for user commands from stdin
         let user_command = cmd_rx.try_recv();
         
+        // If we are waiting for the user to pick a new name for a device,
+        // the next input line is that name (empty = suggested name).
+        // Only reachable in interactive mode: dry run never adds devices.
+        if rename_state.is_some() {
+            if user_command.is_err() && last_prompt_time.elapsed() >= PROMPT_REPEAT_INTERVAL {
+                let (device, suggested) = rename_state.as_ref().unwrap();
+                print!("\nNew name for {} (empty = {}): ", device.name, suggested);
+                io::stdout().flush().ok();
+                last_prompt_time = std::time::Instant::now();
+            }
+            if let Ok(input) = user_command {
+                last_prompt_time = std::time::Instant::now();
+                let input = input.trim();
+                if input == "q" {
+                    println!("  Skipped {}.", rename_state.as_ref().unwrap().0.name);
+                    rename_state = None;
+                } else {
+                    let (device, suggested) = rename_state.take().unwrap();
+                    let name = if input.is_empty() { suggested } else { input.to_string() };
+                    if device_name_taken(&name, &home, &ssh_config) {
+                        println!("  ! '{}' is also already used by another machine or an existing ~/.ssh/config entry.", name);
+                        let new_suggested = unique_device_name(&name, &home, &ssh_config);
+                        println!("    Pick another name (empty = {}):", new_suggested);
+                        rename_state = Some((device, new_suggested));
+                    } else if let Some(machine) = add_device_to_config(&home, &ssh_config, &device, &name, &mut new_count) {
+                        // Remember the machine under its final name so future
+                        // beacons update the right ~/.ssh/config block.
+                        known_keys.insert(device.ssh_public_key.clone());
+                        key_to_machine.insert(device.ssh_public_key.clone(), machine);
+                        known_ip.insert(device.ssh_public_key.clone(), device.ip.clone());
+                    }
+                }
+            }
+        } else
         // Process pending devices if any
         if !pending_devices.is_empty() {
             if !dry_run {
@@ -367,11 +406,16 @@ fn main() {
                     let input = input.trim().to_lowercase();
                     match input.as_str() {
                         "y" | "yes" => {
-                            // Add the device; if its name collides with an existing
-                            // machine (regroup config or ~/.ssh/config), it is renamed.
-                            if let Some(machine) = add_device_to_config(&home, &ssh_config, &device, &mut new_count) {
-                                // Remember the machine under its final (possibly renamed)
-                                // name so future beacons update the right ~/.ssh/config block.
+                            // If the name is already used by another machine,
+                            // ask the user to pick a new one.
+                            if device_name_taken(&device_name, &home, &ssh_config) {
+                                println!("\n  ! Name '{}' is already used by another machine or an existing ~/.ssh/config entry.", device_name);
+                                let suggested = unique_device_name(&device_name, &home, &ssh_config);
+                                print!("  New name for this device (empty = {}): ", suggested);
+                                io::stdout().flush().ok();
+                                last_prompt_time = std::time::Instant::now();
+                                rename_state = Some((device, suggested));
+                            } else if let Some(machine) = add_device_to_config(&home, &ssh_config, &device, &device_name, &mut new_count) {
                                 known_keys.insert(device_ssh_public_key.clone());
                                 key_to_machine.insert(device_ssh_public_key.clone(), machine);
                                 known_ip.insert(device_ssh_public_key.clone(), device.ip.clone());

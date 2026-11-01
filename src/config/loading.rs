@@ -98,8 +98,8 @@ pub fn create_device_config(config_dir: &PathBuf) -> Result<Machine, String> {
 pub fn load_config() -> Conf {
     // Root config directory
     let home = match env::var("HOME") {
-        Ok(h) => h,
-        Err(_) => die("HOME variable not set"),
+        Ok(h) if !h.is_empty() => h,
+        _ => die("HOME variable not set"),
     };
     let root_config_dir = PathBuf::from(&home).join(CONFIG_DIR);
     
