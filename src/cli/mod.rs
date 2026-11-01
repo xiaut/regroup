@@ -97,6 +97,57 @@ pub fn run_selftest() -> ! {
         let _ = fs::remove_dir_all(&sample_dir);
     }
 
+    // 3. host key fingerprint verification helper
+    // Generate a throwaway key, then check that the fingerprint computed by
+    // compute_fingerprint_from_public_key matches ssh-keygen -lf's output.
+    {
+        let key_path = PathBuf::from("/tmp/regroup-selftest-key");
+        let pub_path = PathBuf::from("/tmp/regroup-selftest-key.pub");
+        let _ = fs::remove_file(&key_path);
+        let _ = fs::remove_file(&pub_path);
+
+        let generated = Command::new("ssh-keygen")
+            .args(["-t", "ed25519", "-N", "", "-q", "-f"])
+            .arg(key_path.to_string_lossy().as_ref())
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+
+        let fingerprint_ok = if !generated {
+            false
+        } else if let Ok(pub_content) = fs::read_to_string(&pub_path) {
+            // Announced-style key: "key_type key_base64" without comment
+            let announced = pub_content
+                .split_whitespace()
+                .take(2)
+                .collect::<Vec<_>>()
+                .join(" ");
+            let computed = crate::ssh::public_key::compute_fingerprint_from_public_key(&announced);
+            let reference = Command::new("ssh-keygen")
+                .arg("-lf")
+                .arg(pub_path.to_string_lossy().as_ref())
+                .output()
+                .ok()
+                .and_then(|o| {
+                    String::from_utf8_lossy(&o.stdout)
+                        .split_whitespace()
+                        .find(|f| f.starts_with("SHA256:"))
+                        .map(|f| f.to_string())
+                });
+            match (computed, reference) {
+                (Some(c), Some(r)) => c.0 == r,
+                _ => false,
+            }
+        } else {
+            false
+        };
+        println!("host key fingerprint — {}", if fingerprint_ok { "OK" } else { "FAIL" });
+        ok &= fingerprint_ok;
+
+        let _ = fs::remove_file(&key_path);
+        let _ = fs::remove_file(&pub_path);
+    }
+
     println!("selftest: {}", if ok { "OK" } else { "FAIL" });
     std::process::exit(if ok { 0 } else { 1 });
 }
@@ -287,6 +338,41 @@ pub fn add_device_to_config(
         port_explicit: true,
     };
     
+    // SECURITY: verify that the host key announced in the beacon is really
+    // served by the SSH server at the announced ip:port, BEFORE writing
+    // anything. A mismatch means a forged beacon or a MITM: refuse the device.
+    match public_key::compute_fingerprint_from_public_key(device.ssh_public_key.as_str()) {
+        Some(expected) => match public_key::verify_and_add_to_known_hosts(&device.ip, device.port, &expected) {
+            public_key::HostKeyVerification::Success => {
+                println!("  + Added {} to ~/.ssh/known_hosts (host key verified)", name);
+            }
+            public_key::HostKeyVerification::HostUnreachable => {
+                // Host unreachable: we cannot verify. Do not pin anything;
+                // ssh will ask the user on first connection.
+                warn(&format!(
+                    "{} unreachable at {} — host key not verified, ssh will ask on first connection",
+                    name, device.ip
+                ));
+            }
+            public_key::HostKeyVerification::WriteError => {
+                warn(&format!("could not write {} to ~/.ssh/known_hosts", name));
+            }
+            public_key::HostKeyVerification::FingerprintMismatch { expected, actual } => {
+                eprintln!();
+                eprintln!("[!] SECURITY: {} announces key {} at {}", name, &device.ssh_public_key.as_str()[..16.min(device.ssh_public_key.as_str().len())], device.ip);
+                eprintln!("    but the server there serves a DIFFERENT host key — possible spoofing or MITM.");
+                eprintln!("    expected fingerprint: {}", expected);
+                eprintln!("    actual fingerprint:   {}", actual);
+                eprintln!("    Device NOT added.");
+                return None;
+            }
+        },
+        None => {
+            eprintln!("[!] SECURITY: {} announces a host key that is not a valid OpenSSH public key — device NOT added.", name);
+            return None;
+        }
+    }
+    
     match save_device_file(&device_path, &machine) {
         Ok(_) => {
             // Update SSH config
@@ -294,16 +380,6 @@ pub fn add_device_to_config(
                 warn(&format!("could not update SSH config for {}: {}", name, e));
             } else {
                 println!("  + Added {} -> {} (~/.ssh/config updated)", name, device.ip);
-            }
-            
-            // Add to known_hosts using ssh-keyscan for MITM protection
-            match public_key::add_to_known_hosts(name, &device.ip, device.port) {
-                true => {
-                    println!("  + Added {} to ~/.ssh/known_hosts for SSH verification", name);
-                }
-                false => {
-                    warn(&format!("could not add {} to ~/.ssh/known_hosts", name));
-                }
             }
             
             // Commit to git so changes persist across runs

@@ -305,20 +305,54 @@ fn main() {
                             continue; // IP unchanged, skip silently
                         }
                     }
-                    // Known device with new IP: update SSH config automatically
+                    // Known device with new IP: verify the host key at the new IP
+                    // before trusting it, then update SSH config and known_hosts.
+                    // A mismatch means the announced IP does not serve this
+                    // machine's key (spoofing/MITM): keep the last verified IP.
                     if let Some(machine) = key_to_machine.get(&device.ssh_public_key) {
                         if !dry_run {
-                            let _ = update_block(
-                                &ssh_config,
-                                &machine.name,
-                                &device.ip,
-                                &machine.user,
-                                machine.port,
-                                machine.port_explicit,
-                            );
+                            let verified = match public_key::compute_fingerprint_from_public_key(machine.ssh_public_key.as_str()) {
+                                Some(expected) => match public_key::verify_and_add_to_known_hosts(&device.ip, device.port, &expected) {
+                                    public_key::HostKeyVerification::Success => true,
+                                    public_key::HostKeyVerification::HostUnreachable => {
+                                        println!("\n[~] Known device: {} at {} — unreachable, keeping last verified IP",
+                                            machine.name, device.ip);
+                                        false
+                                    }
+                                    public_key::HostKeyVerification::WriteError => {
+                                        // Verification passed; only the known_hosts write failed
+                                        eprintln!("WARNING: could not write {} to ~/.ssh/known_hosts", machine.name);
+                                        true
+                                    }
+                                    public_key::HostKeyVerification::FingerprintMismatch { expected, actual } => {
+                                        eprintln!("\n[!] SECURITY: {} announces IP {} but serves a DIFFERENT host key — possible spoofing/MITM. SSH config NOT updated.",
+                                            machine.name, device.ip);
+                                        eprintln!("    expected fingerprint: {}", expected);
+                                        eprintln!("    actual fingerprint:   {}", actual);
+                                        false
+                                    }
+                                },
+                                None => {
+                                    eprintln!("WARNING: cannot compute fingerprint of {}'s host key — keeping last verified IP", machine.name);
+                                    false
+                                }
+                            };
+                            if verified {
+                                let _ = update_block(
+                                    &ssh_config,
+                                    &machine.name,
+                                    &device.ip,
+                                    &machine.user,
+                                    machine.port,
+                                    machine.port_explicit,
+                                );
+                                println!("\n[~] Known device: {} at {} (IP updated, host key verified)", 
+                                    machine.name, device.ip);
+                            }
+                            // Remember this IP either way, so we do not
+                            // re-attempt (and re-warn about) the same IP on
+                            // every beacon.
                             known_ip.insert(device.ssh_public_key.clone(), device.ip.clone());
-                            println!("\n[~] Known device: {} at {} (IP updated)", 
-                                machine.name, device.ip);
                         }
                     }
                     continue; // Don't add to pending queue

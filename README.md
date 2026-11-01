@@ -84,14 +84,20 @@ On every run, regroup enters continuous interactive mode:
    - Beacons announcing an SSH public key we already know only update the
      machine's IP in ~/.ssh/config (silently, when the IP changed)
 3. New machines are queued and the user is prompted (y/N) for each one
-4. Accepted machines are written to ~/.ssh/config, ~/.ssh/known_hosts and
-   the git config repository (committed)
+4. Accepted machines are verified against the live server (see below), then
+   written to ~/.ssh/config, ~/.ssh/known_hosts and the git config repository
+   (committed)
 5. Pressing 'r' pulls from and pushes to all configured git remotes
 ```
 
 This handles:
 - **IP address changes**: devices are identified by SSH public key, not IP
-- **Spoofing**: beacons are Ed25519-signed and age-checked
+- **Spoofing / MITM**: beacons are age-checked, and before anything is written,
+  the host key announced in a beacon is verified against the SSH server at the
+  announced IP (`ssh-keyscan`): ~/.ssh/config and ~/.ssh/known_hosts are only
+  updated when the server really serves the announced key. A mismatch (forged
+  beacon or man-in-the-middle) aborts the add, or — for a known device whose IP
+  changed — keeps the last verified IP and warns loudly
 - **Git sync**: changes propagate through the network
 
 ### Git Remote Management
