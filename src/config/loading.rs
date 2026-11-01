@@ -8,7 +8,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 
-use super::{Conf, GlobalSettings, Machine, CONFIG_DIR, DEVICES_DIR};
+use super::{Conf, GlobalSettings, Machine, CONFIG_DIR, DEVICES_DIR, GLOBAL_CONFIG_FILE};
 use super::device::{load_device_file, save_device_file};
 use super::settings::{load_global_settings, save_default_global_settings};
 use crate::discovery::local::{host_name, get_local_fingerprint};
@@ -96,27 +96,27 @@ pub fn load_config() -> Conf {
     };
     let config_dir = PathBuf::from(&home).join(CONFIG_DIR);
     
-    // Initialize config directory if it doesn't exist
-    if !config_dir.exists() {
-        if let Err(e) = fs::create_dir_all(&config_dir) {
-            die(&format!("cannot initialize config directory {}: {}", config_dir.display(), e));
-        }
-        
-        // Initialize as git repository
-        if let Err(e) = git_init(&config_dir) {
-            die(&format!("cannot initialize git repository in {}: {}", config_dir.display(), e));
-        }
-        
-        // Create default settings
+    // Ensure config directory exists
+    if let Err(e) = fs::create_dir_all(&config_dir) {
+        die(&format!("cannot initialize config directory {}: {}", config_dir.display(), e));
+    }
+    
+    // Ensure config directory is a git repository
+    if let Err(e) = git_init(&config_dir) {
+        die(&format!("cannot initialize git repository in {}: {}", config_dir.display(), e));
+    }
+    
+    // Create default settings if they don't exist
+    if !config_dir.join(GLOBAL_CONFIG_FILE).exists() {
         if let Err(e) = save_default_global_settings(&config_dir) {
             die(&format!("cannot create default settings: {}", e));
         }
-        
-        // Create devices directory
-        let devices_dir = config_dir.join(DEVICES_DIR);
-        if let Err(e) = fs::create_dir_all(&devices_dir) {
-            die(&format!("cannot create devices directory: {}", e));
-        }
+    }
+    
+    // Create devices directory
+    let devices_dir = config_dir.join(DEVICES_DIR);
+    if let Err(e) = fs::create_dir_all(&devices_dir) {
+        die(&format!("cannot create devices directory: {}", e));
     }
     
     // Load global settings
