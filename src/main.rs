@@ -205,7 +205,14 @@ fn main() {
                 if device.public_key == local_public_key || known_keys.contains(&device.public_key) {
                     continue; // Skip known devices and self
                 }
+                // Notify immediately when a new device is detected
                 pending_devices.push_back(device);
+                if !dry_run {
+                    let device = pending_devices.back().unwrap();
+                    println!("\n[!] New device: {} ({}) - key: {}", 
+                        device.name, device.ip, &device.public_key[..16.min(device.public_key.len())]);
+                    println!("    Type 'y' to add, 'N' to skip, 'r' to refresh git, 'q' to quit");
+                }
             }
             Err(mpsc::TryRecvError::Empty) => {}
             Err(mpsc::TryRecvError::Disconnected) => {
@@ -219,14 +226,10 @@ fn main() {
         // Process pending devices if any
         if !pending_devices.is_empty() {
             if !dry_run {
-                // Show prompt only once
-                if !prompt_shown {
+                // Show prompt for the current device (first in queue)
+                if !prompt_shown && user_command.is_err() {
                     let device = &pending_devices[0];
-                    println!("\nNew device detected:");
-                    println!("  Name:    {}", device.name);
-                    println!("  IP:      {}", device.ip);
-                    println!("  Key:     {}", device.public_key);
-                    print!("\nAdd to config? [y/N/q/r]: ");
+                    print!("\nAdd {} to config? [y/N/q/r]: ", device.name);
                     io::stdout().flush().ok();
                     prompt_shown = true;
                 }
@@ -254,19 +257,10 @@ fn main() {
                     }
                 }
             } else {
-                // Dry run: just show what would be added
+                // Dry run: show all devices as they are detected
                 let device = pending_devices.pop_front().unwrap();
-                if !prompt_shown {
-                    println!("\n[DRY RUN] New device detected:");
-                    println!("  Name:    {}", device.name);
-                    println!("  IP:      {}", device.ip);
-                    println!("  Key:     {}", device.public_key);
-                    println!("  (would ask to add to config)");
-                    prompt_shown = true;
-                }
-                if let Ok(_) = user_command {
-                    prompt_shown = false;
-                }
+                println!("\n[DRY RUN] New device: {} ({}) - key: {}", 
+                    device.name, device.ip, &device.public_key[..16.min(device.public_key.len())]);
                 new_count += 1;
             }
         } else {
