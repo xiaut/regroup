@@ -8,9 +8,16 @@ use std::thread;
 use std::time::Duration;
 use std::net::TcpStream;
 
+/// Represents a host found during TCP scanning
+#[derive(Clone, Debug)]
+pub struct ScannedHost {
+    pub ip: String,
+    pub port: u16,
+}
+
 /// Scans a /24 on one port, `batch_size` connections in parallel.
-pub fn scan_subnet(net: &str, port: u16, batch_size: usize) -> Vec<(String, u16)> {
-    let results = Arc::new(Mutex::new(Vec::<(String, u16)>::new()));
+pub fn scan_subnet(net: &str, port: u16, batch_size: usize) -> Vec<ScannedHost> {
+    let results = Arc::new(Mutex::new(Vec::<ScannedHost>::new()));
     let mut start: u32 = 1;
     while start <= 254 {
         let end = (start + batch_size as u32 - 1).min(254);
@@ -25,7 +32,10 @@ pub fn scan_subnet(net: &str, port: u16, batch_size: usize) -> Vec<(String, u16)
                         results2
                             .lock()
                             .unwrap()
-                            .push((format!("{}.{}", net2, k), port));
+                            .push(ScannedHost {
+                                ip: format!("{}.{}", net2, k),
+                                port,
+                            });
                     }
                 }
             }));
