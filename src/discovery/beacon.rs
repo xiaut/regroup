@@ -38,7 +38,7 @@ pub struct BeaconDevice {
 }
 
 /// Broadcasts signed beacon message every 2 s until the deadline on all local interfaces.
-/// Runs in its own thread, in parallel with listen_beacons, for the same window.
+/// Runs in its own thread, in parallel with the continuous listener, for the same window.
 /// Each interface sends to its own broadcast address.
 /// 
 /// If `running` is given, the loop stops early when the flag becomes false
@@ -124,99 +124,6 @@ fn chrono_timestamp() -> String {
 
 /// Maximum age for beacon messages (5 minutes = 300 seconds)
 const MAX_BEACON_AGE: u64 = 300;
-
-/// Listens for signed beacon messages during the window. Returns BeaconDevice list,
-/// deduplicated by IP. Only beacons with valid signatures are accepted.
-/// 
-/// Beacons from the local machine (self-detection) are filtered out based on SSH public key.
-/// The SSH public key is the unique identifier for a machine - this is what defines
-/// "this is me" and not name or IP (which can change).
-/// 
-/// Expected format: name\tsigning_public_key_b64\tssh_public_key\tip\tport\ttimestamp\tsignature_b64
-/// Signed message: "name|ssh_public_key|ip|port|timestamp"
-pub fn listen_beacons(port: u16, secs: u64, local_ssh_public_key: &SshPublicKey) -> Vec<BeaconDevice> {
-    use crate::signing;
-    
-    let mut beacons: Vec<BeaconDevice> = Vec::new();
-    let sock = match std::net::UdpSocket::bind(("0.0.0.0", port)) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("WARNING: cannot listen on UDP port {} ({}) — beacons ignored", port, e);
-            return beacons;
-        }
-    };
-    let _ = sock.set_read_timeout(Some(Duration::from_millis(200)));
-    let deadline = Instant::now() + Duration::from_secs(secs);
-    let mut buf = [0u8; 4096];
-    
-    let now = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    
-    while Instant::now() < deadline {
-        match sock.recv_from(&mut buf) {
-            Ok((n, _)) => {
-                let text = String::from_utf8_lossy(&buf[..n]);
-                let parts: Vec<&str> = text.split('\t').collect();
-                
-                // Expected: name\tsigning_public_key_b64\tssh_public_key\tip\tport\ttimestamp\tsignature_b64
-                if parts.len() != 7 {
-                    continue; // Invalid format
-                }
-                
-                let ip = parts[3].to_string();
-                let timestamp: u64 = parts[5].parse().unwrap_or(0);
-                
-                // Check if beacon is too old
-                if now.saturating_sub(timestamp) > MAX_BEACON_AGE {
-                    eprintln!("WARNING: received expired beacon from {} (age: {}s)", 
-                        ip, now.saturating_sub(timestamp));
-                    continue;
-                }
-                
-                // Verify the signature
-                let beacon_str = parts.join("\t");
-                match signing::verify_beacon(&beacon_str, None) {
-                    Ok((name, ssh_public_key, ip_verified, port, timestamp_str)) => {
-                        // Check IP consistency
-                        if ip_verified != ip {
-                            eprintln!("WARNING: beacon IP mismatch - claimed: {}, verified: {}", 
-                                ip, ip_verified);
-                            continue;
-                        }
-                        
-                        // IMPORTANT: Filter out self-detection based on SSH public key only.
-                        // The SSH public key is the unique identifier for a machine.
-                        // We cannot rely on hostname (changes in Termux) or IP (changes with network).
-                        // If the beacon's SSH public key matches our own, this is us - ignore it.
-                        if &ssh_public_key == local_ssh_public_key {
-                            continue;
-                        }
-                        
-                        // Check if we already have this device by IP
-                        if !beacons.iter().any(|b| b.ip == ip) {
-                            beacons.push(BeaconDevice {
-                                name,
-                                signing_public_key: SigningPublicKeyB64::from(parts[1]),
-                                ssh_public_key,
-                                ip,
-                                port,
-                                timestamp: timestamp_str,
-                                signature: SignatureB64::from(parts[6]),
-                            });
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("WARNING: invalid beacon signature from {}: {}", ip, e);
-                    }
-                }
-            }
-            Err(_) => {} // read timeout: loop until the deadline
-        }
-    }
-    beacons
-}
 
 /// Listens for beacons continuously and sends each via channel.
 /// Runs until the `running` flag becomes false or the channel is disconnected.

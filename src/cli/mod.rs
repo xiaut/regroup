@@ -9,7 +9,7 @@ use std::process::Command;
 use std::collections::HashSet;
 
 use crate::config::{load_config, CONFIG_DIR, DEVICES_DIR, GIT_DIR, Machine};
-use crate::discovery::{host_name, net_prefix, net_valid};
+use crate::discovery::host_name;
 use crate::discovery::beacon::BeaconDevice;
 use crate::config::device::save_device_file;
 use crate::ssh::config::update_block;
@@ -93,17 +93,7 @@ pub fn run_selftest() -> ! {
     );
     ok &= tools_ok;
 
-    // 2. subnet helpers
-    let net_ok = net_valid(&net_prefix("192.168.43.0/24")) == Some("192.168.43".to_string())
-        && net_valid(&net_prefix("192.168.43")) == Some("192.168.43".to_string())
-        && net_valid("192.168.43") == Some("192.168.43".to_string())
-        && net_valid("192.168.256") == None
-        && net_valid("192.168") == None
-        && net_valid("abc.def.ghi") == None;
-    println!("subnet helpers — {}", if net_ok { "OK" } else { "FAIL" });
-    ok &= net_ok;
-
-    // 3. test config loading with sample data
+    // 2. test config loading with sample data
     let sample_dir = PathBuf::from("/tmp/regroup-selftest");
     let _ = fs::remove_dir_all(&sample_dir);
     
@@ -151,7 +141,7 @@ pub fn run_selftest() -> ! {
 /// Print usage information
 pub fn usage() {
     println!(
-        "regroup — find machines by their SSH host key and update ~/.ssh/config.\nDevices announce themselves via signed UDP beacons; regroup listens for them\ncontinuously and prompts for each new device.\n\nConfiguration is stored in ~/.regroup-config/git/ (a git repository) where each\ndevice has its own JSON file in the devices/ directory. Git remotes can be\nconfigured for all other devices to enable decentralized sync (press 'r' in\ninteractive mode to pull from and push to them).\n\nUsage:\n  ./regroup                continuous interactive mode, update ~/.ssh/config\n  ./regroup test           dry run: nothing is modified\n  ./regroup -v             verbose\n  ./regroup selftest       built-in checks (tools, subnet helpers, config parsing)\n  ./regroup setup-cd       install 'regroup-cd' shell function to change to config directory\n  ./regroup -h             this help\n\nInteractive commands:\n  y/N             - add or skip the current device\n  r               - refresh git (pull from remotes, push to remotes)\n  q               - quit the program\n\nConfig repository structure (~/.regroup-config/git/):\n  settings.json           (optional: udp_port, wait_secs, batch_size)\n  devices/\n    <hostname>.json       (each device's config: name, ssh_public_key, user, port)\n\nExit codes:\n  0  normal exit\n  1  selftest failure\n  2  configuration or environment error"
+        "regroup — find machines by their SSH host key and update ~/.ssh/config.\nDevices announce themselves via signed UDP beacons; regroup listens for them\ncontinuously and prompts for each new device.\n\nConfiguration is stored in ~/.regroup-config/git/ (a git repository) where each\ndevice has its own JSON file in the devices/ directory. Git remotes can be\nconfigured for all other devices to enable decentralized sync (press 'r' in\ninteractive mode to pull from and push to them).\n\nUsage:\n  ./regroup                continuous interactive mode, update ~/.ssh/config\n  ./regroup test           dry run: nothing is modified\n  ./regroup -v             verbose\n  ./regroup selftest       built-in checks (tools, config parsing)\n  ./regroup setup-cd       install 'regroup-cd' shell function to change to config directory\n  ./regroup -h             this help\n\nInteractive commands:\n  y/N             - add or skip the current device\n  r               - refresh git (pull from remotes, push to remotes)\n  q               - quit the program\n\nConfig repository structure (~/.regroup-config/git/):\n  settings.json           (optional: udp_port, wait_secs)\n  devices/\n    <hostname>.json       (each device's config: name, ssh_public_key, user, port)\n\nExit codes:\n  0  normal exit\n  1  selftest failure\n  2  configuration or environment error"
     );
 }
 

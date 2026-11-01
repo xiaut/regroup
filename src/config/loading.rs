@@ -135,7 +135,7 @@ pub fn load_config() -> Conf {
     }
     
     // Load global settings
-    let GlobalSettings { udp_port, wait_secs, batch_size } = load_global_settings(&config_dir);
+    let GlobalSettings { udp_port, wait_secs } = load_global_settings(&config_dir);
     
     // Load all device configurations
     let mut machines: Vec<Machine> = Vec::new();
@@ -191,7 +191,6 @@ pub fn load_config() -> Conf {
     Conf {
         udp_port,
         wait_secs,
-        batch_size,
         machines,
     }
 }

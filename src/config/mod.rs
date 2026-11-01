@@ -25,12 +25,11 @@ pub struct Machine {
     pub port_explicit: bool,
 }
 
-/// Global discovery settings (udp_port, wait_secs, batch_size)
+/// Global discovery settings (udp_port, wait_secs)
 #[derive(Clone, Debug)]
 pub struct GlobalSettings {
     pub udp_port: u16,
     pub wait_secs: u64,
-    pub batch_size: usize,
 }
 
 /// Global configuration containing all settings and machines
@@ -38,7 +37,6 @@ pub struct GlobalSettings {
 pub struct Conf {
     pub udp_port: u16,
     pub wait_secs: u64,
-    pub batch_size: usize,
     pub machines: Vec<Machine>,
 }
 
@@ -50,7 +48,6 @@ pub const CONFIG_DIR: &str = ".regroup-config";
 pub const GIT_DIR: &str = "git";
 pub const DEVICES_DIR: &str = "devices";
 pub const GLOBAL_CONFIG_FILE: &str = "settings.json";
-pub const MAX_SYNC_ITERATIONS: usize = 10;
 
 // ============================================================
 // Submodules
@@ -64,4 +61,3 @@ pub mod validation;
 
 // Re-export commonly used items
 pub use loading::load_config;
-pub use device::read_device_file_content;

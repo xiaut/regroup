@@ -135,7 +135,7 @@ Usage:
   ./regroup                continuous interactive mode, update ~/.ssh/config
   ./regroup test           dry run: nothing is modified
   ./regroup -v             verbose
-  ./regroup selftest       built-in checks (tools, subnet helpers, config parsing)
+  ./regroup selftest       built-in checks (tools, config parsing)
   ./regroup setup-cd       install 'regroup-cd' shell function to change to config directory
   ./regroup -h             this help
 
@@ -145,7 +145,7 @@ Interactive commands:
   q               - quit the program
 
 Config repository structure (~/.regroup-config/git/):
-  settings.json           (optional: udp_port, wait_secs, batch_size)
+  settings.json           (optional: udp_port, wait_secs)
   devices/
     <hostname>.json       (each device's config: name, ssh_public_key, user, port)
 
@@ -185,15 +185,13 @@ Optional `settings.json` file:
 ```json
 {
   "udp_port": 4242,
-  "wait_secs": 10,
-  "batch_size": 64
+  "wait_secs": 10
 }
 ```
 
 Fields:
 - `udp_port`: UDP port for beacon announcements (default: 4242)
 - `wait_secs`: Duration of each announcement window (default: 10 seconds)
-- `batch_size`: Batch size kept for the subnet-scan fallback (default: 64)
 
 ## Practical Examples
 
