@@ -7,6 +7,7 @@ use std::net::Ipv4Addr;
 use std::process::Command;
 
 use crate::discovery::fingerprint::fingerprints;
+use crate::discovery::net::NetworkInterface;
 
 /// Get the local hostname
 pub fn host_name() -> String {
@@ -176,8 +177,8 @@ pub fn get_local_fingerprint(port: u16) -> Option<String> {
 }
 
 /// Get all local IPv4 interfaces with their broadcast addresses
-/// Returns a vector of (ip_address, broadcast_address) tuples
-pub fn get_local_interfaces() -> Vec<(String, String)> {
+/// Returns a vector of NetworkInterface structs
+pub fn get_local_interfaces() -> Vec<NetworkInterface> {
     let mut interfaces = Vec::new();
 
     // Method 1: Try with `ip addr` (Linux)
@@ -200,9 +201,10 @@ pub fn get_local_interfaces() -> Vec<(String, String)> {
                             // Calculate broadcast address for the /24 subnet
                             let octets = ip.octets();
                             let broadcast = format!("{}.{}.{}.255", octets[0], octets[1], octets[2]);
+                            let ip_string = ip.to_string();
                             // Only add if not already present
-                            if !interfaces.iter().any(|(existing_ip, _)| *existing_ip == ip.to_string()) {
-                                interfaces.push((ip.to_string(), broadcast));
+                            if !interfaces.iter().any(|existing: &NetworkInterface| existing.ip == ip_string) {
+                                interfaces.push(NetworkInterface { ip: ip_string, broadcast });
                             }
                         }
                     }
@@ -228,8 +230,9 @@ pub fn get_local_interfaces() -> Vec<(String, String)> {
                                 }
                                 let octets = ip.octets();
                                 let broadcast = format!("{}.{}.{}.255", octets[0], octets[1], octets[2]);
-                                if !interfaces.iter().any(|(existing_ip, _)| *existing_ip == ip.to_string()) {
-                                    interfaces.push((ip.to_string(), broadcast));
+                                let ip_string = ip.to_string();
+                                if !interfaces.iter().any(|existing: &NetworkInterface| existing.ip == ip_string) {
+                                    interfaces.push(NetworkInterface { ip: ip_string, broadcast });
                                 }
                                 break;
                             }
@@ -247,7 +250,7 @@ pub fn get_local_interfaces() -> Vec<(String, String)> {
             if let Ok(ipv4) = ip.parse::<Ipv4Addr>() {
                 let octets = ipv4.octets();
                 let broadcast = format!("{}.{}.{}.255", octets[0], octets[1], octets[2]);
-                interfaces.push((ip, broadcast));
+                interfaces.push(NetworkInterface { ip, broadcast });
             }
         }
     }
