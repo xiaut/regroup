@@ -126,17 +126,38 @@ fn main() {
     }
 
     // --- local identity ---
+    // IMPORTANT: We need the SSH *server* host key to identify this machine.
+    // Without it, the device cannot accept SSH connections and should NOT announce itself.
     let local_name = host_name();
     let local_ip = my_ip();
-    let local_public_key = public_key::get_local_public_key_fingerprint().unwrap_or_default();
+    
+    // Get SSH server host key fingerprint - this identifies the machine
+    // Returns None if no SSH server is installed/configured
+    let local_public_key = match public_key::get_ssh_server_fingerprint() {
+        Some(key) => key,
+        None => {
+            // No SSH server host key found - device cannot accept SSH connections
+            // Do NOT announce, but continue listening for other devices
+            eprintln!("WARNING: No SSH server host key found. This device will NOT announce itself.");
+            eprintln!("         Other devices can still discover and connect to this machine if they have its IP.");
+            eprintln!("         To fix: Install and configure an SSH server (e.g., 'pkg install openssh' in Termux).");
+            String::new() // Empty string signals "do not announce"
+        }
+    };
 
     if verbose {
-        println!(
-            "  . this machine: {} / {} (key: {})",
-            local_name,
-            local_ip.as_deref().unwrap_or("unknown IP"),
-            &local_public_key[..16.min(local_public_key.len())]
-        );
+        if !local_public_key.is_empty() {
+            println!(
+                "  . this machine: {} / {} (key: {})",
+                local_name,
+                local_ip.as_deref().unwrap_or("unknown IP"),
+                &local_public_key[..16.min(local_public_key.len())]
+            );
+        } else {
+            println!("  . this machine: {} / {} (NO SSH SERVER - not announcing)",
+                local_name,
+                local_ip.as_deref().unwrap_or("unknown IP"));
+        }
     }
 
     // --- Continuous interactive mode ---
@@ -149,17 +170,24 @@ fn main() {
     let running_listener = running.clone();
     let running_announcer = running.clone();
     
-    // Start beacon listener in background
+    // Start beacon listener in background (always listen for other devices)
     let listen_thread = start_beacon_listener(conf.udp_port, running_listener, tx.clone());
     
-    // Start beacon announcer in background
-    let announce_thread = start_beacon_announcer(
-        conf.udp_port,
-        conf.wait_secs,
-        local_name.clone(),
-        local_public_key.clone(),
-        running_announcer,
-    );
+    // Start beacon announcer in background - only if we have a valid SSH server key
+    // Without a server key, announcing is pointless as we cannot be contacted via SSH
+    let announce_thread = if !local_public_key.is_empty() {
+        Some(start_beacon_announcer(
+            conf.udp_port,
+            conf.wait_secs,
+            local_name.clone(),
+            local_public_key.clone(),
+            running_announcer,
+        ))
+    } else {
+        // No announcement thread - device has no SSH server
+        eprintln!("INFO: Not announcing - no SSH server host key detected.");
+        None
+    };
 
     // Build lookup maps from config
     let mut known_keys: HashSet<String> = conf.machines
@@ -373,11 +401,15 @@ fn main() {
             eprintln!("  Listener thread did not stop cleanly");
         }
     });
-    let _ = announce_thread.join().map_err(|_| {
-        if start.elapsed() >= timeout {
-            eprintln!("  Announcer thread did not stop cleanly");
-        }
-    });
+    
+    // Only join announce thread if it exists (it won't exist if we have no SSH server key)
+    if let Some(thread) = announce_thread {
+        let _ = thread.join().map_err(|_| {
+            if start.elapsed() >= timeout {
+                eprintln!("  Announcer thread did not stop cleanly");
+            }
+        });
+    }
     
     println!("Done.");
     
