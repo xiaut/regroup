@@ -224,6 +224,11 @@ pub fn discovery_sync_loop(
                                 use crate::config::device::save_device_file;
                                 use crate::config::Machine;
                                 
+                                // Ensure devices directory exists
+                                if let Err(e) = fs::create_dir_all(&devices_dir) {
+                                    warn(&format!("could not create devices directory: {}", e));
+                                    continue;
+                                }
                                 let device_path = devices_dir.join(format!("{}.json", device.name));
                                 let machine = Machine {
                                     name: device.name.clone(),
@@ -257,6 +262,11 @@ pub fn discovery_sync_loop(
                                         use crate::config::device::save_device_file;
                                         use crate::config::Machine;
                                         
+                                        // Ensure devices directory exists
+                                        if let Err(e) = fs::create_dir_all(&devices_dir) {
+                                            warn(&format!("could not create devices directory: {}", e));
+                                            continue;
+                                        }
                                         let device_path = devices_dir.join(format!("{}.json", device.name));
                                         let machine = Machine {
                                             name: device.name.clone(),
