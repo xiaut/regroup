@@ -45,9 +45,10 @@ use std::thread;
 use std::time::Duration;
 
 use cli::{add_device_to_config, die, refresh_git, run_selftest, setup_cd, usage};
-use config::load_config;
+use config::{load_config, Machine};
 use discovery::beacon::{announce_beacon, BeaconDevice};
 use discovery::beacon::listen_beacons_continuous;
+use ssh::config::update_block;
 use discovery::{get_local_interfaces, host_name, my_ip};
 use discovery::local::get_local_fingerprint;
 
@@ -159,14 +160,23 @@ fn main() {
         local_public_key.clone(),
     );
 
-    // Load known public keys from config
+    // Build lookup maps from config
     let mut known_keys: std::collections::HashSet<String> = conf.machines
         .iter()
         .map(|m| m.fingerprint.clone())
         .collect();
     
+    // Map from public key to machine info for known devices
+    let mut key_to_machine: std::collections::HashMap<String, Machine> = conf.machines
+        .iter()
+        .map(|m| (m.fingerprint.clone(), m.clone()))
+        .collect();
+    
     // Queue for pending devices to confirm
     let mut pending_devices: VecDeque<BeaconDevice> = VecDeque::new();
+    
+    // Track pending devices by public key to prevent duplicates
+    let mut pending_keys: std::collections::HashSet<String> = std::collections::HashSet::new();
     
     // Statistics
     let mut new_count = 0;
@@ -202,17 +212,42 @@ fn main() {
         // Check for new beacons from the listener
         match rx.try_recv() {
             Ok(device) => {
-                // Check if this is us or already known
-                if device.public_key == local_public_key || known_keys.contains(&device.public_key) {
-                    continue; // Skip known devices and self
+                // Skip if this is us
+                if device.public_key == local_public_key {
+                    continue;
                 }
-                // Notify immediately when a new device is detected
-                pending_devices.push_back(device);
-                if !dry_run {
-                    let device = pending_devices.back().unwrap();
-                    println!("\n[!] New device: {} ({}) - key: {}", 
-                        device.name, device.ip, &device.public_key[..16.min(device.public_key.len())]);
-                    println!("    Type 'y' to add, 'N' to skip, 'r' to refresh git, 'q' to quit");
+                
+                // Check if this is a known device
+                if known_keys.contains(&device.public_key) {
+                    // Known device: update IP in SSH config automatically
+                    if let Some(machine) = key_to_machine.get(&device.public_key) {
+                        if !dry_run {
+                            let _ = update_block(
+                                &ssh_config,
+                                &machine.name,
+                                &device.ip,
+                                &machine.user,
+                                machine.port,
+                                machine.port_explicit,
+                            );
+                            println!("\n[~] Known device: {} at {} (IP updated)", 
+                                machine.name, device.ip);
+                        }
+                    }
+                    continue; // Don't add to pending queue
+                }
+                
+                // New device: check for duplicates in pending queue
+                if !pending_keys.contains(&device.public_key) {
+                    pending_keys.insert(device.public_key.clone());
+                    pending_devices.push_back(device);
+                    if !dry_run {
+                        let added_device = pending_devices.back().unwrap();
+                        println!("\n[!] New device: {} ({}) - key: {}", 
+                            added_device.name, added_device.ip, 
+                            &added_device.public_key[..16.min(added_device.public_key.len())]);
+                        println!("    Type 'y' to add, 'N' to skip, 'r' to refresh git, 'q' to quit");
+                    }
                 }
             }
             Err(mpsc::TryRecvError::Empty) => {}
@@ -239,13 +274,27 @@ fn main() {
                 if let Ok(input) = user_command {
                     prompt_shown = false;
                     let device = pending_devices.pop_front().unwrap();
+                    let device_name = device.name.clone();
+                    let device_public_key = device.public_key.clone();
+                    pending_keys.remove(&device_public_key);
                     let input = input.trim().to_lowercase();
                     match input.as_str() {
                         "y" | "yes" => {
+                            // Add to known keys so future beacons will auto-update IP
+                            known_keys.insert(device_public_key.clone());
+                            let machine = Machine {
+                                name: device_name.clone(),
+                                fingerprint: device_public_key.clone(),
+                                user: String::new(),
+                                port: 22,
+                                port_explicit: false,
+                            };
+                            key_to_machine.insert(device_public_key.clone(), machine);
                             add_device_to_config(&home, &ssh_config, &device, &mut known_keys, &mut new_count);
                         }
                         "r" => {
                             pending_devices.push_front(device);
+                            pending_keys.insert(device_public_key);
                             refresh_git(&home);
                         }
                         "q" => {
@@ -253,13 +302,14 @@ fn main() {
                             break;
                         }
                         _ => {
-                            println!("  Skipped {}.", device.name);
+                            println!("  Skipped {}.", device_name);
                         }
                     }
                 }
             } else {
                 // Dry run: show all devices as they are detected
                 let device = pending_devices.pop_front().unwrap();
+                pending_keys.remove(&device.public_key);
                 println!("\n[DRY RUN] New device: {} ({}) - key: {}", 
                     device.name, device.ip, &device.public_key[..16.min(device.public_key.len())]);
                 new_count += 1;
