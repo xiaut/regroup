@@ -8,7 +8,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 
-use super::{Conf, Machine, CONFIG_DIR, DEVICES_DIR};
+use super::{Conf, GlobalSettings, Machine, CONFIG_DIR, DEVICES_DIR};
 use super::device::{load_device_file, save_device_file};
 use super::settings::{load_global_settings, save_default_global_settings};
 use crate::discovery::local::{host_name, get_local_fingerprint};
@@ -114,7 +114,7 @@ pub fn load_config() -> Conf {
     }
     
     // Load global settings
-    let (udp_port, wait_secs, batch_size) = load_global_settings(&config_dir);
+    let GlobalSettings { udp_port, wait_secs, batch_size } = load_global_settings(&config_dir);
     
     // Load all device configurations
     let mut machines: Vec<Machine> = Vec::new();

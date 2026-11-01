@@ -8,16 +8,21 @@ use std::path::PathBuf;
 
 use serde_json::Value;
 
+use super::GlobalSettings;
 use super::GLOBAL_CONFIG_FILE;
 use super::json_helpers::number_field;
 
 /// Default global settings
-pub fn default_global_settings() -> (u16, u64, usize) {
-    (4242u16, 10u64, 64usize)
+pub fn default_global_settings() -> GlobalSettings {
+    GlobalSettings {
+        udp_port: 4242u16,
+        wait_secs: 10u64,
+        batch_size: 64usize,
+    }
 }
 
 /// Load global settings from settings.json
-pub fn load_global_settings(config_dir: &PathBuf) -> (u16, u64, usize) {
+pub fn load_global_settings(config_dir: &PathBuf) -> GlobalSettings {
     let settings_path = config_dir.join(GLOBAL_CONFIG_FILE);
     
     let defaults = default_global_settings();
@@ -45,7 +50,11 @@ pub fn load_global_settings(config_dir: &PathBuf) -> (u16, u64, usize) {
     let wait_secs = number_field(obj, "wait_secs", 10, 1, 3600).unwrap_or(10);
     let batch_size = number_field(obj, "batch_size", 64, 1, 1024).unwrap_or(64) as usize;
     
-    (udp_port, wait_secs, batch_size)
+    GlobalSettings {
+        udp_port,
+        wait_secs,
+        batch_size,
+    }
 }
 
 /// Save default global settings

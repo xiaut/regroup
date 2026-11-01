@@ -1,6 +1,13 @@
 //! Configuration module for regroup
 //!
 //! This module handles all configuration-related functionality.
+//!
+//! IMPORTANT: Configuration files are a backup/persistence mechanism, NOT the primary
+//! source of truth. The actual source of truth is live device discovery via UDP beacons.
+//! Each device self-identifies with its public key, and devices are automatically added
+//! to configuration when their beacon (containing name, public_key, ip) is received.
+//! The configuration persists what was previously discovered so devices can be
+//! reconnected even after restarts.
 
 // ============================================================
 // Data types
@@ -14,6 +21,14 @@ pub struct Machine {
     pub user: String,
     pub port: u16,
     pub port_explicit: bool,
+}
+
+/// Global discovery settings (udp_port, wait_secs, batch_size)
+#[derive(Clone, Debug)]
+pub struct GlobalSettings {
+    pub udp_port: u16,
+    pub wait_secs: u64,
+    pub batch_size: usize,
 }
 
 /// Global configuration containing all settings and machines
