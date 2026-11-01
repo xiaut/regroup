@@ -178,6 +178,12 @@ fn main() {
     // Track pending devices by public key to prevent duplicates
     let mut pending_keys: HashSet<String> = HashSet::new();
     
+    // Track last known IP for known devices to avoid redundant notifications
+    let mut known_ip: HashMap<String, String> = HashMap::new();
+    
+    // Track rejected devices to avoid re-asking
+    let mut rejected_keys: HashSet<String> = HashSet::new();
+    
     // Statistics
     let mut new_count = 0;
     
@@ -219,7 +225,13 @@ fn main() {
                 
                 // Check if this is a known device
                 if known_keys.contains(&device.public_key) {
-                    // Known device: update IP in SSH config automatically
+                    // Check if IP changed before notifying
+                    if let Some(last_ip) = known_ip.get(&device.public_key) {
+                        if last_ip == &device.ip {
+                            continue; // IP unchanged, skip silently
+                        }
+                    }
+                    // Known device with new IP: update SSH config automatically
                     if let Some(machine) = key_to_machine.get(&device.public_key) {
                         if !dry_run {
                             let _ = update_block(
@@ -230,6 +242,7 @@ fn main() {
                                 machine.port,
                                 machine.port_explicit,
                             );
+                            known_ip.insert(device.public_key.clone(), device.ip.clone());
                             println!("\n[~] Known device: {} at {} (IP updated)", 
                                 machine.name, device.ip);
                         }
@@ -237,8 +250,8 @@ fn main() {
                     continue; // Don't add to pending queue
                 }
                 
-                // New device: check for duplicates in pending queue
-                if !pending_keys.contains(&device.public_key) {
+                // New device: check for duplicates in pending queue and rejected list
+                if !pending_keys.contains(&device.public_key) && !rejected_keys.contains(&device.public_key) {
                     pending_keys.insert(device.public_key.clone());
                     pending_devices.push_back(device);
                     if !dry_run {
@@ -290,6 +303,7 @@ fn main() {
                                 port_explicit: false,
                             };
                             key_to_machine.insert(device_public_key.clone(), machine);
+                            known_ip.insert(device_public_key.clone(), device.ip.clone());
                             add_device_to_config(&home, &ssh_config, &device, &mut known_keys, &mut new_count);
                         }
                         "r" => {
@@ -302,6 +316,8 @@ fn main() {
                             break;
                         }
                         _ => {
+                            // Device rejected, remember to not ask again
+                            rejected_keys.insert(device_public_key);
                             println!("  Skipped {}.", device_name);
                         }
                     }
