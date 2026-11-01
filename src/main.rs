@@ -44,14 +44,11 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
-use cli::{die, run_selftest, setup_cd, usage};
-use config::{load_config, CONFIG_DIR, DEVICES_DIR};
+use cli::{add_device_to_config, die, refresh_git, run_selftest, setup_cd, usage};
+use config::load_config;
 use discovery::beacon::{announce_beacon, listen_beacons, BeaconDevice};
 use discovery::{get_local_interfaces, host_name, my_ip};
 use discovery::local::get_local_fingerprint;
-use config::device::save_device_file;
-use config::Machine;
-use ssh::config::update_block;
 
 fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
@@ -310,66 +307,3 @@ fn start_beacon_announcer(port: u16, secs: u64, name: String, public_key: String
     })
 }
 
-/// Add device to configuration
-fn add_device_to_config(home: &str, ssh_config: &PathBuf, device: &BeaconDevice, known_keys: &mut std::collections::HashSet<String>, new_count: &mut usize) {
-    let config_dir = PathBuf::from(home).join(CONFIG_DIR);
-    let devices_dir = config_dir.join(DEVICES_DIR);
-    
-    // Ensure devices directory exists
-    if let Err(e) = fs::create_dir_all(&devices_dir) {
-        eprintln!("WARNING: could not create devices directory: {}", e);
-        return;
-    }
-    
-    let device_path = devices_dir.join(format!("{}.json", device.name));
-    let machine = Machine {
-        name: device.name.clone(),
-        fingerprint: device.public_key.clone(),
-        user: String::new(),
-        port: 22,
-        port_explicit: false,
-    };
-    
-    match save_device_file(&device_path, &machine) {
-        Ok(_) => {
-            // Update SSH config
-            if let Err(e) = update_block(ssh_config, &device.name, &device.ip, &machine.user, machine.port, machine.port_explicit) {
-                eprintln!("WARNING: could not update SSH config for {}: {}", device.name, e);
-            } else {
-                println!("  + Added {} -> {} (~/.ssh/config updated)", device.name, device.ip);
-            }
-            known_keys.insert(device.public_key.clone());
-            *new_count += 1;
-        }
-        Err(e) => {
-            eprintln!("WARNING: could not save device config for {}: {}", device.name, e);
-        }
-    }
-}
-
-/// Refresh git remotes
-fn refresh_git(home: &str) {
-    use git::{git_push_all, sync_with_remotes, has_unstaged_changes, is_git_repo};
-    
-    let config_dir = PathBuf::from(home).join(CONFIG_DIR);
-    if !is_git_repo(&config_dir) {
-        eprintln!("WARNING: {} is not a git repository", config_dir.display());
-        return;
-    }
-    
-    println!("\nRefreshing git...");
-    
-    // Pull from remotes
-    let sync_errors = sync_with_remotes(&config_dir, has_unstaged_changes(&config_dir));
-    for error in &sync_errors {
-        eprintln!("WARNING: [sync] {}", error);
-    }
-    
-    // Push to remotes
-    let push_errors = git_push_all(&config_dir);
-    for error in &push_errors {
-        eprintln!("WARNING: [push] {}", error);
-    }
-    
-    println!("Git refresh complete.");
-}
