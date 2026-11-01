@@ -14,7 +14,7 @@ use crate::discovery::beacon::BeaconDevice;
 use crate::config::device::save_device_file;
 use crate::ssh::config::update_block;
 use crate::ssh::public_key::{self};
-use crate::git;
+use crate::git::{self, sync::git_add_and_commit_file};
 
 // ============================================================
 // Error handling
@@ -316,6 +316,11 @@ pub fn add_device_to_config(
                 false => {
                     warn(&format!("could not add {} to ~/.ssh/known_hosts", device.name));
                 }
+            }
+            
+            // Commit to git so changes persist across runs
+            if let Err(e) = git_add_and_commit_file(&config_dir, &device_path, &format!("Add device {}", device.name)) {
+                warn(&format!("could not commit device config for {}: {}", device.name, e));
             }
             
             known_keys.insert(device.ssh_public_key.clone());
