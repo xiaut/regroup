@@ -36,6 +36,7 @@ mod cli;
 mod config;
 mod discovery;
 mod git;
+mod signing;
 mod ssh;
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -176,13 +177,26 @@ fn main() {
     // Start beacon announcer in background - only if we have a valid SSH server key
     // Without a server key, announcing is pointless as we cannot be contacted via SSH
     let announce_thread = if !local_public_key.is_empty() {
-        Some(start_beacon_announcer(
-            conf.udp_port,
-            conf.wait_secs,
-            local_name.clone(),
-            local_public_key.clone(),
-            running_announcer,
-        ))
+        // Load or generate signing key
+        match crate::signing::initialize_signing_keys() {
+            Ok((signing_key, _)) => {
+                let ip_for_announcer = local_ip.clone().unwrap_or_else(|| "0.0.0.0".to_string());
+                Some(start_beacon_announcer(
+                    conf.udp_port,
+                    conf.wait_secs,
+                    local_name.clone(),
+                    local_public_key.clone(),
+                    ip_for_announcer,
+                    22, // SSH port
+                    signing_key,
+                    running_announcer,
+                ))
+            }
+            Err(e) => {
+                eprintln!("WARNING: Cannot initialize signing keys: {}", e);
+                None
+            }
+        }
     } else {
         // No announcement thread - device has no SSH server
         eprintln!("INFO: Not announcing - no SSH server host key detected.");
@@ -248,20 +262,20 @@ fn main() {
         match rx.try_recv() {
             Ok(device) => {
                 // Skip if this is us
-                if device.public_key == local_public_key {
+                if device.ssh_public_key == local_public_key {
                     continue;
                 }
                 
                 // Check if this is a known device
-                if known_keys.contains(&device.public_key) {
+                if known_keys.contains(&device.ssh_public_key) {
                     // Check if IP changed before notifying
-                    if let Some(last_ip) = known_ip.get(&device.public_key) {
+                    if let Some(last_ip) = known_ip.get(&device.ssh_public_key) {
                         if last_ip == &device.ip {
                             continue; // IP unchanged, skip silently
                         }
                     }
                     // Known device with new IP: update SSH config automatically
-                    if let Some(machine) = key_to_machine.get(&device.public_key) {
+                    if let Some(machine) = key_to_machine.get(&device.ssh_public_key) {
                         if !dry_run {
                             let _ = update_block(
                                 &ssh_config,
@@ -271,7 +285,7 @@ fn main() {
                                 machine.port,
                                 machine.port_explicit,
                             );
-                            known_ip.insert(device.public_key.clone(), device.ip.clone());
+                            known_ip.insert(device.ssh_public_key.clone(), device.ip.clone());
                             println!("\n[~] Known device: {} at {} (IP updated)", 
                                 machine.name, device.ip);
                         }
@@ -280,14 +294,18 @@ fn main() {
                 }
                 
                 // New device: check for duplicates in pending queue and rejected list
-                if !pending_keys.contains(&device.public_key) && !rejected_keys.contains(&device.public_key) {
-                    pending_keys.insert(device.public_key.clone());
+                if !pending_keys.contains(&device.ssh_public_key) && !rejected_keys.contains(&device.ssh_public_key) {
+                    pending_keys.insert(device.ssh_public_key.clone());
                     pending_devices.push_back(device);
                     if !dry_run {
                         let added_device = pending_devices.back().unwrap();
+                        let key_preview = if added_device.ssh_public_key.len() > 16 {
+                            format!("{}...", &added_device.ssh_public_key[..13])
+                        } else {
+                            added_device.ssh_public_key.clone()
+                        };
                         println!("\n[!] New device: {} ({}) - key: {}", 
-                            added_device.name, added_device.ip, 
-                            &added_device.public_key[..16.min(added_device.public_key.len())]);
+                            added_device.name, added_device.ip, key_preview);
                         println!("    Type 'y' to add, 'N' to skip, 'r' to refresh git, 'q' to quit");
                     }
                 }
@@ -317,27 +335,27 @@ fn main() {
                     prompt_shown = false;
                     let device = pending_devices.pop_front().unwrap();
                     let device_name = device.name.clone();
-                    let device_public_key = device.public_key.clone();
-                    pending_keys.remove(&device_public_key);
+                    let device_ssh_public_key = device.ssh_public_key.clone();
+                    pending_keys.remove(&device_ssh_public_key);
                     let input = input.trim().to_lowercase();
                     match input.as_str() {
                         "y" | "yes" => {
                             // Add to known keys so future beacons will auto-update IP
-                            known_keys.insert(device_public_key.clone());
+                            known_keys.insert(device_ssh_public_key.clone());
                             let machine = Machine {
                                 name: device_name.clone(),
-                                ssh_public_key: device_public_key.clone(),
+                                ssh_public_key: device_ssh_public_key.clone(),
                                 user: String::new(),
-                                port: 22,
+                                port: device.port,
                                 port_explicit: false,
                             };
-                            key_to_machine.insert(device_public_key.clone(), machine);
-                            known_ip.insert(device_public_key.clone(), device.ip.clone());
+                            key_to_machine.insert(device_ssh_public_key.clone(), machine);
+                            known_ip.insert(device_ssh_public_key.clone(), device.ip.clone());
                             add_device_to_config(&home, &ssh_config, &device, &mut known_keys, &mut new_count);
                         }
                         "r" => {
                             pending_devices.push_front(device);
-                            pending_keys.insert(device_public_key);
+                            pending_keys.insert(device_ssh_public_key);
                             refresh_git(&home);
                         }
                         "q" => {
@@ -346,7 +364,7 @@ fn main() {
                         }
                         _ => {
                             // Device rejected, remember to not ask again
-                            rejected_keys.insert(device_public_key);
+                            rejected_keys.insert(device_ssh_public_key);
                             println!("  Skipped {}.", device_name);
                         }
                     }
@@ -354,9 +372,14 @@ fn main() {
             } else {
                 // Dry run: show all devices as they are detected
                 let device = pending_devices.pop_front().unwrap();
-                pending_keys.remove(&device.public_key);
+                pending_keys.remove(&device.ssh_public_key);
+                let key_preview = if device.ssh_public_key.len() > 16 {
+                    format!("{}...", &device.ssh_public_key[..13])
+                } else {
+                    device.ssh_public_key.clone()
+                };
                 println!("\n[DRY RUN] New device: {} ({}) - key: {}", 
-                    device.name, device.ip, &device.public_key[..16.min(device.public_key.len())]);
+                    device.name, device.ip, key_preview);
                 new_count += 1;
             }
         } else {
@@ -444,11 +467,31 @@ fn start_beacon_listener(
                 Ok((n, _)) => {
                     let text = String::from_utf8_lossy(&buf[..n]);
                     let parts: Vec<&str> = text.split('\t').collect();
-                    if parts.len() >= 3 {
+                    
+                    // New format: name\tsigning_public_key_b64\tssh_public_key\tip\tport\ttimestamp\tsignature_b64
+                    if parts.len() >= 7 {
                         let device = BeaconDevice {
                             name: parts[0].to_string(),
-                            public_key: parts[1].to_string(),
+                            signing_public_key: parts[1].to_string(),
+                            ssh_public_key: parts[2].to_string(),
+                            ip: parts[3].to_string(),
+                            port: parts[4].parse().unwrap_or(22),
+                            timestamp: parts[5].to_string(),
+                            signature: parts[6].to_string(),
+                        };
+                        if sender.send(device).is_err() {
+                            break;
+                        }
+                    } else if parts.len() >= 3 {
+                        // Old format for backward compatibility
+                        let device = BeaconDevice {
+                            name: parts[0].to_string(),
+                            signing_public_key: String::new(),
+                            ssh_public_key: parts[1].to_string(),
                             ip: parts[2].to_string(),
+                            port: 22,
+                            timestamp: String::new(),
+                            signature: String::new(),
                         };
                         if sender.send(device).is_err() {
                             break;
@@ -468,14 +511,17 @@ fn start_beacon_announcer(
     port: u16,
     secs: u64,
     name: String,
-    public_key: String,
+    ssh_public_key: String,
+    ip: String,
+    ssh_port: u16,
+    signing_key: ed25519_dalek::SigningKey,
     running: Arc<AtomicBool>,
 ) -> thread::JoinHandle<()> {
     let interfaces = get_local_interfaces();
     thread::spawn(move || {
         while running.load(Ordering::Relaxed) {
-            announce_beacon(port, secs, &name, &public_key, &interfaces);
-            std::thread::sleep(Duration::from_millis(100));
+            announce_beacon(port, secs, &name, &ssh_public_key, &ip, ssh_port, &signing_key, &interfaces);
+            std::thread::sleep(Duration::from_secs(2));
         }
     })
 }

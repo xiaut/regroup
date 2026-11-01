@@ -27,6 +27,7 @@ use super::{announce_beacon, get_local_interfaces, listen_beacons, BeaconDevice}
 use crate::discovery::DiscoveryResult;
 use crate::cli::{ask_conflict_resolution, die, warn};
 use crate::ssh::public_key::get_ssh_server_public_key;
+use crate::signing;
 use crate::config::{Conf, CONFIG_DIR, DEVICES_DIR, GLOBAL_CONFIG_FILE, MAX_SYNC_ITERATIONS, load_config, read_device_file_content};
 use crate::git::{git_add_and_commit_file, get_modified_config_files, git_push_all, has_unstaged_changes, is_git_repo, refresh_git_remotes, sync_with_remotes};
 use crate::ssh::{flush_ssh_config, update_block, verify_ssh_config_complete};
@@ -157,40 +158,77 @@ pub fn discovery_sync_loop(
         // ============================================================
         log_phase(verbose, iteration, 1, 4, "Discovery");
         
-        // Get local SSH public key by self-detection
+        // Get local SSH public key and signing key by self-detection
         let local_ssh_port = current_conf.machines
             .iter()
             .find(|m| m.name == local_name)
             .map(|m| m.port)
             .unwrap_or(22);
-        let local_public_key = get_ssh_server_public_key().unwrap_or_default();
+        let local_ssh_public_key = get_ssh_server_public_key();
         
         let local_interfaces = get_local_interfaces();
-        let announcer = if !local_interfaces.is_empty() {
-            let port = current_conf.udp_port;
-            let secs = current_conf.wait_secs;
-            let name = local_name.to_string();
-            let public_key = local_public_key.clone();
-            let interfaces = local_interfaces.clone();
-            Some(thread::spawn(move || {
-                announce_beacon(port, secs, &name, &public_key, &interfaces)
-            }))
-        } else {
+        let local_ip = local_interfaces.first().map(|iface| iface.ip.clone()).unwrap_or_default();
+        
+        // Initialize announcer thread (may be None if we can't announce)
+        let announcer: Option<thread::JoinHandle<()>> = if local_ssh_public_key.is_none() {
             if iteration == 1 {
-                warn("no local interfaces found — announcing disabled (listening continues)");
+                warn("no SSH server public key detected — this device will not announce itself");
             }
             None
+        } else {
+            // Load or generate signing key
+            match signing::initialize_signing_keys() {
+                Ok((signing_key, _)) => {
+                    if !local_interfaces.is_empty() {
+                        let port = current_conf.udp_port;
+                        let secs = current_conf.wait_secs;
+                        let name = local_name.to_string();
+                        let ssh_public_key = local_ssh_public_key.as_ref().unwrap().clone();
+                        let ip = local_ip.clone();
+                        let port_ssh = local_ssh_port;
+                        let interfaces = local_interfaces.clone();
+                        let signing_key_clone = signing_key.clone();
+                        Some(thread::spawn(move || {
+                            announce_beacon(port, secs, &name, &ssh_public_key, &ip, port_ssh, &signing_key_clone, &interfaces)
+                        }))
+                    } else {
+                        if iteration == 1 {
+                            warn("no local interfaces found — announcing disabled (listening continues)");
+                        }
+                        None
+                    }
+                }
+                Err(e) => {
+                    if iteration == 1 {
+                        warn(&format!("cannot initialize signing keys: {}", e));
+                    }
+                    None
+                }
+            }
         };
         
         let beacons = listen_beacons(current_conf.udp_port, current_conf.wait_secs);
+        
+        // Join the announcer thread if it exists
         if let Some(h) = announcer {
             let _ = h.join();
         }
         
+        // If we couldn't get SSH public key or signing keys, continue with listening only
+        let local_ssh_public_key = match local_ssh_public_key {
+            Some(key) => key,
+            None => String::new(),
+        };
+        
         if verbose {
             println!("  . {} beacon(s) received", beacons.len());
             for b in &beacons {
-                println!("  . beacon: {} ({}, key: {})", b.name, b.ip, &b.public_key[..8.min(b.public_key.len())]);
+                let key_preview = if b.ssh_public_key.len() > 8 {
+                    format!("{}...", &b.ssh_public_key[..8])
+                } else {
+                    b.ssh_public_key.clone()
+                };
+                println!("  . beacon: {} ({}, key: {})", b.name, b.ip, key_preview);
             }
         }
         
@@ -198,9 +236,9 @@ pub fn discovery_sync_loop(
         let known_keys: HashSet<String> = current_conf.machines.iter().map(|m| m.ssh_public_key.clone()).collect();
         
         // Find new devices (beacons with unknown SSH public keys)
-        // Note: BeaconDevice uses 'public_key' field for SSH public key
+        // Note: BeaconDevice uses 'ssh_public_key' field for SSH public key
         let new_devices: Vec<&BeaconDevice> = beacons.iter()
-            .filter(|b| !known_keys.contains(&b.public_key) && b.public_key != local_public_key)
+            .filter(|b| !known_keys.contains(&b.ssh_public_key) && !b.ssh_public_key.is_empty() && b.ssh_public_key != local_ssh_public_key)
             .collect();
         
         // Ask user to confirm new devices (identified by unknown public key)
@@ -210,11 +248,11 @@ pub fn discovery_sync_loop(
             // Ask user for each device individually (skip in dry run)
             if !dry_run {
                 for device in &new_devices {
-                    // Display device info including public key for verification
-                    let key_display = if device.public_key.len() > 20 {
-                        format!("{}...", &device.public_key[..17])
+                    // Display device info including SSH public key for verification
+                    let key_display = if device.ssh_public_key.len() > 20 {
+                        format!("{}...", &device.ssh_public_key[..17])
                     } else {
-                        device.public_key.clone()
+                        device.ssh_public_key.clone()
                     };
                     print!("Add {} ({}) with key {}? [y/N]: ", device.name, device.ip, key_display);
                     io::stdout().flush().ok();
@@ -233,9 +271,9 @@ pub fn discovery_sync_loop(
                             let device_path = devices_dir.join(format!("{}.json", device.name));
                             let machine = Machine {
                                 name: device.name.clone(),
-                                ssh_public_key: device.public_key.clone(),
+                                ssh_public_key: device.ssh_public_key.clone(),
                                 user: String::new(),
-                                port: 22,
+                                port: device.port,
                                 port_explicit: false,
                             };
                             
@@ -260,9 +298,8 @@ pub fn discovery_sync_loop(
         }
         
         // Build a map from SSH public key to beacon for easy lookup
-        // Note: BeaconDevice uses 'public_key' field for SSH public key
         let beacon_map: std::collections::HashMap<String, &BeaconDevice> = beacons.iter()
-            .map(|b| (b.public_key.clone(), b))
+            .map(|b| (b.ssh_public_key.clone(), b))
             .collect();
 
         // ============================================================
@@ -287,7 +324,7 @@ pub fn discovery_sync_loop(
             // Find matching beacon by SSH public key
             if let Some(beacon) = beacon_map.get(&m.ssh_public_key) {
                 // Check if this is the local machine
-                if local_ip.as_deref() == Some(beacon.ip.as_str()) {
+                if Some(local_ip.as_str()) == Some(beacon.ip.as_str()) {
                     if iteration == 1 {
                         println!(
                             "  o {}: this is the local machine (this host), config unchanged",
