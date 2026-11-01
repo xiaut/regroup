@@ -255,12 +255,13 @@ pub fn sign_beacon(
     // Create the beacon string with tab-separated fields
     // Format: name\tsigning_public_key_b64\tssh_public_key\tip\tport\ttimestamp\tsignature_b64
     Ok(format!(
-        "{}\t{}\t{}\t{}\t{}\t{}",
+        "{}\t{}\t{}\t{}\t{}\t{}\t{}",
         name,
         signing_public_key_b64,
         ssh_public_key,
         ip,
         port,
+        timestamp,
         signature_b64
     ))
 }
