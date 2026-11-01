@@ -169,7 +169,28 @@ fn main() {
     
     // Statistics
     let mut new_count = 0;
-    let updated_count = 0;
+    
+    // Channel for user input (non-blocking)
+    let (cmd_tx, cmd_rx) = mpsc::channel::<String>();
+    
+    // Spawn stdin reader thread - reads all input and sends via channel
+    let _stdin_thread = thread::spawn(move || {
+        let mut input = String::new();
+        loop {
+            input.clear();
+            match io::stdin().read_line(&mut input) {
+                Ok(_) => {
+                    if cmd_tx.send(input.clone()).is_err() {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    // State for prompt display (to avoid duplicate prompts)
+    let mut prompt_shown = false;
     
     // Main interactive loop
     println!("\nListening for devices on UDP port {}...", conf.udp_port);
@@ -184,15 +205,7 @@ fn main() {
                 if device.public_key == local_public_key || known_keys.contains(&device.public_key) {
                     continue; // Skip known devices and self
                 }
-                
-                // Check if we're already waiting for user input on a device
-                if pending_devices.is_empty() {
-                    // No pending device, prompt immediately
-                    pending_devices.push_back(device);
-                } else {
-                    // Queue the device
-                    pending_devices.push_back(device);
-                }
+                pending_devices.push_back(device);
             }
             Err(mpsc::TryRecvError::Empty) => {}
             Err(mpsc::TryRecvError::Disconnected) => {
@@ -200,58 +213,67 @@ fn main() {
             }
         }
 
+        // Check for user commands from stdin
+        let user_command = cmd_rx.try_recv();
+        
         // Process pending devices if any
-        if !pending_devices.is_empty() && !dry_run {
-            let device = pending_devices.pop_front().unwrap();
-            
-            // Display device info with full public key
-            println!("\nNew device detected:");
-            println!("  Name:    {}", device.name);
-            println!("  IP:      {}", device.ip);
-            println!("  Key:     {}", device.public_key);
-            print!("\nAdd to config? [y/N/q/r]: ");
-            io::stdout().flush().ok();
-            
-            let mut input = String::new();
-            if io::stdin().read_line(&mut input).is_ok() {
-                match input.trim().to_lowercase().as_str() {
-                    "y" | "yes" => {
-                        // Add device to config
-                        add_device_to_config(&home, &ssh_config, &device, &mut known_keys, &mut new_count);
-                    }
-                    "r" => {
-                        // Refresh git - put device back in queue and handle refresh
-                        pending_devices.push_front(device);
-                        refresh_git(&home);
-                    }
-                    "q" => {
-                        println!();
-                        // Quit
-                        break;
-                    }
-                    _ => {
-                        // Skip this device
-                        println!("  Skipped {}.", device.name);
+        if !pending_devices.is_empty() {
+            if !dry_run {
+                // Show prompt only once
+                if !prompt_shown {
+                    let device = &pending_devices[0];
+                    println!("\nNew device detected:");
+                    println!("  Name:    {}", device.name);
+                    println!("  IP:      {}", device.ip);
+                    println!("  Key:     {}", device.public_key);
+                    print!("\nAdd to config? [y/N/q/r]: ");
+                    io::stdout().flush().ok();
+                    prompt_shown = true;
+                }
+                
+                // Process user command if available
+                if let Ok(input) = user_command {
+                    prompt_shown = false;
+                    let device = pending_devices.pop_front().unwrap();
+                    let input = input.trim().to_lowercase();
+                    match input.as_str() {
+                        "y" | "yes" => {
+                            add_device_to_config(&home, &ssh_config, &device, &mut known_keys, &mut new_count);
+                        }
+                        "r" => {
+                            pending_devices.push_front(device);
+                            refresh_git(&home);
+                        }
+                        "q" => {
+                            println!();
+                            break;
+                        }
+                        _ => {
+                            println!("  Skipped {}.", device.name);
+                        }
                     }
                 }
+            } else {
+                // Dry run: just show what would be added
+                let device = pending_devices.pop_front().unwrap();
+                if !prompt_shown {
+                    println!("\n[DRY RUN] New device detected:");
+                    println!("  Name:    {}", device.name);
+                    println!("  IP:      {}", device.ip);
+                    println!("  Key:     {}", device.public_key);
+                    println!("  (would ask to add to config)");
+                    prompt_shown = true;
+                }
+                if let Ok(_) = user_command {
+                    prompt_shown = false;
+                }
+                new_count += 1;
             }
-        } else if !pending_devices.is_empty() && dry_run {
-            // Dry run: just show what would be added
-            let device = pending_devices.pop_front().unwrap();
-            println!("\n[DRY RUN] New device detected:");
-            println!("  Name:    {}", device.name);
-            println!("  IP:      {}", device.ip);
-            println!("  Key:     {}", device.public_key);
-            println!("  (would ask to add to config)");
-            new_count += 1;
         } else {
-            // No pending devices, check for user commands
-            print!("Waiting for devices or command [q=quit, r=refresh git]: ");
-            io::stdout().flush().ok();
-            
-            let mut input = String::new();
-            if io::stdin().read_line(&mut input).is_ok() {
-                match input.trim().to_lowercase().as_str() {
+            // No pending devices
+            if let Ok(input) = user_command {
+                let input = input.trim().to_lowercase();
+                match input.as_str() {
                     "q" | "quit" => {
                         println!();
                         break;
@@ -260,10 +282,13 @@ fn main() {
                         println!();
                         refresh_git(&home);
                     }
-                    _ => {
-                        // Invalid command, just continue
-                    }
+                    _ => {}
                 }
+                prompt_shown = false;
+            } else if !prompt_shown {
+                print!("Waiting for devices or command [q=quit, r=refresh git]: ");
+                io::stdout().flush().ok();
+                prompt_shown = true;
             }
         }
         
