@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::collections::HashSet;
 
-use crate::config::{CONFIG_DIR, DEVICES_DIR, Machine};
+use crate::config::{CONFIG_DIR, DEVICES_DIR, GIT_DIR, Machine};
 use crate::discovery::{net_prefix, net_valid};
 use crate::discovery::beacon::BeaconDevice;
 use crate::config::device::save_device_file;
@@ -281,7 +281,7 @@ pub fn add_device_to_config(
     known_keys: &mut HashSet<String>,
     new_count: &mut usize,
 ) {
-    let config_dir = PathBuf::from(home).join(CONFIG_DIR);
+    let config_dir = PathBuf::from(home).join(CONFIG_DIR).join(GIT_DIR);
     let devices_dir = config_dir.join(DEVICES_DIR);
     
     // Ensure devices directory exists
