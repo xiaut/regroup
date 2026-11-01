@@ -26,7 +26,7 @@ use std::thread;
 use super::{announce_beacon, get_local_interfaces, listen_beacons, BeaconDevice};
 use crate::discovery::DiscoveryResult;
 use crate::cli::{ask_conflict_resolution, die, warn};
-use crate::discovery::local::get_local_fingerprint;
+use crate::ssh::public_key::get_ssh_server_public_key;
 use crate::config::{Conf, CONFIG_DIR, DEVICES_DIR, GLOBAL_CONFIG_FILE, MAX_SYNC_ITERATIONS, load_config, read_device_file_content};
 use crate::git::{git_add_and_commit_file, get_modified_config_files, git_push_all, has_unstaged_changes, is_git_repo, refresh_git_remotes, sync_with_remotes};
 use crate::ssh::{flush_ssh_config, update_block, verify_ssh_config_complete};
@@ -157,13 +157,13 @@ pub fn discovery_sync_loop(
         // ============================================================
         log_phase(verbose, iteration, 1, 4, "Discovery");
         
-        // Get local public key by self-detection on port 22
+        // Get local SSH public key by self-detection
         let local_ssh_port = current_conf.machines
             .iter()
             .find(|m| m.name == local_name)
             .map(|m| m.port)
             .unwrap_or(22);
-        let local_public_key = get_local_fingerprint(local_ssh_port).unwrap_or_default();
+        let local_public_key = get_ssh_server_public_key().unwrap_or_default();
         
         let local_interfaces = get_local_interfaces();
         let announcer = if !local_interfaces.is_empty() {
@@ -194,10 +194,11 @@ pub fn discovery_sync_loop(
             }
         }
         
-        // Build set of known public keys from config
-        let known_keys: HashSet<String> = current_conf.machines.iter().map(|m| m.fingerprint.clone()).collect();
+        // Build set of known SSH public keys from config
+        let known_keys: HashSet<String> = current_conf.machines.iter().map(|m| m.ssh_public_key.clone()).collect();
         
-        // Find new devices (beacons with unknown public keys)
+        // Find new devices (beacons with unknown SSH public keys)
+        // Note: BeaconDevice uses 'public_key' field for SSH public key
         let new_devices: Vec<&BeaconDevice> = beacons.iter()
             .filter(|b| !known_keys.contains(&b.public_key) && b.public_key != local_public_key)
             .collect();
@@ -232,7 +233,7 @@ pub fn discovery_sync_loop(
                             let device_path = devices_dir.join(format!("{}.json", device.name));
                             let machine = Machine {
                                 name: device.name.clone(),
-                                fingerprint: device.public_key.clone(),
+                                ssh_public_key: device.public_key.clone(),
                                 user: String::new(),
                                 port: 22,
                                 port_explicit: false,
@@ -258,7 +259,8 @@ pub fn discovery_sync_loop(
             warn("no beacons received — run regroup on other machines during the window");
         }
         
-        // Build a map from public_key to beacon for easy lookup
+        // Build a map from SSH public key to beacon for easy lookup
+        // Note: BeaconDevice uses 'public_key' field for SSH public key
         let beacon_map: std::collections::HashMap<String, &BeaconDevice> = beacons.iter()
             .map(|b| (b.public_key.clone(), b))
             .collect();
@@ -282,8 +284,8 @@ pub fn discovery_sync_loop(
         let mut iteration_missing = 0;
         
         for m in &current_conf.machines {
-            // Find matching beacon by public key
-            if let Some(beacon) = beacon_map.get(&m.fingerprint) {
+            // Find matching beacon by SSH public key
+            if let Some(beacon) = beacon_map.get(&m.ssh_public_key) {
                 // Check if this is the local machine
                 if local_ip.as_deref() == Some(beacon.ip.as_str()) {
                     if iteration == 1 {

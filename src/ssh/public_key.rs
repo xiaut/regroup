@@ -1,6 +1,6 @@
 //! SSH server public key detection module
 //!
-//! This module detects the local SSH *server* host key fingerprint.
+//! This module detects the local SSH *server* host key fingerprint and public key.
 //! 
 //! IMPORTANT: We need the server's host key, NOT the user's public key.
 //! The server host key is what identifies a machine in the network and allows
@@ -42,7 +42,35 @@ pub fn get_ssh_server_fingerprint() -> Option<String> {
     None
 }
 
-/// Read SSH server host key fingerprint from known file locations
+/// Get the local SSH server's public host key in OpenSSH format.
+/// 
+/// This function reads the full public key (e.g., "ssh-rsa AAAAB3NzaC1yc2E..." or
+/// "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA...") from the server's host key files.
+/// 
+/// This function attempts to find the SSH server host key by checking:
+/// 1. System SSH host keys in /etc/ssh/ssh_host_*_key.pub
+/// 2. Termux SSH host keys in $PREFIX/etc/ssh/ssh_host_*_key.pub
+/// 3. Running ssh-keyscan on localhost (if SSH server is running)
+/// 
+/// Returns None if no SSH server host key can be found.
+/// 
+/// NOTE: If this returns None, the device should NOT announce itself via UDP
+/// beacon because it cannot accept SSH connections.
+pub fn get_ssh_server_public_key() -> Option<String> {
+    // Try to read SSH server host keys from standard locations
+    if let Some(public_key) = get_server_public_key_from_files() {
+        return Some(public_key);
+    }
+    
+    // Fallback: try ssh-keyscan on localhost
+    if let Some(public_key) = get_server_public_key_via_keyscan() {
+        return Some(public_key);
+    }
+    
+    None
+}
+
+/// Get the SSH server's public key fingerprint from known file locations
 /// 
 /// Checks standard locations where SSH server host keys are stored:
 /// - /etc/ssh/ssh_host_*_key.pub (standard Linux/Unix)
@@ -55,8 +83,6 @@ fn get_server_fingerprint_from_files() -> Option<String> {
         "ssh_host_ecdsa_key.pub", 
         "ssh_host_ed25519_key.pub",
         "ssh_host_dsa_key.pub",
-        // Some systems may have additional key types
-        "ssh_host_rsa_key.pub", // Already listed, but for clarity
     ];
     
     // 1. Check standard system location: /etc/ssh/
@@ -71,7 +97,6 @@ fn get_server_fingerprint_from_files() -> Option<String> {
     }
     
     // 2. Check Termux location: $PREFIX/etc/ssh/
-    // Termux installs OpenSSH with keys in its prefix directory
     if let Ok(prefix) = env::var("PREFIX") {
         let termux_ssh_dir = PathBuf::from(prefix).join("etc/ssh");
         if termux_ssh_dir.exists() {
@@ -96,6 +121,111 @@ fn get_server_fingerprint_from_files() -> Option<String> {
     }
     
     None
+}
+
+/// Read SSH server host key public key from known file locations
+fn get_server_public_key_from_files() -> Option<String> {
+    // SSH server host key file patterns
+    let host_key_patterns = [
+        "ssh_host_rsa_key.pub",
+        "ssh_host_ecdsa_key.pub",
+        "ssh_host_ed25519_key.pub",
+        "ssh_host_dsa_key.pub",
+    ];
+    
+    // 1. Check standard system location: /etc/ssh/
+    let etc_ssh_dir = PathBuf::from("/etc/ssh");
+    if etc_ssh_dir.exists() {
+        for pattern in &host_key_patterns {
+            let key_path = etc_ssh_dir.join(pattern);
+            if let Some(public_key) = read_host_key(&key_path) {
+                return Some(public_key);
+            }
+        }
+    }
+    
+    // 2. Check Termux location: $PREFIX/etc/ssh/
+    if let Ok(prefix) = env::var("PREFIX") {
+        let termux_ssh_dir = PathBuf::from(prefix).join("etc/ssh");
+        if termux_ssh_dir.exists() {
+            for pattern in &host_key_patterns {
+                let key_path = termux_ssh_dir.join(pattern);
+                if let Some(public_key) = read_host_key(&key_path) {
+                    return Some(public_key);
+                }
+            }
+        }
+    }
+    
+    // 3. Check /usr/local/etc/ssh/
+    let usr_local_etc_ssh = PathBuf::from("/usr/local/etc/ssh");
+    if usr_local_etc_ssh.exists() {
+        for pattern in &host_key_patterns {
+            let key_path = usr_local_etc_ssh.join(pattern);
+            if let Some(public_key) = read_host_key(&key_path) {
+                return Some(public_key);
+            }
+        }
+    }
+    
+    None
+}
+
+/// Use ssh-keyscan to get the server host public key from localhost
+fn get_server_public_key_via_keyscan() -> Option<String> {
+    // Try to scan localhost for SSH host keys
+    let scan = Command::new("ssh-keyscan")
+        .arg("-T")
+        .arg("3")
+        .arg("127.0.0.1")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output();
+    
+    let raw = match scan {
+        Ok(o) if o.status.success() && !o.stdout.is_empty() => o.stdout,
+        _ => return None,
+    };
+    
+    let output = String::from_utf8_lossy(&raw);
+    // ssh-keyscan output: "127.0.0.1 ssh-rsa AAAAB3NzaC1..."
+    // We want to extract just "ssh-rsa AAAAB3NzaC1..." (the key_type key_base64 part)
+    for line in output.lines() {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() >= 3 {
+            // The key is parts[1] and parts[2] (key_type and key_base64)
+            return Some(format!("{}", parts[1..].join(" ")));
+        }
+    }
+    None
+}
+
+/// Read the content of an SSH host key public key file
+/// Returns the full key in OpenSSH format (key_type key_base64)
+fn read_host_key(key_path: &PathBuf) -> Option<String> {
+    if !key_path.exists() || !key_path.is_file() {
+        return None;
+    }
+    
+    match fs::read_to_string(key_path) {
+        Ok(content) => {
+            // The file should contain just the key in OpenSSH format
+            // Remove any comments or trailing whitespace
+            let trimmed = content.trim().to_string();
+            // Remove the hostname prefix if present (ssh-keygen -l might add it)
+            // Standard format is: "key_type key_base64 [comment]"
+            if !trimmed.is_empty() {
+                // Split by whitespace and take key_type and key_base64
+                let parts: Vec<&str> = trimmed.split_whitespace().collect();
+                if parts.len() >= 2 {
+                    return Some(parts[0..2].join(" "));
+                }
+                return Some(trimmed);
+            }
+            None
+        }
+        Err(_) => None,
+    }
 }
 
 /// Compute SHA256 fingerprint from a public key string (OpenSSH format)

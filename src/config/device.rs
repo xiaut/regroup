@@ -45,12 +45,12 @@ pub fn load_device_file(path: &Path) -> Result<Machine, String> {
         }
     };
     
-    let fingerprint = match obj.get("fingerprint") {
+    let ssh_public_key = match obj.get("ssh_public_key") {
         Some(v) => match v.as_str() {
             Some(s) => s.trim().to_string(),
-            None => return Err(format!("\"fingerprint\" must be a string")),
+            None => return Err(format!("\"ssh_public_key\" must be a string")),
         },
-        None => return Err(format!("\"fingerprint\" is required")),
+        None => return Err(format!("\"ssh_public_key\" is required")),
     };
     
     let user = match obj.get("user") {
@@ -79,7 +79,7 @@ pub fn load_device_file(path: &Path) -> Result<Machine, String> {
     
     let machine = Machine {
         name,
-        fingerprint,
+        ssh_public_key,
         user,
         port,
         port_explicit,
@@ -95,7 +95,7 @@ pub fn load_device_file(path: &Path) -> Result<Machine, String> {
 pub fn save_device_file(path: &Path, machine: &Machine) -> io::Result<()> {
     let mut obj = serde_json::Map::new();
     obj.insert("name".to_string(), serde_json::Value::String(machine.name.clone()));
-    obj.insert("fingerprint".to_string(), serde_json::Value::String(machine.fingerprint.clone()));
+    obj.insert("ssh_public_key".to_string(), serde_json::Value::String(machine.ssh_public_key.clone()));
     
     if !machine.user.is_empty() {
         obj.insert("user".to_string(), serde_json::Value::String(machine.user.clone()));

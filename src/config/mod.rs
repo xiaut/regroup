@@ -17,7 +17,7 @@
 #[derive(Clone, Debug)]
 pub struct Machine {
     pub name: String,
-    pub fingerprint: String,
+    pub ssh_public_key: String,
     pub user: String,
     pub port: u16,
     pub port_explicit: bool,
@@ -45,6 +45,7 @@ pub struct Conf {
 // ============================================================
 
 pub const CONFIG_DIR: &str = ".regroup-config";
+pub const GIT_DIR: &str = "git";
 pub const DEVICES_DIR: &str = "devices";
 pub const GLOBAL_CONFIG_FILE: &str = "settings.json";
 pub const MAX_SYNC_ITERATIONS: usize = 10;

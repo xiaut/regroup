@@ -123,7 +123,7 @@ pub fn run_selftest() -> ! {
             match crate::config::device::load_device_file(&device_file) {
                 Ok(m) => {
                     let device_ok = m.name == "test" 
-                        && m.fingerprint == "SHA256:abc"
+                        && m.ssh_public_key == "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAAB"
                         && m.user == "testuser"
                         && m.port == 22
                         && m.port_explicit;
@@ -293,7 +293,7 @@ pub fn add_device_to_config(
     let device_path = devices_dir.join(format!("{}.json", device.name));
     let machine = Machine {
         name: device.name.clone(),
-        fingerprint: device.public_key.clone(),
+        ssh_public_key: device.public_key.clone(),
         user: String::new(),
         port: 22,
         port_explicit: false,

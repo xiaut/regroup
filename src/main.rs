@@ -192,13 +192,13 @@ fn main() {
     // Build lookup maps from config
     let mut known_keys: HashSet<String> = conf.machines
         .iter()
-        .map(|m| m.fingerprint.clone())
+        .map(|m| m.ssh_public_key.clone())
         .collect();
     
-    // Map from public key to machine info for known devices
+    // Map from SSH public key to machine info for known devices
     let mut key_to_machine: HashMap<String, Machine> = conf.machines
         .iter()
-        .map(|m| (m.fingerprint.clone(), m.clone()))
+        .map(|m| (m.ssh_public_key.clone(), m.clone()))
         .collect();
     
     // Queue for pending devices to confirm
@@ -326,7 +326,7 @@ fn main() {
                             known_keys.insert(device_public_key.clone());
                             let machine = Machine {
                                 name: device_name.clone(),
-                                fingerprint: device_public_key.clone(),
+                                ssh_public_key: device_public_key.clone(),
                                 user: String::new(),
                                 port: 22,
                                 port_explicit: false,

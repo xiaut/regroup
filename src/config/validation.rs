@@ -6,11 +6,11 @@ use super::Machine;
 
 /// Validate a machine configuration
 pub fn validate_machine(machine: &Machine) -> Result<(), String> {
-    // Check for placeholder fingerprint
-    if machine.fingerprint == "SHA256:PUT-YOUR-FINGERPRINT-HERE" ||
-       machine.fingerprint == "MD5:PUT-YOUR-FINGERPRINT-HERE" {
+    // Check for placeholder SSH public key
+    if machine.ssh_public_key == "SSH-PUBLIC-KEY-PLACEHOLDER" ||
+       machine.ssh_public_key.is_empty() {
         return Err(format!(
-            "Device '{}' has a placeholder fingerprint. Please run: ssh-keygen -lf /etc/ssh/ssh_host_*_key.pub to get the real fingerprint",
+            "Device '{}' has a placeholder or empty SSH public key. Please ensure the SSH server is running and the key can be detected.",
             machine.name
         ));
     }

@@ -11,7 +11,8 @@ use std::sync::{Mutex, OnceLock};
 use super::{Conf, GlobalSettings, Machine, CONFIG_DIR, DEVICES_DIR, GLOBAL_CONFIG_FILE};
 use super::device::{load_device_file, save_device_file};
 use super::settings::{load_global_settings, save_default_global_settings};
-use crate::discovery::local::{host_name, get_local_fingerprint};
+use crate::discovery::local::host_name;
+use crate::ssh::public_key::get_ssh_server_public_key;
 use crate::git::git_init;
 
 /// Track warnings that have already been displayed to avoid duplicates
@@ -49,8 +50,8 @@ pub fn create_device_config(config_dir: &PathBuf) -> Result<Machine, String> {
         ));
     }
     
-    let fingerprint = get_local_fingerprint(22).ok_or_else(|| {
-        "Could not detect SSH fingerprint. Ensure SSH server is running on this machine.".to_string()
+    let ssh_public_key = get_ssh_server_public_key().ok_or_else(|| {
+        "Could not detect SSH public key. Ensure SSH server is running on this machine.".to_string()
     })?;
     
     // Determine the current user
@@ -58,7 +59,7 @@ pub fn create_device_config(config_dir: &PathBuf) -> Result<Machine, String> {
     
     let machine = Machine {
         name: hostname.clone(),
-        fingerprint,
+        ssh_public_key,
         user: current_user,
         port: 22,
         port_explicit: false,
@@ -88,20 +89,34 @@ pub fn create_device_config(config_dir: &PathBuf) -> Result<Machine, String> {
 // ============================================================
 
 /// Load the complete configuration
+/// 
+/// Configuration structure:
+/// ~/.regroup-config/              - Root config directory (NOT a git repo)
+///   └── git/                      - Git repository with shared config
+///       ├── devices/              - Device configs
+///       └── settings.json         - Global settings
 pub fn load_config() -> Conf {
-    // Config directory is always ~/.regroup-config
+    // Root config directory
     let home = match env::var("HOME") {
         Ok(h) => h,
         Err(_) => die("HOME variable not set"),
     };
-    let config_dir = PathBuf::from(&home).join(CONFIG_DIR);
+    let root_config_dir = PathBuf::from(&home).join(CONFIG_DIR);
     
-    // Ensure config directory exists
-    if let Err(e) = fs::create_dir_all(&config_dir) {
-        die(&format!("cannot initialize config directory {}: {}", config_dir.display(), e));
+    // Git config directory (this IS the git repo)
+    let config_dir = root_config_dir.join(super::GIT_DIR);
+    
+    // Ensure root config directory exists
+    if let Err(e) = fs::create_dir_all(&root_config_dir) {
+        die(&format!("cannot initialize config directory {}: {}", root_config_dir.display(), e));
     }
     
-    // Ensure config directory is a git repository
+    // Ensure git config directory exists and is a git repository
+    if let Err(e) = fs::create_dir_all(&config_dir) {
+        die(&format!("cannot initialize git config directory {}: {}", config_dir.display(), e));
+    }
+    
+    // Initialize git repository in the git/ subdirectory
     if let Err(e) = git_init(&config_dir) {
         die(&format!("cannot initialize git repository in {}: {}", config_dir.display(), e));
     }
@@ -144,12 +159,11 @@ pub fn load_config() -> Conf {
     
     // Check if current machine's config exists, if not create it
     let local_hostname = host_name();
-    let local_fingerprint = get_local_fingerprint(22);
+    let local_ssh_public_key = get_ssh_server_public_key();
     
     let current_machine_exists = machines.iter().any(|m| {
         m.name == local_hostname || 
-        (m.fingerprint.starts_with("SHA256:") && 
-         local_fingerprint.as_ref().map_or(false, |f| &m.fingerprint == f))
+        (local_ssh_public_key.as_ref().map_or(false, |k| &m.ssh_public_key == k))
     });
     
     if !current_machine_exists {
