@@ -1,13 +1,15 @@
 # regroup
 
-Find machines by their SSH host key fingerprint and update `~/.ssh/config`.
+Find machines by their SSH host key and update `~/.ssh/config`.
 
 ## Configuration & Sync
 
-**Configuration is stored in `~/.regroup-config/`** - a git repository where:
+**Configuration is stored in `~/.regroup-config/git/`** - a git repository where:
 - Each device has its own JSON file in `devices/`
+- Devices are identified by their **SSH public key** (hostnames and IPs can change)
+- Devices announce themselves via **signed UDP beacons** (Ed25519); regroup
+  listens continuously and prompts for each new device
 - Git remotes are **automatically configured** for all other devices (using hostnames)
-- Discovery and sync run in a **loop** until no new devices are found
 - Each device **owns** its own config file and can overwrite only it
 - If local device config differs from remote, user is **prompted** to resolve
 
@@ -20,14 +22,12 @@ Find machines by their SSH host key fingerprint and update `~/.ssh/config`.
 ```
 
 This will:
-1. Create `~/.regroup-config/` directory
-2. Initialize a git repository with automatic configuration:
+1. Create `~/.regroup-config/git/` directory and initialize a git repository with automatic configuration:
    - `receive.denyCurrentBranch` set to `updateInstead` (allows pushing to checked-out branches)
    - `pull.rebase` set to `true` (maintains linear history)
-3. Create `settings.json` with defaults
-4. Create `devices/<hostname>.json` with auto-detected info
-5. Commit everything to git (settings.json and device file in separate commits)
-6. Enter discovery loop until no new devices are found
+2. Create `settings.json` with defaults
+3. Create `devices/<hostname>.json` with auto-detected info
+4. Enter continuous interactive mode: announce + listen for beacons
 
 ### On second device:
 
@@ -36,11 +36,10 @@ This will:
 ```
 
 This will:
-1. Create local `~/.regroup-config/`
+1. Create local `~/.regroup-config/git/`
 2. Create its own device file
-3. Automatically add the first device as a git remote (using hostname)
-4. Push to the first device's config repo
-5. Enter discovery loop
+3. Discover the first device via its UDP beacon and prompt to add it
+4. Enter continuous interactive mode (press `r` to pull from and push to git remotes)
 
 ## First Manual Git Sync
 
@@ -49,8 +48,8 @@ When setting up your first device or adding devices to an existing network, you 
 ### From the device itself (if you have SSH access to other devices):
 
 ```bash
-cd ~/.regroup-config
-git remote add <other-device> user@other-device:~/.regroup-config
+cd ~/.regroup-config/git
+git remote add <other-device> user@other-device:~/.regroup-config/git
 git push <other-device> main
 ```
 
@@ -59,8 +58,8 @@ This pushes your config to the other device.
 ### From another device (if you're setting up a new device):
 
 ```bash
-cd ~/.regroup-config
-git remote add <new-device> user@new-device:~/.regroup-config
+cd ~/.regroup-config/git
+git remote add <new-device> user@new-device:~/.regroup-config/git
 git pull <new-device> main
 ```
 
@@ -73,40 +72,35 @@ This pulls the new device's config to your existing setup.
 
 ## How It Works
 
-### Discovery and Sync Loop
+### Continuous Discovery
 
-On every run, regroup performs:
+On every run, regroup enters continuous interactive mode:
 
 ```
-Loop:
-  1. Refresh git remotes (add/remove based on device list)
-  2. If -r flag or iteration > 1: git pull --all
-  3. UDP beacon announcement + listening
-  4. Fallback TCP subnet scan (if needed)
-  5. Fingerprint collection
-  6. SSH config updates for discovered machines
-  7. git push --all (after SSH config update)
-  8. Check if new devices were found
-  9. If yes, repeat from step 1
-  10. If no, exit loop
+1. Announce this machine via signed UDP beacons (every ~2 s, one per interface)
+2. Listen for other machines' beacons continuously
+   - Each beacon's Ed25519 signature is verified; unsigned/forged beacons are rejected
+   - Beacons older than 5 minutes are rejected
+   - Beacons announcing an SSH public key we already know only update the
+     machine's IP in ~/.ssh/config (silently, when the IP changed)
+3. New machines are queued and the user is prompted (y/N) for each one
+4. Accepted machines are written to ~/.ssh/config, ~/.ssh/known_hosts and
+   the git config repository (committed)
+5. Pressing 'r' pulls from and pushes to all configured git remotes
 ```
 
-This loop handles:
-- **IP address changes**: Devices are identified by hostname, not IP
-- **Network discovery**: Multiple iterations find all devices
-- **Git sync**: Changes propagate through the network
-- **One-way SSH**: Failures are logged as warnings, not errors
+This handles:
+- **IP address changes**: devices are identified by SSH public key, not IP
+- **Spoofing**: beacons are Ed25519-signed and age-checked
+- **Git sync**: changes propagate through the network
 
-### Automatic Git Remote Management
+### Git Remote Management
 
-1. **On every iteration**:
-   - Remotes are added for all devices (except self)
-   - Stale remotes (devices no longer in config) are removed
-   - Remote URLs use format: `user@hostname:~/.regroup-config`
+1. **Remote URLs** use the format: `user@hostname:~/.regroup-config/git`
 
-2. **Sync operations**:
-   - `git pull --all --rebase`: Pulls from all remotes with rebase (linear history)
-   - `git push --all --force-with-lease`: Pushes to all remotes safely
+2. **Sync operations** (triggered with 'r' in interactive mode):
+   - `git pull` from all remotes
+   - `git push` to all remotes
    - Failures are logged as warnings (one-way SSH is OK)
 
 3. **Repository configuration** (set automatically on init):
@@ -127,45 +121,32 @@ This loop handles:
 ## Usage
 
 ```
-regroup — find machines by their SSH host key fingerprint and update
-~/.ssh/config.
-
-Configuration is stored in ~/.regroup-config/ git repository where each
-device has its own JSON file in the devices/ directory. Git remotes are
-automatically configured for all other devices (using hostnames, not IPs).
-
-Discovery and sync run in a loop until no new devices are found.
+regroup — find machines by their SSH host key and update ~/.ssh/config.
+Devices announce themselves via signed UDP beacons; regroup listens for them
+continuously and prompts for each new device.
 
 Usage:
-  ./regroup                announce + listen + sync loop, update ~/.ssh/config
+  ./regroup                continuous interactive mode, update ~/.ssh/config
   ./regroup test           dry run: nothing is modified
   ./regroup -v             verbose
-  ./regroup -r             pull from git remotes before starting sync loop
-  ./regroup 192.168.43     also scan that /24 once
-  ./regroup selftest       built-in checks (tools, config, config rewrite)
+  ./regroup selftest       built-in checks (tools, subnet helpers, config parsing)
+  ./regroup setup-cd       install 'regroup-cd' shell function to change to config directory
   ./regroup -h             this help
 
-Config repository structure (~/.regroup-config/):
-  settings.json           (optional: udp_port, wait_secs, batch_size, subnets)
+Interactive commands:
+  y/N             - add or skip the current device
+  r               - refresh git (pull from remotes, push to remotes)
+  q               - quit the program
+
+Config repository structure (~/.regroup-config/git/):
+  settings.json           (optional: udp_port, wait_secs, batch_size)
   devices/
-    <hostname>.json       (each device's config: name, fingerprint, user, port)
-
-Git remotes (automatically managed using hostnames):
-  user@hostname:~/.regroup-config  (for each other device)
-
-Sync behavior:
-  - Loop until no new devices are discovered
-  - git pull --all --rebase on each iteration (except first, or with -r)
-  - git push --all --force-with-lease after updating SSH config
-  - One-way SSH connections handled gracefully
-  - User prompted to resolve own config conflicts
-  - Repository defaults to rebase for manual pulls (pull.rebase = true)
+    <hostname>.json       (each device's config: name, ssh_public_key, user, port)
 
 Exit codes:
-  0  all machines found
-  1  at least one machine missing
+  0  normal exit
+  1  selftest failure
   2  configuration or environment error
-  3  user declined conflict resolution
 ```
 
 ## Configuration Structure
@@ -177,7 +158,7 @@ Each device file (`devices/<name>.json`) contains:
 ```json
 {
   "name": "hostname",
-  "fingerprint": "SHA256:abcdef123456...",
+  "ssh_public_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA...",
   "user": "username",
   "port": 22
 }
@@ -185,11 +166,11 @@ Each device file (`devices/<name>.json`) contains:
 
 Fields:
 - `name`: Device hostname (auto-detected) - **required**
-- `fingerprint`: SSH host key fingerprint (SHA256 or MD5 format) - **required**
-- `user`: SSH username (defaults to current user, omitted if empty)
-- `port`: SSH port (defaults to 22, omitted if default)
+- `ssh_public_key`: SSH server host public key (OpenSSH format) - **required**; this is the unique identifier of a machine (hostnames and IPs can change)
+- `user`: SSH username (defaults to current user for auto-created devices, omitted if empty)
+- `port`: SSH port (defaults to 22; devices discovered via beacon keep their announced port, e.g. Termux's 8022)
 
-**Important**: Devices are identified by **hostname**, not IP address. This allows the system to handle IP changes automatically.
+**Important**: Devices are identified by their **SSH public key**, not by hostname or IP address. This allows the system to handle host name and IP changes automatically.
 
 ### Global Settings
 
@@ -199,16 +180,14 @@ Optional `settings.json` file:
 {
   "udp_port": 4242,
   "wait_secs": 10,
-  "batch_size": 64,
-  "subnets": ["192.168.43", "192.168.1"]
+  "batch_size": 64
 }
 ```
 
 Fields:
 - `udp_port`: UDP port for beacon announcements (default: 4242)
-- `wait_secs`: Time to wait for beacons (default: 10 seconds)
-- `batch_size`: Parallel connections for subnet scanning (default: 64)
-- `subnets`: Array of /24 subnet prefixes to scan as fallback
+- `wait_secs`: Duration of each announcement window (default: 10 seconds)
+- `batch_size`: Batch size kept for the subnet-scan fallback (default: 64)
 
 ## Practical Examples
 
@@ -225,27 +204,26 @@ Fields:
 
 **Device B (hostname: laptop):**
 ```bash
-# First run - creates config, enters discovery loop
+# First run - creates config, initializes git, enters interactive mode
 ./regroup
 
-# Will discover ordi via UDP beacons
-# Will add ordi as git remote: ordiuser@ordi:~/.regroup-config
-# Will push its config to ordi
+# Will discover ordi via its UDP beacon and prompt to add it
+# ordi's entry is created in ~/.ssh/config and the config repo
 ```
 
 **Device A:**
 ```bash
-# On next run or when laptop is discovered:
-# Will add laptop as git remote: laptopuser@laptop:~/.regroup-config
-# Will pull laptop's config
+# On next run, laptop's beacon is received (or press 'r' after adding
+# laptop as a remote manually)
 # Both devices now have each other's configs
 ```
 
-### With -r flag (force refresh)
+### Refreshing from git remotes
 
 ```bash
-# On any device, force pull from all remotes before discovery
-./regroup -r
+# In interactive mode, press r to pull from and push to all remotes
+./regroup
+# ... then press r
 
 # Useful when you know there are updates but UDP discovery might miss them
 ```
@@ -254,34 +232,35 @@ Fields:
 
 ```bash
 # On any device, add a new device config
-cat > ~/.regroup-config/devices/newdevice.json << EOF
+cat > ~/.regroup-config/git/devices/newdevice.json << EOF
 {
   "name": "newdevice",
-  "fingerprint": "SHA256:...",
+  "ssh_public_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA...",
   "user": "username"
 }
 EOF
 
-# Commit and the loop will handle sync
-git add .
+# Commit and regroup will use it on the next run
+cd ~/.regroup-config/git
+git add devices/newdevice.json
 git commit -m "Add newdevice"
 
-# On next run, newdevice will be added as remote and synced
+# On next run, newdevice will be recognized by its public key and synced
 ./regroup
 ```
 
-## Getting SSH Fingerprints
+## Reading SSH Host Public Keys
 
-To find a machine's fingerprint:
+To find a machine's host public key:
 
 **Ubuntu/Debian:**
 ```bash
-ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
+cat /etc/ssh/ssh_host_ed25519_key.pub
 ```
 
 **Termux:**
 ```bash
-ssh-keygen -lf $PREFIX/etc/ssh/ssh_host_ed25519_key.pub
+cat $PREFIX/etc/ssh/ssh_host_ed25519_key.pub
 ```
 
 ## Building

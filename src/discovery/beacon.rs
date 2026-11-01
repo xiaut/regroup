@@ -18,6 +18,8 @@
 //! "this beacon is from me" rather than comparing hostname or IP address.
 
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 use super::NetworkInterface;
@@ -38,6 +40,9 @@ pub struct BeaconDevice {
 /// Runs in its own thread, in parallel with listen_beacons, for the same window.
 /// Each interface sends to its own broadcast address.
 /// 
+/// If `running` is given, the loop stops early when the flag becomes false
+/// (checked every ~100 ms so shutdown is responsive).
+/// 
 /// The beacon format is: name\tsigning_public_key_b64\tssh_public_key\tip\tport\ttimestamp\tsignature_b64
 /// The signed message is: "name|ssh_public_key|ip|port|timestamp"
 pub fn announce_beacon(
@@ -49,6 +54,7 @@ pub fn announce_beacon(
     port_ssh: u16,
     signing_key: &ed25519_dalek::SigningKey,
     interfaces: &[NetworkInterface],
+    running: Option<&AtomicBool>,
 ) {
     use crate::signing;
     
@@ -91,14 +97,18 @@ pub fn announce_beacon(
         }
     };
 
-    while Instant::now() < deadline {
-        for (sock, broadcast, _) in &sockets {
-            let target = format!("{}:{}", broadcast, port);
-            if let Ok(addr) = target.parse::<SocketAddr>() {
-                let _ = sock.send_to(beacon_message.as_bytes(), addr);
+    let mut last_send: Option<Instant> = None;
+    while Instant::now() < deadline && running.map_or(true, |r| r.load(Ordering::Relaxed)) {
+        if last_send.map_or(true, |t| t.elapsed() >= Duration::from_secs(2)) {
+            last_send = Some(Instant::now());
+            for (sock, broadcast, _) in &sockets {
+                let target = format!("{}:{}", broadcast, port);
+                if let Ok(addr) = target.parse::<SocketAddr>() {
+                    let _ = sock.send_to(beacon_message.as_bytes(), addr);
+                }
             }
         }
-        std::thread::sleep(Duration::from_secs(2));
+        std::thread::sleep(Duration::from_millis(100));
     }
 }
 
@@ -208,7 +218,7 @@ pub fn listen_beacons(port: u16, secs: u64, local_ssh_public_key: &str) -> Vec<B
 }
 
 /// Listens for beacons continuously and sends each via channel.
-/// Runs indefinitely until channel is disconnected.
+/// Runs until the `running` flag becomes false or the channel is disconnected.
 /// 
 /// Only beacons with valid signatures are forwarded via the channel.
 /// Beacons from the local machine (self-detection) are filtered out based on SSH public key.
@@ -218,6 +228,7 @@ pub fn listen_beacons_continuous(
     port: u16,
     sender: std::sync::mpsc::Sender<BeaconDevice>,
     local_ssh_public_key: String,
+    running: Arc<AtomicBool>,
 ) {
     use crate::signing;
     
@@ -232,6 +243,9 @@ pub fn listen_beacons_continuous(
     let mut buf = [0u8; 4096];
     
     loop {
+        if !running.load(Ordering::Relaxed) {
+            break;
+        }
         match sock.recv_from(&mut buf) {
             Ok((n, _)) => {
                 let text = String::from_utf8_lossy(&buf[..n]);
@@ -285,7 +299,10 @@ pub fn listen_beacons_continuous(
                             timestamp: timestamp_str,
                             signature: parts[6].to_string(),
                         };
-                        let _ = sender.send(device);
+                        // If the channel is disconnected, the main loop is gone: stop
+                        if sender.send(device).is_err() {
+                            break;
+                        }
                     }
                     Err(e) => {
                         eprintln!("WARNING: invalid beacon signature from {}: {}", ip, e);

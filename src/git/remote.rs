@@ -6,7 +6,7 @@ use std::io;
 use std::path::Path;
 use std::process::Command;
 
-use crate::config::Machine;
+use crate::config::{CONFIG_DIR, GIT_DIR, Machine};
 
 /// Add a git remote for a machine
 pub fn git_add_remote(repo_path: &Path, remote_name: &str, remote_url: &str) -> io::Result<()> {
@@ -134,8 +134,18 @@ pub fn refresh_git_remotes(repo_path: &Path, machines: &[Machine], local_hostnam
             continue; // Skip self
         }
         
-        // Construct SSH URL for the machine's config repo using hostname (not IP)
-        let remote_url = format!("{}@{}:~/.regroup-config", machine.user, machine.name);
+        // A remote URL without a user is invalid: skip with an error so the
+        // caller knows this machine cannot be synced yet
+        if machine.user.is_empty() {
+            errors.push(format!(
+                "no SSH user configured for {} — set \"user\" in its device file to sync with it",
+                machine.name
+            ));
+            continue;
+        }
+        
+        // Construct SSH URL for the machine's config git repository (using hostname, not IP)
+        let remote_url = format!("{}@{}:~/{}/{}", machine.user, machine.name, CONFIG_DIR, GIT_DIR);
         
         if let Err(e) = git_add_remote(repo_path, &machine.name, &remote_url) {
             errors.push(format!("failed to add remote for {}: {}", machine.name, e));

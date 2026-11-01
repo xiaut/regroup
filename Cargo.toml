@@ -4,7 +4,7 @@ version = "0.2.0"
 edition = "2024"
 license = "MIT"
 description = "Find machines by SSH host key fingerprint and update ~/.ssh/config"
-homepage = "https://github.com/yourusername/regroup"
+homepage = "https://github.com/xiaut/regroup"
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }

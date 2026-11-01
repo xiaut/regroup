@@ -5,7 +5,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::config::Machine;
+use crate::config::{Machine, DEVICES_DIR, GLOBAL_CONFIG_FILE};
 
 /// Check if there are unstaged changes in the git repository
 pub fn has_unstaged_changes(repo_path: &Path) -> bool {
@@ -22,21 +22,18 @@ pub fn has_unstaged_changes(repo_path: &Path) -> bool {
     match output {
         Ok(o) if o.status.success() => {
             let status = String::from_utf8_lossy(&o.stdout);
-            status.lines().any(|line| {
-                line.starts_with("??") || 
-                line.starts_with("M ") || 
-                line.starts_with("A ") || 
-                line.starts_with("D ") ||
-                line.starts_with("R ") ||
-                line.starts_with("C ") ||
-                line.starts_with("!!")
-            })
+            // Any non-empty porcelain line means something changed:
+            // worktree modifications (" M"), staged changes ("M "), or
+            // untracked files ("??"). (Ignored files never appear without
+            // --ignored, so no special-casing is needed.)
+            status.lines().any(|line| !line.trim().is_empty())
         }
         _ => false,
     }
 }
 
-/// Get list of modified config files (machines.json and keys/)
+/// Get list of modified config files (settings.json and devices/), as paths
+/// relative to the repository root
 pub fn get_modified_config_files(repo_path: &Path) -> Vec<PathBuf> {
     if !super::repo::is_git_repo(repo_path) {
         return Vec::new();
@@ -53,22 +50,28 @@ pub fn get_modified_config_files(repo_path: &Path) -> Vec<PathBuf> {
             String::from_utf8_lossy(&o.stdout)
                 .lines()
                 .filter_map(|line| {
-                    if line.starts_with(" M") || line.starts_with("MM") || line.starts_with("A ") || line.starts_with("D ") || line.starts_with("R ") || line.starts_with("C ") {
-                        let parts: Vec<&str> = line.split_whitespace().collect();
-                        if parts.len() >= 2 {
-                            Some(repo_path.join(parts[1]))
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
+                    let line = line.trim_end();
+                    // Porcelain format: XY <path> ("R  old -> new" for renames)
+                    if line.len() < 4 {
+                        return None;
                     }
+                    let xy = &line[..2];
+                    if !matches!(xy, " M" | "M " | "MM" | "A " | "AM" | "D " | "R " | "C " | "??") {
+                        return None;
+                    }
+                    let path_part = line[3..].trim().trim_matches('"');
+                    if path_part.is_empty() {
+                        return None;
+                    }
+                    // For renames keep the new path (after "-> ")
+                    let path_str = path_part.rsplit(" -> ").next().unwrap_or(path_part);
+                    Some(PathBuf::from(path_str))
                 })
                 .filter(|p| {
                     // Only track config files
                     let path_str = p.to_string_lossy();
-                    path_str.ends_with("machines.json") || 
-                    path_str.contains("/keys/")
+                    path_str == GLOBAL_CONFIG_FILE
+                        || path_str.starts_with(&format!("{}/", DEVICES_DIR))
                 })
                 .collect()
         }

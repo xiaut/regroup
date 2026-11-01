@@ -115,7 +115,7 @@ pub fn run_selftest() -> ! {
         let _ = fs::create_dir_all(&devices_dir);
         
         let device_file = devices_dir.join("test.json");
-        let device_config = r#"{"name": "test", "fingerprint": "SHA256:abc", "user": "testuser", "port": 22}"#;
+        let device_config = r#"{"name": "test", "ssh_public_key": "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAAB", "user": "testuser", "port": 22}"#;
         if let Err(e) = fs::write(&device_file, device_config) {
             println!("device file creation — FAIL ({})", e);
             ok = false;
@@ -151,42 +151,10 @@ pub fn run_selftest() -> ! {
 /// Print usage information
 pub fn usage() {
     println!(
-        "regroup — find machines by their SSH host key fingerprint and update
-~/.ssh/config. Every run announces this machine over UDP broadcast while
-listening for the other machines' announcements during the same window.\n
-Configuration is stored in ~/.regroup-config/ git repository where each
-device has its own JSON file in the devices/ directory. Git remotes are
-automatically configured for all other devices (using hostnames, not IPs).\n\nDiscovery and sync run in a loop until no new devices are found. Each device
-owns its own config file and can only overwrite it. If the local device config
-differs from the remote, the user is asked to resolve the conflict.\n
-Usage:
-  ./regroup                announce + listen + sync loop, update ~/.ssh/config
-  ./regroup test           dry run: nothing is modified
-  ./regroup -v             verbose
-  ./regroup -r             refresh: pull from git remotes before sync loop
-  ./regroup 192.168.43     also scan that /24 once
-  ./regroup selftest       built-in checks (tools, config, config rewrite)
-  ./regroup setup-cd       install 'regroup-cd' shell function to change to config directory
-  ./regroup -h             this help\n
-Config repository structure (~/.regroup-config/):
-  settings.json           (optional: udp_port, wait_secs, batch_size)
-  devices/
-    <hostname>.json       (each device's config: name, fingerprint, user, port)\n
-Git remotes (automatically managed using hostnames):
-  user@hostname:~/.regroup-config  (for each other device)\n
-Sync behavior:
-  - Loop until no new devices are discovered
-  - git pull --all on each iteration (except first)
-  - git push --all after updating SSH config
-  - One-way SSH connections handled gracefully
-  - User prompted to resolve own config conflicts\n
-Exit codes:
-  0  all machines found
-  1  at least one machine missing
-  2  configuration or environment error
-  3  user declined conflict resolution"
+        "regroup — find machines by their SSH host key and update ~/.ssh/config.\nDevices announce themselves via signed UDP beacons; regroup listens for them\ncontinuously and prompts for each new device.\n\nConfiguration is stored in ~/.regroup-config/git/ (a git repository) where each\ndevice has its own JSON file in the devices/ directory. Git remotes can be\nconfigured for all other devices to enable decentralized sync (press 'r' in\ninteractive mode to pull from and push to them).\n\nUsage:\n  ./regroup                continuous interactive mode, update ~/.ssh/config\n  ./regroup test           dry run: nothing is modified\n  ./regroup -v             verbose\n  ./regroup selftest       built-in checks (tools, subnet helpers, config parsing)\n  ./regroup setup-cd       install 'regroup-cd' shell function to change to config directory\n  ./regroup -h             this help\n\nInteractive commands:\n  y/N             - add or skip the current device\n  r               - refresh git (pull from remotes, push to remotes)\n  q               - quit the program\n\nConfig repository structure (~/.regroup-config/git/):\n  settings.json           (optional: udp_port, wait_secs, batch_size)\n  devices/\n    <hostname>.json       (each device's config: name, ssh_public_key, user, port)\n\nExit codes:\n  0  normal exit\n  1  selftest failure\n  2  configuration or environment error"
     );
 }
+
 
 // ============================================================
 // Setup CD command
@@ -291,12 +259,14 @@ pub fn add_device_to_config(
     }
     
     let device_path = devices_dir.join(format!("{}.json", device.name));
+    // The beacon explicitly carries the device's SSH port: mark it explicit so
+    // ~/.ssh/config and the device file keep it (e.g. Termux port 8022).
     let machine = Machine {
         name: device.name.clone(),
         ssh_public_key: device.ssh_public_key.clone(),
         user: String::new(),
         port: device.port,
-        port_explicit: false,
+        port_explicit: true,
     };
     
     match save_device_file(&device_path, &machine) {
@@ -338,7 +308,8 @@ pub fn add_device_to_config(
 
 /// Refresh git remotes: pull from all remotes, then push to all remotes
 pub fn refresh_git(home: &str) {
-    let config_dir = PathBuf::from(home).join(CONFIG_DIR);
+    // The git repository lives in ~/.regroup-config/git (not the root directory)
+    let config_dir = PathBuf::from(home).join(CONFIG_DIR).join(GIT_DIR);
     
     if !git::is_git_repo(&config_dir) {
         warn(&format!("{} is not a git repository", config_dir.display()));

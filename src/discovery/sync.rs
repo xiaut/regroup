@@ -199,7 +199,7 @@ pub fn discovery_sync_loop(
                         let interfaces = local_interfaces.clone();
                         let signing_key_clone = signing_key.clone();
                         Some(thread::spawn(move || {
-                            announce_beacon(port, secs, &name, &ssh_public_key, &ip, port_ssh, &signing_key_clone, &interfaces)
+                            announce_beacon(port, secs, &name, &ssh_public_key, &ip, port_ssh, &signing_key_clone, &interfaces, None)
                         }))
                     } else {
                         if iteration == 1 {

@@ -33,6 +33,26 @@ pub fn git_init(repo_path: &Path) -> io::Result<()> {
         ));
     }
     
+    // Ensure the initial branch is "main": pull/push operations hardcode it.
+    // git_init only runs on a freshly created repository (no commits yet), so
+    // moving HEAD is safe even if git's default branch is "master".
+    let head = Command::new("git")
+        .current_dir(repo_path)
+        .arg("symbolic-ref")
+        .arg("--short")
+        .arg("HEAD")
+        .output();
+    if let Ok(o) = head {
+        if o.status.success() && String::from_utf8_lossy(&o.stdout).trim() != "main" {
+            let _ = Command::new("git")
+                .current_dir(repo_path)
+                .arg("symbolic-ref")
+                .arg("HEAD")
+                .arg("refs/heads/main")
+                .status();
+        }
+    }
+    
     // Configure git to allow commits without user info
     let _ = Command::new("git")
         .current_dir(repo_path)

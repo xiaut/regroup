@@ -24,7 +24,7 @@
 //   r               - refresh git (pull from remotes, push to remotes)
 //   q               - quit the program
 //
-// Exit codes: 0 = normal exit; 2 = configuration or environment error.
+// Exit codes: 0 = normal exit; 1 = selftest failure; 2 = configuration or environment error.
 
 use std::env;
 use std::fs;
@@ -48,7 +48,7 @@ use std::time::Duration;
 
 use cli::{add_device_to_config, die, refresh_git, run_selftest, setup_cd, usage};
 use config::{load_config, Machine};
-use discovery::beacon::{announce_beacon, BeaconDevice};
+use discovery::beacon::{announce_beacon, listen_beacons_continuous, BeaconDevice};
 use ssh::config::update_block;
 use ssh::public_key;
 use discovery::{get_local_interfaces, host_name, my_ip};
@@ -178,8 +178,18 @@ fn main() {
     let running_listener = running.clone();
     let running_announcer = running.clone();
     
+    // SSH port this machine's server listens on: taken from our own device config
+    // (set by the user if the server does not use the default 22), 22 otherwise.
+    let local_ssh_port = conf.machines
+        .iter()
+        .find(|m| m.name == local_name)
+        .map(|m| m.port)
+        .unwrap_or(22);
+
     // Start beacon listener in background (always listen for other devices)
-    let listen_thread = start_beacon_listener(conf.udp_port, running_listener, tx.clone());
+    // Signature verification, beacon age check and IP consistency check are
+    // performed inside listen_beacons_continuous; only valid beacons reach the queue.
+    let listen_thread = start_beacon_listener(conf.udp_port, running_listener, tx.clone(), local_public_key.clone());
     
     // Start beacon announcer in background - only if we have a valid SSH server key
     // Without a server key, announcing is pointless as we cannot be contacted via SSH
@@ -194,7 +204,7 @@ fn main() {
                     local_name.clone(),
                     local_public_key.clone(),
                     ip_for_announcer,
-                    22, // SSH port
+                    local_ssh_port,
                     signing_key,
                     running_announcer,
                 ))
@@ -358,12 +368,15 @@ fn main() {
                         "y" | "yes" => {
                             // Add to known keys so future beacons will auto-update IP
                             known_keys.insert(device_ssh_public_key.clone());
+                            // The beacon explicitly carries the device's SSH port:
+                            // mark it explicit so ~/.ssh/config and the device file
+                            // keep it (otherwise Termux port 8022 would be lost).
                             let machine = Machine {
                                 name: device_name.clone(),
                                 ssh_public_key: device_ssh_public_key.clone(),
                                 user: String::new(),
                                 port: device.port,
-                                port_explicit: false,
+                                port_explicit: true,
                             };
                             key_to_machine.insert(device_ssh_public_key.clone(), machine);
                             known_ip.insert(device_ssh_public_key.clone(), device.ip.clone());
@@ -373,6 +386,8 @@ fn main() {
                             pending_devices.push_front(device);
                             pending_keys.insert(device_ssh_public_key);
                             refresh_git(&home);
+                            // A pull may have brought new device configs: reload
+                            reload_known_devices(&mut known_keys, &mut key_to_machine);
                         }
                         "q" => {
                             println!();
@@ -411,6 +426,8 @@ fn main() {
                     "r" | "refresh" => {
                         println!();
                         refresh_git(&home);
+                        // A pull may have brought new device configs: reload
+                        reload_known_devices(&mut known_keys, &mut key_to_machine);
                     }
                     _ => {}
                 }
@@ -433,21 +450,11 @@ fn main() {
     
     // Wait for threads with timeout
     let timeout = Duration::from_secs(2);
-    let start = std::time::Instant::now();
-    
-    let _ = listen_thread.join().map_err(|_| {
-        if start.elapsed() >= timeout {
-            eprintln!("  Listener thread did not stop cleanly");
-        }
-    });
+    join_with_timeout(listen_thread, "Listener", timeout);
     
     // Only join announce thread if it exists (it won't exist if we have no SSH server key)
     if let Some(thread) = announce_thread {
-        let _ = thread.join().map_err(|_| {
-            if start.elapsed() >= timeout {
-                eprintln!("  Announcer thread did not stop cleanly");
-            }
-        });
+        join_with_timeout(thread, "Announcer", timeout);
     }
     
     println!("Done.");
@@ -461,50 +468,17 @@ fn main() {
     println!("\n== {} new, 0 updated, 0 missing ==", new_count);
 }
 
-/// Start beacon listener thread - continuous mode with short timeout
+/// Start beacon listener thread - continuous mode with short timeout.
+/// Delegates to listen_beacons_continuous, which verifies each beacon's
+/// signature, age and IP consistency before forwarding it.
 fn start_beacon_listener(
     port: u16,
     running: Arc<AtomicBool>,
-    sender: mpsc::Sender<BeaconDevice>
+    sender: mpsc::Sender<BeaconDevice>,
+    local_ssh_public_key: String,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
-        let sock = match std::net::UdpSocket::bind(("0.0.0.0", port)) {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("WARNING: cannot listen on UDP port {} ({}) — beacons ignored", port, e);
-                return;
-            }
-        };
-        let _ = sock.set_read_timeout(Some(Duration::from_millis(200)));
-        let mut buf = [0u8; 4096];
-        
-        while running.load(Ordering::Relaxed) {
-            match sock.recv_from(&mut buf) {
-                Ok((n, _)) => {
-                    let text = String::from_utf8_lossy(&buf[..n]);
-                    let parts: Vec<&str> = text.split('\t').collect();
-                    
-                    // Format: name\tsigning_public_key_b64\tssh_public_key\tip\tport\ttimestamp\tsignature_b64
-                    if parts.len() == 7 {
-                        let device = BeaconDevice {
-                            name: parts[0].to_string(),
-                            signing_public_key: parts[1].to_string(),
-                            ssh_public_key: parts[2].to_string(),
-                            ip: parts[3].to_string(),
-                            port: parts[4].parse().unwrap_or(22),
-                            timestamp: parts[5].to_string(),
-                            signature: parts[6].to_string(),
-                        };
-                        if sender.send(device).is_err() {
-                            break;
-                        }
-                    }
-                }
-                Err(_) => {
-                    std::thread::sleep(Duration::from_millis(10));
-                }
-            }
-        }
+        listen_beacons_continuous(port, sender, local_ssh_public_key, running);
     })
 }
 
@@ -522,9 +496,37 @@ fn start_beacon_announcer(
     let interfaces = get_local_interfaces();
     thread::spawn(move || {
         while running.load(Ordering::Relaxed) {
-            announce_beacon(port, secs, &name, &ssh_public_key, &ip, ssh_port, &signing_key, &interfaces);
+            announce_beacon(port, secs, &name, &ssh_public_key, &ip, ssh_port, &signing_key, &interfaces, Some(&running));
             std::thread::sleep(Duration::from_secs(2));
         }
     })
+}
+
+/// Reload device configuration from disk (e.g. after a git refresh pulled new
+/// device files) and rebuild the lookup maps used by the interactive loop.
+fn reload_known_devices(
+    known_keys: &mut HashSet<String>,
+    key_to_machine: &mut HashMap<String, Machine>,
+) {
+    let conf = load_config();
+    *known_keys = conf.machines.iter().map(|m| m.ssh_public_key.clone()).collect();
+    *key_to_machine = conf.machines
+        .iter()
+        .map(|m| (m.ssh_public_key.clone(), m.clone()))
+        .collect();
+}
+
+/// Wait for a thread to finish, at most `timeout`.
+/// Warns if the thread is still running when the timeout expires; the thread
+/// is then left to finish on its own (the process exits when main returns).
+fn join_with_timeout(handle: thread::JoinHandle<()>, name: &str, timeout: Duration) {
+    let (done_tx, done_rx) = mpsc::channel::<()>();
+    let _waiter = thread::spawn(move || {
+        let _ = handle.join();
+        let _ = done_tx.send(());
+    });
+    if done_rx.recv_timeout(timeout).is_err() {
+        eprintln!("  {} thread did not stop within {}s", name, timeout.as_secs());
+    }
 }
 
