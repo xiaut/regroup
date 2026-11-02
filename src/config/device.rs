@@ -19,17 +19,17 @@ pub fn load_device_file(path: &Path) -> Result<Machine, String> {
         Ok(t) => t,
         Err(e) => return Err(format!("cannot read: {}", e)),
     };
-    
+
     let root: Value = match serde_json::from_str(&text) {
         Ok(v) => v,
         Err(e) => return Err(format!("invalid JSON: {}", e)),
     };
-    
+
     let obj = match root.as_object() {
         Some(o) => o,
         None => return Err(format!("top-level value must be a JSON object")),
     };
-    
+
     let name = match obj.get("name") {
         Some(v) => match v.as_str() {
             Some(s) => s.trim().to_string(),
@@ -37,7 +37,10 @@ pub fn load_device_file(path: &Path) -> Result<Machine, String> {
         },
         None => {
             // Try to get name from filename
-            let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("unknown");
+            let filename = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown");
             if let Some(name) = filename.strip_suffix(".json") {
                 name.to_string()
             } else {
@@ -45,7 +48,7 @@ pub fn load_device_file(path: &Path) -> Result<Machine, String> {
             }
         }
     };
-    
+
     let ssh_public_key = match obj.get("ssh_public_key") {
         Some(v) => match v.as_str() {
             Some(s) => SshPublicKey::from(s.trim()),
@@ -53,7 +56,7 @@ pub fn load_device_file(path: &Path) -> Result<Machine, String> {
         },
         None => return Err(format!("\"ssh_public_key\" is required")),
     };
-    
+
     let user = match obj.get("user") {
         Some(v) => match v.as_str() {
             Some(s) => s.trim().to_string(),
@@ -69,7 +72,7 @@ pub fn load_device_file(path: &Path) -> Result<Machine, String> {
         },
         None => return Err(format!("\"signing_public_key\" is required")),
     };
-    
+
     let (port, port_explicit) = match obj.get("port") {
         None => (22u16, false),
         Some(v) => {
@@ -78,14 +81,12 @@ pub fn load_device_file(path: &Path) -> Result<Machine, String> {
                 None => return Err(format!("\"port\" must be an integer")),
             };
             if n < 1 || n > 65535 {
-                return Err(format!(
-                    "\"port\" must be between 1 and 65535"
-                ));
+                return Err(format!("\"port\" must be between 1 and 65535"));
             }
             (n as u16, true)
         }
     };
-    
+
     let machine = Machine {
         name,
         ssh_public_key,
@@ -94,28 +95,43 @@ pub fn load_device_file(path: &Path) -> Result<Machine, String> {
         port,
         port_explicit,
     };
-    
+
     // Validate the machine configuration
     validate_machine(&machine)?;
-    
+
     Ok(machine)
 }
 
 /// Save a device configuration to a JSON file
 pub fn save_device_file(path: &Path, machine: &Machine) -> io::Result<()> {
     let mut obj = serde_json::Map::new();
-    obj.insert("name".to_string(), serde_json::Value::String(machine.name.clone()));
-    obj.insert("ssh_public_key".to_string(), serde_json::Value::String(machine.ssh_public_key.0.clone()));
-    obj.insert("signing_public_key".to_string(), serde_json::Value::String(machine.signing_public_key.0.clone()));
-    
+    obj.insert(
+        "name".to_string(),
+        serde_json::Value::String(machine.name.clone()),
+    );
+    obj.insert(
+        "ssh_public_key".to_string(),
+        serde_json::Value::String(machine.ssh_public_key.0.clone()),
+    );
+    obj.insert(
+        "signing_public_key".to_string(),
+        serde_json::Value::String(machine.signing_public_key.0.clone()),
+    );
+
     if !machine.user.is_empty() {
-        obj.insert("user".to_string(), serde_json::Value::String(machine.user.clone()));
+        obj.insert(
+            "user".to_string(),
+            serde_json::Value::String(machine.user.clone()),
+        );
     }
-    
+
     if machine.port_explicit {
-        obj.insert("port".to_string(), serde_json::Value::Number(machine.port.into()));
+        obj.insert(
+            "port".to_string(),
+            serde_json::Value::Number(machine.port.into()),
+        );
     }
-    
+
     let value = serde_json::Value::Object(obj);
     fs::write(path, serde_json::to_string_pretty(&value)?)?;
     Ok(())

@@ -46,13 +46,16 @@ use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::Duration;
 
-use cli::{add_device_to_config, device_name_taken, die, refresh_git, run_selftest, setup_cd, trust_new_signing_key, unique_device_name, usage};
-use config::{load_config, Machine};
-use discovery::beacon::{announce_beacon, listen_beacons_continuous, BeaconDevice};
+use cli::{
+    add_device_to_config, device_name_taken, die, refresh_git, run_selftest, setup_cd,
+    trust_new_signing_key, unique_device_name, usage,
+};
+use config::{Machine, load_config};
+use discovery::beacon::{BeaconDevice, announce_beacon, listen_beacons_continuous};
+use discovery::{get_local_interfaces, host_name, my_ip};
 use ssh::config::update_block;
 use ssh::keys::{SigningPublicKeyB64, SshPublicKey};
 use ssh::public_key;
-use discovery::{get_local_interfaces, host_name, my_ip};
 
 fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
@@ -137,7 +140,7 @@ fn main() {
     // and should NOT announce itself (as it cannot accept SSH connections anyway).
     let local_name = host_name();
     let local_ip = my_ip();
-    
+
     // Get SSH server PUBLIC KEY (full key, not fingerprint) - this is the UNIQUE identifier for this machine
     // Returns None if no SSH server is installed/configured
     // NOTE: We use get_ssh_server_public_key() NOT get_ssh_server_fingerprint()
@@ -147,9 +150,15 @@ fn main() {
         None => {
             // No SSH server public key found - device cannot accept SSH connections
             // and cannot be uniquely identified - do NOT announce
-            eprintln!("WARNING: No SSH server host key found. This device will NOT announce itself.");
-            eprintln!("         Other devices can still discover and connect to this machine if they have its IP.");
-            eprintln!("         To fix: Install and configure an SSH server (e.g., 'pkg install openssh' in Termux).");
+            eprintln!(
+                "WARNING: No SSH server host key found. This device will NOT announce itself."
+            );
+            eprintln!(
+                "         Other devices can still discover and connect to this machine if they have its IP."
+            );
+            eprintln!(
+                "         To fix: Install and configure an SSH server (e.g., 'pkg install openssh' in Termux)."
+            );
             SshPublicKey::from("") // Empty key signals "do not announce"
         }
     };
@@ -163,25 +172,28 @@ fn main() {
                 &local_public_key.as_str()[..16.min(local_public_key.as_str().len())]
             );
         } else {
-            println!("  . this machine: {} / {} (NO SSH SERVER - not announcing)",
+            println!(
+                "  . this machine: {} / {} (NO SSH SERVER - not announcing)",
                 local_name,
-                local_ip.as_deref().unwrap_or("unknown IP"));
+                local_ip.as_deref().unwrap_or("unknown IP")
+            );
         }
     }
 
     // --- Continuous interactive mode ---
-    
+
     // Create channel for beacon notifications
     let (tx, rx) = mpsc::channel::<BeaconDevice>();
-    
+
     // Flag to signal threads to stop
     let running = Arc::new(AtomicBool::new(true));
     let running_listener = running.clone();
     let running_announcer = running.clone();
-    
+
     // SSH port this machine's server listens on: taken from our own device config
     // (set by the user if the server does not use the default 22), 22 otherwise.
-    let local_ssh_port = conf.machines
+    let local_ssh_port = conf
+        .machines
         .iter()
         .find(|m| m.name == local_name)
         .map(|m| m.port)
@@ -190,8 +202,13 @@ fn main() {
     // Start beacon listener in background (always listen for other devices)
     // Signature verification, beacon age check and IP consistency check are
     // performed inside listen_beacons_continuous; only valid beacons reach the queue.
-    let listen_thread = start_beacon_listener(conf.udp_port, running_listener, tx.clone(), local_public_key.clone());
-    
+    let listen_thread = start_beacon_listener(
+        conf.udp_port,
+        running_listener,
+        tx.clone(),
+        local_public_key.clone(),
+    );
+
     // Start beacon announcer in background - only if we have a valid SSH server key
     // Without a server key, announcing is pointless as we cannot be contacted via SSH
     let announce_thread = if !local_public_key.is_empty() {
@@ -222,50 +239,53 @@ fn main() {
     };
 
     // Build lookup maps from config
-    let mut known_keys: HashSet<SshPublicKey> = conf.machines
+    let mut known_keys: HashSet<SshPublicKey> = conf
+        .machines
         .iter()
         .map(|m| m.ssh_public_key.clone())
         .collect();
-    
+
     // Map from SSH public key to machine info for known devices
-    let mut key_to_machine: HashMap<SshPublicKey, Machine> = conf.machines
+    let mut key_to_machine: HashMap<SshPublicKey, Machine> = conf
+        .machines
         .iter()
         .map(|m| (m.ssh_public_key.clone(), m.clone()))
         .collect();
-    
+
     // Pinned Ed25519 signing keys (feature D): machines are keyed by their SSH
     // public key, and their beacons must be signed with the signing key pinned
     // at first acceptance. A different key means reinstall (ask the user) or
     // spoofing (reject).
-    let mut pinned_signing_keys: HashMap<SshPublicKey, SigningPublicKeyB64> = conf.machines
+    let mut pinned_signing_keys: HashMap<SshPublicKey, SigningPublicKeyB64> = conf
+        .machines
         .iter()
         .map(|m| (m.ssh_public_key.clone(), m.signing_public_key.clone()))
         .collect();
-    
+
     // Signing keys the user explicitly refused (rotation declined)
     let mut rejected_signing_keys: HashSet<(SshPublicKey, SigningPublicKeyB64)> = HashSet::new();
-    
+
     // Device currently prompting for a new signing key (reinstall or spoofing)
     let mut rotation_pending: Option<BeaconDevice> = None;
-    
+
     // Queue for pending devices to confirm
     let mut pending_devices: VecDeque<BeaconDevice> = VecDeque::new();
-    
+
     // Track pending devices by public key to prevent duplicates
     let mut pending_keys: HashSet<SshPublicKey> = HashSet::new();
-    
+
     // Track last known IP for known devices to avoid redundant notifications
     let mut known_ip: HashMap<SshPublicKey, String> = HashMap::new();
-    
+
     // Track rejected devices to avoid re-asking
     let mut rejected_keys: HashSet<SshPublicKey> = HashSet::new();
-    
+
     // Statistics
     let mut new_count = 0;
-    
+
     // Channel for user input (non-blocking)
     let (cmd_tx, cmd_rx) = mpsc::channel::<String>();
-    
+
     // Spawn stdin reader thread - reads all input and sends via channel
     let _stdin_thread = thread::spawn(move || {
         let mut input = String::new();
@@ -286,15 +306,15 @@ fn main() {
     // Timer to control how often we re-display the current question prompt
     let mut last_prompt_time = std::time::Instant::now();
     const PROMPT_REPEAT_INTERVAL: Duration = Duration::from_secs(2);
-    
+
     // Device waiting for the user to pick a new name (device, suggested name).
     // Set when the user accepts a device whose name is already taken; the next
     // input line is then interpreted as the new name instead of a command.
     let mut rename_state: Option<(BeaconDevice, String)> = None;
-    
+
     // State for waiting prompt (to avoid duplicate waiting messages)
     let mut waiting_prompt_shown = false;
-    
+
     // Main interactive loop
     println!("\nListening for devices on UDP port {}...", conf.udp_port);
     println!("Press 'r' to refresh git, 'q' to quit.");
@@ -311,25 +331,41 @@ fn main() {
                 if device.ssh_public_key == local_public_key {
                     continue;
                 }
-                
+
                 // Signing key pinning: a beacon from a known machine must be
                 // signed with the key pinned when it was accepted.
                 if let Some(pinned) = pinned_signing_keys.get(&device.ssh_public_key) {
                     if pinned.as_str() != device.signing_public_key.as_str() {
                         // Either the machine was reinstalled (regroup
                         // regenerated its signing keys) or this is spoofing.
-                        let pair = (device.ssh_public_key.clone(), device.signing_public_key.clone());
+                        let pair = (
+                            device.ssh_public_key.clone(),
+                            device.signing_public_key.clone(),
+                        );
                         if !rejected_signing_keys.contains(&pair) && rotation_pending.is_none() {
                             if dry_run {
-                                eprintln!("\n[DRY RUN] {} announces with a NEW signing key — would ask to trust it", device.name);
+                                eprintln!(
+                                    "\n[DRY RUN] {} announces with a NEW signing key — would ask to trust it",
+                                    device.name
+                                );
                             } else {
-                                eprintln!("\n[!] {} announces with a NEW signing key (expected: {}…, received: {}…)",
+                                eprintln!(
+                                    "\n[!] {} announces with a NEW signing key (expected: {}…, received: {}…)",
                                     device.name,
                                     &pinned.as_str()[..8.min(pinned.as_str().len())],
-                                    &device.signing_public_key.as_str()[..8.min(device.signing_public_key.as_str().len())]);
-                                println!("    This is expected after a reinstall (regroup regenerates its signing keys).");
-                                println!("    If you do not expect a reinstall, this may be spoofing.");
-                                print!("    Trust the new signing key for {}? [y/N]: ", device.name);
+                                    &device.signing_public_key.as_str()
+                                        [..8.min(device.signing_public_key.as_str().len())]
+                                );
+                                println!(
+                                    "    This is expected after a reinstall (regroup regenerates its signing keys)."
+                                );
+                                println!(
+                                    "    If you do not expect a reinstall, this may be spoofing."
+                                );
+                                print!(
+                                    "    Trust the new signing key for {}? [y/N]: ",
+                                    device.name
+                                );
                                 io::stdout().flush().ok();
                                 last_prompt_time = std::time::Instant::now();
                                 rotation_pending = Some(device);
@@ -338,7 +374,7 @@ fn main() {
                         continue;
                     }
                 }
-                
+
                 // Check if this is a known device
                 if known_keys.contains(&device.ssh_public_key) {
                     // Check if IP changed before notifying
@@ -353,29 +389,48 @@ fn main() {
                     // machine's key (spoofing/MITM): keep the last verified IP.
                     if let Some(machine) = key_to_machine.get(&device.ssh_public_key) {
                         if !dry_run {
-                            let verified = match public_key::compute_fingerprint_from_public_key(machine.ssh_public_key.as_str()) {
-                                Some(expected) => match public_key::verify_and_add_to_known_hosts(&device.ip, device.port, &expected) {
+                            let verified = match public_key::compute_fingerprint_from_public_key(
+                                machine.ssh_public_key.as_str(),
+                            ) {
+                                Some(expected) => match public_key::verify_and_add_to_known_hosts(
+                                    &device.ip,
+                                    device.port,
+                                    &expected,
+                                ) {
                                     public_key::HostKeyVerification::Success => true,
                                     public_key::HostKeyVerification::HostUnreachable => {
-                                        println!("\n[~] Known device: {} at {} — unreachable, keeping last verified IP",
-                                            machine.name, device.ip);
+                                        println!(
+                                            "\n[~] Known device: {} at {} — unreachable, keeping last verified IP",
+                                            machine.name, device.ip
+                                        );
                                         false
                                     }
                                     public_key::HostKeyVerification::WriteError => {
                                         // Verification passed; only the known_hosts write failed
-                                        eprintln!("WARNING: could not write {} to ~/.ssh/known_hosts", machine.name);
+                                        eprintln!(
+                                            "WARNING: could not write {} to ~/.ssh/known_hosts",
+                                            machine.name
+                                        );
                                         true
                                     }
-                                    public_key::HostKeyVerification::FingerprintMismatch { expected, actual } => {
-                                        eprintln!("\n[!] SECURITY: {} announces IP {} but serves a DIFFERENT host key — possible spoofing/MITM. SSH config NOT updated.",
-                                            machine.name, device.ip);
+                                    public_key::HostKeyVerification::FingerprintMismatch {
+                                        expected,
+                                        actual,
+                                    } => {
+                                        eprintln!(
+                                            "\n[!] SECURITY: {} announces IP {} but serves a DIFFERENT host key — possible spoofing/MITM. SSH config NOT updated.",
+                                            machine.name, device.ip
+                                        );
                                         eprintln!("    expected fingerprint: {}", expected);
                                         eprintln!("    actual fingerprint:   {}", actual);
                                         false
                                     }
                                 },
                                 None => {
-                                    eprintln!("WARNING: cannot compute fingerprint of {}'s host key — keeping last verified IP", machine.name);
+                                    eprintln!(
+                                        "WARNING: cannot compute fingerprint of {}'s host key — keeping last verified IP",
+                                        machine.name
+                                    );
                                     false
                                 }
                             };
@@ -388,8 +443,10 @@ fn main() {
                                     machine.port,
                                     machine.port_explicit,
                                 );
-                                println!("\n[~] Known device: {} at {} (IP updated, host key verified)", 
-                                    machine.name, device.ip);
+                                println!(
+                                    "\n[~] Known device: {} at {} (IP updated, host key verified)",
+                                    machine.name, device.ip
+                                );
                             }
                             // Remember this IP either way, so we do not
                             // re-attempt (and re-warn about) the same IP on
@@ -399,9 +456,11 @@ fn main() {
                     }
                     continue; // Don't add to pending queue
                 }
-                
+
                 // New device: check for duplicates in pending queue and rejected list
-                if !pending_keys.contains(&device.ssh_public_key) && !rejected_keys.contains(&device.ssh_public_key) {
+                if !pending_keys.contains(&device.ssh_public_key)
+                    && !rejected_keys.contains(&device.ssh_public_key)
+                {
                     pending_keys.insert(device.ssh_public_key.clone());
                     pending_devices.push_back(device);
                     if !dry_run {
@@ -411,9 +470,13 @@ fn main() {
                         } else {
                             added_device.ssh_public_key.to_string()
                         };
-                        println!("\n[!] New device: {} ({}) - key: {}", 
-                            added_device.name, added_device.ip, key_preview);
-                        println!("    Type 'y' to add, 'N' to skip, 'r' to refresh git, 'q' to quit");
+                        println!(
+                            "\n[!] New device: {} ({}) - key: {}",
+                            added_device.name, added_device.ip, key_preview
+                        );
+                        println!(
+                            "    Type 'y' to add, 'N' to skip, 'r' to refresh git, 'q' to quit"
+                        );
                     }
                 }
             }
@@ -425,7 +488,7 @@ fn main() {
 
         // Check for user commands from stdin
         let user_command = cmd_rx.try_recv();
-        
+
         // If we are waiting for the user to pick a new name for a device,
         // the next input line is that name (empty = suggested name).
         // Only reachable in interactive mode: dry run never adds devices.
@@ -444,13 +507,22 @@ fn main() {
                     rename_state = None;
                 } else {
                     let (device, suggested) = rename_state.take().unwrap();
-                    let name = if input.is_empty() { suggested } else { input.to_string() };
+                    let name = if input.is_empty() {
+                        suggested
+                    } else {
+                        input.to_string()
+                    };
                     if device_name_taken(&name, &home, &ssh_config) {
-                        println!("  ! '{}' is also already used by another machine or an existing ~/.ssh/config entry.", name);
+                        println!(
+                            "  ! '{}' is also already used by another machine or an existing ~/.ssh/config entry.",
+                            name
+                        );
                         let new_suggested = unique_device_name(&name, &home, &ssh_config);
                         println!("    Pick another name (empty = {}):", new_suggested);
                         rename_state = Some((device, new_suggested));
-                    } else if let Some(machine) = add_device_to_config(&home, &ssh_config, &device, &name, &mut new_count) {
+                    } else if let Some(machine) =
+                        add_device_to_config(&home, &ssh_config, &device, &name, &mut new_count)
+                    {
                         // Remember the machine under its final name so future
                         // beacons update the right ~/.ssh/config block.
                         known_keys.insert(device.ssh_public_key.clone());
@@ -472,12 +544,24 @@ fn main() {
                 let device = rotation_pending.take().unwrap();
                 let input = input.trim().to_lowercase();
                 if input == "y" || input == "yes" {
-                    pinned_signing_keys.insert(device.ssh_public_key.clone(), device.signing_public_key.clone());
+                    pinned_signing_keys.insert(
+                        device.ssh_public_key.clone(),
+                        device.signing_public_key.clone(),
+                    );
                     trust_new_signing_key(&home, &device);
-                    println!("  + New signing key for {} trusted — its next beacon will be processed normally.", device.name);
+                    println!(
+                        "  + New signing key for {} trusted — its next beacon will be processed normally.",
+                        device.name
+                    );
                 } else {
-                    rejected_signing_keys.insert((device.ssh_public_key.clone(), device.signing_public_key.clone()));
-                    println!("  New signing key for {} rejected — its beacons are ignored.", device.name);
+                    rejected_signing_keys.insert((
+                        device.ssh_public_key.clone(),
+                        device.signing_public_key.clone(),
+                    ));
+                    println!(
+                        "  New signing key for {} rejected — its beacons are ignored.",
+                        device.name
+                    );
                 }
             }
         } else
@@ -492,7 +576,7 @@ fn main() {
                     io::stdout().flush().ok();
                     last_prompt_time = std::time::Instant::now();
                 }
-                
+
                 // Process user command if available
                 if let Ok(input) = user_command {
                     last_prompt_time = std::time::Instant::now();
@@ -506,15 +590,28 @@ fn main() {
                             // If the name is already used by another machine,
                             // ask the user to pick a new one.
                             if device_name_taken(&device_name, &home, &ssh_config) {
-                                println!("\n  ! Name '{}' is already used by another machine or an existing ~/.ssh/config entry.", device_name);
-                                let suggested = unique_device_name(&device_name, &home, &ssh_config);
+                                println!(
+                                    "\n  ! Name '{}' is already used by another machine or an existing ~/.ssh/config entry.",
+                                    device_name
+                                );
+                                let suggested =
+                                    unique_device_name(&device_name, &home, &ssh_config);
                                 print!("  New name for this device (empty = {}): ", suggested);
                                 io::stdout().flush().ok();
                                 last_prompt_time = std::time::Instant::now();
                                 rename_state = Some((device, suggested));
-                            } else if let Some(machine) = add_device_to_config(&home, &ssh_config, &device, &device_name, &mut new_count) {
+                            } else if let Some(machine) = add_device_to_config(
+                                &home,
+                                &ssh_config,
+                                &device,
+                                &device_name,
+                                &mut new_count,
+                            ) {
                                 // Pin the signing key the device used when accepted
-                                pinned_signing_keys.insert(device_ssh_public_key.clone(), machine.signing_public_key.clone());
+                                pinned_signing_keys.insert(
+                                    device_ssh_public_key.clone(),
+                                    machine.signing_public_key.clone(),
+                                );
                                 known_keys.insert(device_ssh_public_key.clone());
                                 key_to_machine.insert(device_ssh_public_key.clone(), machine);
                                 known_ip.insert(device_ssh_public_key.clone(), device.ip.clone());
@@ -525,7 +622,11 @@ fn main() {
                             pending_keys.insert(device_ssh_public_key);
                             refresh_git(&home);
                             // A pull may have brought new device configs: reload
-                            reload_known_devices(&mut known_keys, &mut key_to_machine, &mut pinned_signing_keys);
+                            reload_known_devices(
+                                &mut known_keys,
+                                &mut key_to_machine,
+                                &mut pinned_signing_keys,
+                            );
                         }
                         "q" => {
                             println!();
@@ -547,8 +648,10 @@ fn main() {
                 } else {
                     device.ssh_public_key.to_string()
                 };
-                println!("\n[DRY RUN] New device: {} ({}) - key: {}", 
-                    device.name, device.ip, key_preview);
+                println!(
+                    "\n[DRY RUN] New device: {} ({}) - key: {}",
+                    device.name, device.ip, key_preview
+                );
                 new_count += 1;
             }
         } else {
@@ -569,7 +672,11 @@ fn main() {
                         } else {
                             refresh_git(&home);
                             // A pull may have brought new device configs: reload
-                            reload_known_devices(&mut known_keys, &mut key_to_machine, &mut pinned_signing_keys);
+                            reload_known_devices(
+                                &mut known_keys,
+                                &mut key_to_machine,
+                                &mut pinned_signing_keys,
+                            );
                         }
                     }
                     _ => {}
@@ -581,33 +688,33 @@ fn main() {
                 waiting_prompt_shown = true;
             }
         }
-        
+
         // Small delay to prevent busy waiting
         thread::sleep(Duration::from_millis(100));
     }
-    
+
     // Clean up threads
     println!("Waiting for beacon threads to stop...");
     drop(tx);
     running.store(false, Ordering::Relaxed);
-    
+
     // Wait for threads with timeout
     let timeout = Duration::from_secs(2);
     join_with_timeout(listen_thread, "Listener", timeout);
-    
+
     // Only join announce thread if it exists (it won't exist if we have no SSH server key)
     if let Some(thread) = announce_thread {
         join_with_timeout(thread, "Announcer", timeout);
     }
-    
+
     println!("Done.");
-    
+
     // Calculate final statistics
     // missing = original machines that were not seen
     // For now, we only track new (added). Updated and missing would require more complex tracking.
     // Since we're in continuous mode, we can't easily detect missing without periodic scans.
     // For updated, we'd need to track IP changes, which we're not currently doing.
-    
+
     println!("\n== {} new, 0 updated, 0 missing ==", new_count);
 }
 
@@ -639,7 +746,17 @@ fn start_beacon_announcer(
     let interfaces = get_local_interfaces();
     thread::spawn(move || {
         while running.load(Ordering::Relaxed) {
-            announce_beacon(port, secs, &name, &ssh_public_key, &ip, ssh_port, &signing_key, &interfaces, Some(&running));
+            announce_beacon(
+                port,
+                secs,
+                &name,
+                &ssh_public_key,
+                &ip,
+                ssh_port,
+                &signing_key,
+                &interfaces,
+                Some(&running),
+            );
             std::thread::sleep(Duration::from_secs(2));
         }
     })
@@ -653,12 +770,18 @@ fn reload_known_devices(
     pinned_signing_keys: &mut HashMap<SshPublicKey, SigningPublicKeyB64>,
 ) {
     let conf = load_config();
-    *known_keys = conf.machines.iter().map(|m| m.ssh_public_key.clone()).collect();
-    *key_to_machine = conf.machines
+    *known_keys = conf
+        .machines
+        .iter()
+        .map(|m| m.ssh_public_key.clone())
+        .collect();
+    *key_to_machine = conf
+        .machines
         .iter()
         .map(|m| (m.ssh_public_key.clone(), m.clone()))
         .collect();
-    *pinned_signing_keys = conf.machines
+    *pinned_signing_keys = conf
+        .machines
         .iter()
         .map(|m| (m.ssh_public_key.clone(), m.signing_public_key.clone()))
         .collect();
@@ -674,7 +797,10 @@ fn join_with_timeout(handle: thread::JoinHandle<()>, name: &str, timeout: Durati
         let _ = done_tx.send(());
     });
     if done_rx.recv_timeout(timeout).is_err() {
-        eprintln!("  {} thread did not stop within {}s", name, timeout.as_secs());
+        eprintln!(
+            "  {} thread did not stop within {}s",
+            name,
+            timeout.as_secs()
+        );
     }
 }
-

@@ -8,13 +8,13 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 
-use super::{Conf, GlobalSettings, Machine, CONFIG_DIR, DEVICES_DIR, GLOBAL_CONFIG_FILE};
 use super::device::{load_device_file, save_device_file};
 use super::settings::{load_global_settings, save_default_global_settings};
+use super::{CONFIG_DIR, Conf, DEVICES_DIR, GLOBAL_CONFIG_FILE, GlobalSettings, Machine};
 use crate::discovery::local::host_name;
+use crate::git::git_init;
 use crate::ssh::keys::SigningPublicKeyB64;
 use crate::ssh::public_key::get_ssh_server_public_key;
-use crate::git::git_init;
 
 /// Track warnings that have already been displayed to avoid duplicates
 static WARNING_TRACKER: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
@@ -41,7 +41,7 @@ fn warn(msg: &str) {
 /// Auto-create device configuration with self-detected information
 pub fn create_device_config(config_dir: &PathBuf) -> Result<Machine, String> {
     let hostname = host_name();
-    
+
     // Validate hostname
     let hostname_lower = hostname.to_lowercase();
     if hostname_lower == "localhost" || hostname_lower == "127.0.0.1" || hostname_lower == "local" {
@@ -50,7 +50,7 @@ pub fn create_device_config(config_dir: &PathBuf) -> Result<Machine, String> {
             hostname
         ));
     }
-    
+
     let ssh_public_key = get_ssh_server_public_key().ok_or_else(|| {
         "Could not detect SSH public key. Ensure SSH server is running on this machine.".to_string()
     })?;
@@ -66,10 +66,10 @@ pub fn create_device_config(config_dir: &PathBuf) -> Result<Machine, String> {
         }
         Err(e) => return Err(format!("cannot initialize signing keys: {}", e)),
     };
-    
+
     // Determine the current user
     let current_user = env::var("USER").unwrap_or_else(|_| env::var("LOGNAME").unwrap_or_default());
-    
+
     let machine = Machine {
         name: hostname.clone(),
         ssh_public_key,
@@ -78,10 +78,10 @@ pub fn create_device_config(config_dir: &PathBuf) -> Result<Machine, String> {
         port: 22,
         port_explicit: false,
     };
-    
+
     // Validate the machine configuration
     super::validation::validate_machine(&machine)?;
-    
+
     // Save to device file
     let devices_dir = config_dir.join(DEVICES_DIR);
     if !devices_dir.exists() {
@@ -89,12 +89,12 @@ pub fn create_device_config(config_dir: &PathBuf) -> Result<Machine, String> {
             return Err(format!("cannot create devices directory: {}", e));
         }
     }
-    
+
     let device_path = devices_dir.join(format!("{}.json", hostname));
     if let Err(e) = save_device_file(&device_path, &machine) {
         return Err(format!("cannot save device config: {}", e));
     }
-    
+
     Ok(machine)
 }
 
@@ -103,7 +103,7 @@ pub fn create_device_config(config_dir: &PathBuf) -> Result<Machine, String> {
 // ============================================================
 
 /// Load the complete configuration
-/// 
+///
 /// Configuration structure:
 /// ~/.regroup-config/              - Root config directory (NOT a git repo)
 ///   └── git/                      - Git repository with shared config
@@ -116,45 +116,60 @@ pub fn load_config() -> Conf {
         _ => die("HOME variable not set"),
     };
     let root_config_dir = PathBuf::from(&home).join(CONFIG_DIR);
-    
+
     // Git config directory (this IS the git repo)
     let config_dir = root_config_dir.join(super::GIT_DIR);
-    
+
     // Ensure root config directory exists
     if let Err(e) = fs::create_dir_all(&root_config_dir) {
-        die(&format!("cannot initialize config directory {}: {}", root_config_dir.display(), e));
+        die(&format!(
+            "cannot initialize config directory {}: {}",
+            root_config_dir.display(),
+            e
+        ));
     }
-    
+
     // Ensure git config directory exists and is a git repository
     if let Err(e) = fs::create_dir_all(&config_dir) {
-        die(&format!("cannot initialize git config directory {}: {}", config_dir.display(), e));
+        die(&format!(
+            "cannot initialize git config directory {}: {}",
+            config_dir.display(),
+            e
+        ));
     }
-    
+
     // Initialize git repository in the git/ subdirectory
     if let Err(e) = git_init(&config_dir) {
-        die(&format!("cannot initialize git repository in {}: {}", config_dir.display(), e));
+        die(&format!(
+            "cannot initialize git repository in {}: {}",
+            config_dir.display(),
+            e
+        ));
     }
-    
+
     // Create default settings if they don't exist
     if !config_dir.join(GLOBAL_CONFIG_FILE).exists() {
         if let Err(e) = save_default_global_settings(&config_dir) {
             die(&format!("cannot create default settings: {}", e));
         }
     }
-    
+
     // Create devices directory
     let devices_dir = config_dir.join(DEVICES_DIR);
     if let Err(e) = fs::create_dir_all(&devices_dir) {
         die(&format!("cannot create devices directory: {}", e));
     }
-    
+
     // Load global settings
-    let GlobalSettings { udp_port, wait_secs } = load_global_settings(&config_dir);
-    
+    let GlobalSettings {
+        udp_port,
+        wait_secs,
+    } = load_global_settings(&config_dir);
+
     // Load all device configurations
     let mut machines: Vec<Machine> = Vec::new();
     let devices_dir = config_dir.join(DEVICES_DIR);
-    
+
     if devices_dir.exists() {
         if let Ok(entries) = fs::read_dir(&devices_dir) {
             for entry in entries {
@@ -170,16 +185,18 @@ pub fn load_config() -> Conf {
             }
         }
     }
-    
+
     // Check if current machine's config exists, if not create it
     let local_hostname = host_name();
     let local_ssh_public_key = get_ssh_server_public_key();
-    
+
     let current_machine_exists = machines.iter().any(|m| {
-        m.name == local_hostname || 
-        (local_ssh_public_key.as_ref().map_or(false, |k| &m.ssh_public_key == k))
+        m.name == local_hostname
+            || (local_ssh_public_key
+                .as_ref()
+                .map_or(false, |k| &m.ssh_public_key == k))
     });
-    
+
     if !current_machine_exists {
         // Auto-create this device's configuration
         match create_device_config(&config_dir) {
@@ -191,17 +208,17 @@ pub fn load_config() -> Conf {
             }
         }
     }
-    
+
     // Sort machines by name for consistent ordering
     machines.sort_by(|a, b| a.name.cmp(&b.name));
-    
+
     if machines.is_empty() {
         warn(&format!(
             "no devices configured in {} — first device will be auto-created on first run",
             config_dir.display()
         ));
     }
-    
+
     Conf {
         udp_port,
         wait_secs,

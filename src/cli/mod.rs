@@ -7,13 +7,13 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
-use crate::config::{load_config, CONFIG_DIR, DEVICES_DIR, GIT_DIR, Machine};
-use crate::discovery::host_name;
-use crate::discovery::beacon::BeaconDevice;
 use crate::config::device::save_device_file;
+use crate::config::{CONFIG_DIR, DEVICES_DIR, GIT_DIR, Machine, load_config};
+use crate::discovery::beacon::BeaconDevice;
+use crate::discovery::host_name;
+use crate::git::{self, sync::git_add_and_commit_file};
 use crate::ssh::config::update_block;
 use crate::ssh::public_key::{self};
-use crate::git::{self, sync::git_add_and_commit_file};
 
 // ============================================================
 // Error handling
@@ -53,7 +53,7 @@ pub fn run_selftest() -> ! {
     if Command::new("git").output().is_err() {
         tools_ok = false;
     }
-    
+
     println!(
         "ssh-keyscan/ssh-keygen/git present — {}",
         if tools_ok { "OK" } else { "FAIL" }
@@ -63,14 +63,14 @@ pub fn run_selftest() -> ! {
     // 2. test config loading with sample data
     let sample_dir = PathBuf::from("/tmp/regroup-selftest");
     let _ = fs::remove_dir_all(&sample_dir);
-    
+
     if let Err(e) = fs::create_dir_all(&sample_dir) {
         println!("temp dir creation — FAIL ({})", e);
         ok = false;
     } else {
         let devices_dir = sample_dir.join(DEVICES_DIR);
         let _ = fs::create_dir_all(&devices_dir);
-        
+
         let device_file = devices_dir.join("test.json");
         let device_config = r#"{"name": "test", "ssh_public_key": "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAAB", "signing_public_key": "MCowBQYDK2VwAyEAGXNlbGZ0ZXN0a2V5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXk=", "user": "testuser", "port": 22}"#;
         if let Err(e) = fs::write(&device_file, device_config) {
@@ -79,12 +79,15 @@ pub fn run_selftest() -> ! {
         } else {
             match crate::config::device::load_device_file(&device_file) {
                 Ok(m) => {
-                    let device_ok = m.name == "test" 
+                    let device_ok = m.name == "test"
                         && m.ssh_public_key.as_str() == "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAAB"
                         && m.user == "testuser"
                         && m.port == 22
                         && m.port_explicit;
-                    println!("device config loading — {}", if device_ok { "OK" } else { "FAIL" });
+                    println!(
+                        "device config loading — {}",
+                        if device_ok { "OK" } else { "FAIL" }
+                    );
                     ok &= device_ok;
                 }
                 Err(e) => {
@@ -93,7 +96,7 @@ pub fn run_selftest() -> ! {
                 }
             }
         }
-        
+
         let _ = fs::remove_dir_all(&sample_dir);
     }
 
@@ -141,7 +144,10 @@ pub fn run_selftest() -> ! {
         } else {
             false
         };
-        println!("host key fingerprint — {}", if fingerprint_ok { "OK" } else { "FAIL" });
+        println!(
+            "host key fingerprint — {}",
+            if fingerprint_ok { "OK" } else { "FAIL" }
+        );
         ok &= fingerprint_ok;
 
         let _ = fs::remove_file(&key_path);
@@ -155,7 +161,8 @@ pub fn run_selftest() -> ! {
 
         let mut beacons_ok = true;
         if let Ok((signing_key, _)) = signing::generate_keypair() {
-            let ssh_key = SshPublicKey::from("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAISelftestKeyNotReal");
+            let ssh_key =
+                SshPublicKey::from("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAISelftestKeyNotReal");
             match signing::sign_beacon("selftest", &ssh_key, "10.1.2.3", 22, "0", &signing_key) {
                 Ok(beacon) => {
                     // roundtrip
@@ -181,7 +188,10 @@ pub fn run_selftest() -> ! {
         } else {
             beacons_ok = false;
         }
-        println!("signed beacon verification — {}", if beacons_ok { "OK" } else { "FAIL" });
+        println!(
+            "signed beacon verification — {}",
+            if beacons_ok { "OK" } else { "FAIL" }
+        );
         ok &= beacons_ok;
     }
 
@@ -199,7 +209,6 @@ pub fn usage() {
         "regroup — find machines by their SSH host key and update ~/.ssh/config.\nDevices announce themselves via signed UDP beacons; regroup listens for them\ncontinuously and prompts for each new device.\n\nConfiguration is stored in ~/.regroup-config/git/ (a git repository) where each\ndevice has its own JSON file in the devices/ directory. Git remotes can be\nconfigured for all other devices to enable decentralized sync (press 'r' in\ninteractive mode to pull from and push to them).\n\nUsage:\n  ./regroup                continuous interactive mode, update ~/.ssh/config\n  ./regroup test           dry run: nothing is modified\n  ./regroup -v             verbose\n  ./regroup selftest       built-in checks (tools, config parsing)\n  ./regroup setup-cd       install 'regroup-cd' shell function to change to config directory\n  ./regroup -h             this help\n\nInteractive commands:\n  y/N             - add or skip the current device\n  r               - refresh git (pull from remotes, push to remotes)\n  q               - quit the program\n\nConfig repository structure (~/.regroup-config/git/):\n  settings.json           (optional: udp_port, wait_secs)\n  devices/\n    <hostname>.json       (each device's config: name, ssh_public_key, user, port)\n\nExit codes:\n  0  normal exit\n  1  selftest failure\n  2  configuration or environment error"
     );
 }
-
 
 // ============================================================
 // Setup CD command
@@ -243,7 +252,9 @@ pub fn setup_cd() -> ! {
     // Find the line with "case $- in" (non-interactive shell check)
     // We want to insert BEFORE this block so the function is available even when
     // the shell returns early for non-interactive sessions
-    let case_line_index = new_content.lines().position(|line| line.contains("case $- in"));
+    let case_line_index = new_content
+        .lines()
+        .position(|line| line.contains("case $- in"));
 
     // Add the function definition before the case block, or at the end
     let final_content = if let Some(idx) = case_line_index {
@@ -265,15 +276,26 @@ pub fn setup_cd() -> ! {
         Ok(_) => {
             println!(
                 "✓ 'regroup-cd' function installed in ~/{}",
-                config_file.file_name().unwrap_or_default().to_string_lossy()
+                config_file
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
             );
-            println!("Run 'source ~/{}' or open a new terminal to start using it.",
-                config_file.file_name().unwrap_or_default().to_string_lossy());
+            println!(
+                "Run 'source ~/{}' or open a new terminal to start using it.",
+                config_file
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+            );
             println!("Use: regroup-cd");
         }
         Err(e) => die(&format!(
             "Cannot write to ~/{}: {}",
-            config_file.file_name().unwrap_or_default().to_string_lossy(),
+            config_file
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy(),
             e
         )),
     }
@@ -300,7 +322,10 @@ fn ssh_config_has_host(ssh_content: &str, name: &str) -> bool {
 
 /// Path of the regroup config devices directory for the given home.
 fn devices_dir_for(home: &str) -> PathBuf {
-    PathBuf::from(home).join(CONFIG_DIR).join(GIT_DIR).join(DEVICES_DIR)
+    PathBuf::from(home)
+        .join(CONFIG_DIR)
+        .join(GIT_DIR)
+        .join(DEVICES_DIR)
 }
 
 /// Check whether a device name is already used by another machine.
@@ -312,10 +337,20 @@ fn devices_dir_for(home: &str) -> PathBuf {
 ///   or configured by the user for an unrelated host.
 pub fn device_name_taken(name: &str, home: &str, ssh_config: &PathBuf) -> bool {
     let ssh_content = fs::read_to_string(ssh_config).unwrap_or_default();
-    name_taken(name, &ssh_content, &devices_dir_for(home), &load_config().machines)
+    name_taken(
+        name,
+        &ssh_content,
+        &devices_dir_for(home),
+        &load_config().machines,
+    )
 }
 
-fn name_taken(name: &str, ssh_content: &str, devices_dir: &PathBuf, known_machines: &[Machine]) -> bool {
+fn name_taken(
+    name: &str,
+    ssh_content: &str,
+    devices_dir: &PathBuf,
+    known_machines: &[Machine],
+) -> bool {
     known_machines.iter().any(|m| m.name == name)
         || devices_dir.join(format!("{}.json", name)).exists()
         || ssh_config_has_host(ssh_content, name)
@@ -332,7 +367,14 @@ pub fn unique_device_name(desired: &str, home: &str, ssh_config: &PathBuf) -> St
         return desired.to_string();
     }
     let mut n = 2;
-    while n < 1000 && name_taken(&format!("{}-{}", desired, n), &ssh_content, &devices_dir, &known_machines) {
+    while n < 1000
+        && name_taken(
+            &format!("{}-{}", desired, n),
+            &ssh_content,
+            &devices_dir,
+            &known_machines,
+        )
+    {
         n += 1;
     }
     format!("{}-{}", desired, n)
@@ -357,13 +399,13 @@ pub fn add_device_to_config(
 ) -> Option<Machine> {
     let config_dir = PathBuf::from(home).join(CONFIG_DIR).join(GIT_DIR);
     let devices_dir = config_dir.join(DEVICES_DIR);
-    
+
     // Ensure devices directory exists
     if let Err(e) = fs::create_dir_all(&devices_dir) {
         warn(&format!("could not create devices directory: {}", e));
         return None;
     }
-    
+
     let device_path = devices_dir.join(format!("{}.json", name));
     // The beacon explicitly carries the device's SSH port: mark it explicit so
     // ~/.ssh/config and the device file keep it (e.g. Termux port 8022).
@@ -377,56 +419,87 @@ pub fn add_device_to_config(
         port: device.port,
         port_explicit: true,
     };
-    
+
     // SECURITY: verify that the host key announced in the beacon is really
     // served by the SSH server at the announced ip:port, BEFORE writing
     // anything. A mismatch means a forged beacon or a MITM: refuse the device.
     match public_key::compute_fingerprint_from_public_key(device.ssh_public_key.as_str()) {
-        Some(expected) => match public_key::verify_and_add_to_known_hosts(&device.ip, device.port, &expected) {
-            public_key::HostKeyVerification::Success => {
-                println!("  + Added {} to ~/.ssh/known_hosts (host key verified)", name);
+        Some(expected) => {
+            match public_key::verify_and_add_to_known_hosts(&device.ip, device.port, &expected) {
+                public_key::HostKeyVerification::Success => {
+                    println!(
+                        "  + Added {} to ~/.ssh/known_hosts (host key verified)",
+                        name
+                    );
+                }
+                public_key::HostKeyVerification::HostUnreachable => {
+                    // Host unreachable: we cannot verify. Do not pin anything;
+                    // ssh will ask the user on first connection.
+                    warn(&format!(
+                        "{} unreachable at {} — host key not verified, ssh will ask on first connection",
+                        name, device.ip
+                    ));
+                }
+                public_key::HostKeyVerification::WriteError => {
+                    warn(&format!("could not write {} to ~/.ssh/known_hosts", name));
+                }
+                public_key::HostKeyVerification::FingerprintMismatch { expected, actual } => {
+                    eprintln!();
+                    eprintln!(
+                        "[!] SECURITY: {} announces key {} at {}",
+                        name,
+                        &device.ssh_public_key.as_str()
+                            [..16.min(device.ssh_public_key.as_str().len())],
+                        device.ip
+                    );
+                    eprintln!(
+                        "    but the server there serves a DIFFERENT host key — possible spoofing or MITM."
+                    );
+                    eprintln!("    expected fingerprint: {}", expected);
+                    eprintln!("    actual fingerprint:   {}", actual);
+                    eprintln!("    Device NOT added.");
+                    return None;
+                }
             }
-            public_key::HostKeyVerification::HostUnreachable => {
-                // Host unreachable: we cannot verify. Do not pin anything;
-                // ssh will ask the user on first connection.
-                warn(&format!(
-                    "{} unreachable at {} — host key not verified, ssh will ask on first connection",
-                    name, device.ip
-                ));
-            }
-            public_key::HostKeyVerification::WriteError => {
-                warn(&format!("could not write {} to ~/.ssh/known_hosts", name));
-            }
-            public_key::HostKeyVerification::FingerprintMismatch { expected, actual } => {
-                eprintln!();
-                eprintln!("[!] SECURITY: {} announces key {} at {}", name, &device.ssh_public_key.as_str()[..16.min(device.ssh_public_key.as_str().len())], device.ip);
-                eprintln!("    but the server there serves a DIFFERENT host key — possible spoofing or MITM.");
-                eprintln!("    expected fingerprint: {}", expected);
-                eprintln!("    actual fingerprint:   {}", actual);
-                eprintln!("    Device NOT added.");
-                return None;
-            }
-        },
+        }
         None => {
-            eprintln!("[!] SECURITY: {} announces a host key that is not a valid OpenSSH public key — device NOT added.", name);
+            eprintln!(
+                "[!] SECURITY: {} announces a host key that is not a valid OpenSSH public key — device NOT added.",
+                name
+            );
             return None;
         }
     }
-    
+
     match save_device_file(&device_path, &machine) {
         Ok(_) => {
             // Update SSH config
-            if let Err(e) = update_block(ssh_config, name, &device.ip, &machine.user, machine.port, machine.port_explicit) {
+            if let Err(e) = update_block(
+                ssh_config,
+                name,
+                &device.ip,
+                &machine.user,
+                machine.port,
+                machine.port_explicit,
+            ) {
                 warn(&format!("could not update SSH config for {}: {}", name, e));
             } else {
-                println!("  + Added {} -> {} (~/.ssh/config updated)", name, device.ip);
+                println!(
+                    "  + Added {} -> {} (~/.ssh/config updated)",
+                    name, device.ip
+                );
             }
-            
+
             // Commit to git so changes persist across runs
-            if let Err(e) = git_add_and_commit_file(&config_dir, &device_path, &format!("Add device {}", name)) {
-                warn(&format!("could not commit device config for {}: {}", name, e));
+            if let Err(e) =
+                git_add_and_commit_file(&config_dir, &device_path, &format!("Add device {}", name))
+            {
+                warn(&format!(
+                    "could not commit device config for {}: {}",
+                    name, e
+                ));
             }
-            
+
             *new_count += 1;
             Some(machine)
         }
@@ -451,15 +524,27 @@ pub fn trust_new_signing_key(home: &str, device: &BeaconDevice) {
         None => return,
     };
     machine.signing_public_key = device.signing_public_key.clone();
-    
+
     let config_dir = PathBuf::from(home).join(CONFIG_DIR).join(GIT_DIR);
-    let device_path = config_dir.join(DEVICES_DIR).join(format!("{}.json", machine.name));
+    let device_path = config_dir
+        .join(DEVICES_DIR)
+        .join(format!("{}.json", machine.name));
     if let Err(e) = save_device_file(&device_path, &machine) {
-        warn(&format!("could not update signing key for {}: {}", machine.name, e));
+        warn(&format!(
+            "could not update signing key for {}: {}",
+            machine.name, e
+        ));
         return;
     }
-    if let Err(e) = git_add_and_commit_file(&config_dir, &device_path, &format!("Update signing key for {}", machine.name)) {
-        warn(&format!("could not commit signing key update for {}: {}", machine.name, e));
+    if let Err(e) = git_add_and_commit_file(
+        &config_dir,
+        &device_path,
+        &format!("Update signing key for {}", machine.name),
+    ) {
+        warn(&format!(
+            "could not commit signing key update for {}: {}",
+            machine.name, e
+        ));
     }
 }
 
@@ -472,34 +557,34 @@ pub fn trust_new_signing_key(home: &str, device: &BeaconDevice) {
 pub fn refresh_git(home: &str) {
     // The git repository lives in ~/.regroup-config/git (not the root directory)
     let config_dir = PathBuf::from(home).join(CONFIG_DIR).join(GIT_DIR);
-    
+
     if !git::is_git_repo(&config_dir) {
         warn(&format!("{} is not a git repository", config_dir.display()));
         return;
     }
-    
+
     println!("\nRefreshing git...");
-    
+
     // Configure remotes for all known machines before syncing: pull/push can
     // only reach devices that already have a remote.
     let remote_errors = configure_remotes(&config_dir);
     for error in &remote_errors {
         warn(&format!("[sync] {}", error));
     }
-    
+
     // Sync with remotes (pull then push)
     let sync_errors = git::sync_with_remotes(&config_dir);
     for error in &sync_errors {
         warn(&format!("[sync] {}", error));
     }
-    
+
     // A pull may have brought device files for machines we did not know yet:
     // configure their remotes so the next refresh reaches them too.
     let remote_errors = configure_remotes(&config_dir);
     for error in &remote_errors {
         warn(&format!("[sync] {}", error));
     }
-    
+
     println!("Git refresh complete.");
 }
 
@@ -516,8 +601,7 @@ fn configure_remotes(config_dir: &PathBuf) -> Vec<String> {
         .machines
         .into_iter()
         .filter(|m| {
-            m.name != local_name
-                && local_ssh_public_key.as_ref() != Some(&m.ssh_public_key)
+            m.name != local_name && local_ssh_public_key.as_ref() != Some(&m.ssh_public_key)
         })
         .collect();
     git::refresh_git_remotes(config_dir, &machines, &local_name)

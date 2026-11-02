@@ -15,10 +15,10 @@ use std::env;
 use std::fs;
 use std::path::PathBuf;
 
-use ed25519_dalek::{Signer, Verifier, Signature, SigningKey, VerifyingKey};
+use base64::Engine as _;
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use rand_core::{OsRng, RngCore};
 use zeroize::Zeroizing;
-use base64::Engine as _;
 
 use crate::config::CONFIG_DIR;
 use crate::ssh::keys::{SignatureB64, SshPublicKey};
@@ -57,15 +57,15 @@ pub fn get_public_key_path() -> PathBuf {
 }
 
 /// Generate a new Ed25519 keypair
-/// 
+///
 /// Returns (signing_key, verifying_key) tuple
 pub fn generate_keypair() -> Result<(SigningKey, VerifyingKey), String> {
     let mut csprng = OsRng;
-    
+
     // Generate a random secret key (32 bytes)
     let mut secret_key = [0u8; 32];
     csprng.fill_bytes(&mut secret_key);
-    
+
     // Create signing key from secret key
     let signing_key = SigningKey::from_bytes(&secret_key);
     let verifying_key = signing_key.verifying_key();
@@ -73,24 +73,24 @@ pub fn generate_keypair() -> Result<(SigningKey, VerifyingKey), String> {
 }
 
 /// Save the private signing key to disk (32 bytes, binary)
-/// 
+///
 /// SECURITY: This file contains sensitive data and should NEVER be committed to git
 /// The file is stored in ~/.regroup-config/signing/signing_private_key
 pub fn save_private_key(signing_key: &SigningKey) -> Result<(), String> {
     let key_dir = get_signing_key_dir();
     let key_path = get_private_key_path();
-    
+
     // Ensure directory exists
     if let Err(e) = fs::create_dir_all(&key_dir) {
         return Err(format!("cannot create signing key directory: {}", e));
     }
-    
+
     // Save private key as binary (32 bytes - the seed)
     let private_bytes = signing_key.to_bytes();
     if let Err(e) = fs::write(&key_path, private_bytes) {
         return Err(format!("cannot write private key: {}", e));
     }
-    
+
     // Set restrictive permissions (read/write only by owner)
     #[cfg(unix)]
     {
@@ -99,52 +99,55 @@ pub fn save_private_key(signing_key: &SigningKey) -> Result<(), String> {
             return Err(format!("cannot set permissions on private key: {}", e));
         }
     }
-    
+
     Ok(())
 }
 
 /// Save the public signing key to disk (32 bytes, binary)
-/// 
+///
 /// This can be safely shared and committed to git as it's public data
 pub fn save_public_key(verifying_key: &VerifyingKey) -> Result<(), String> {
     let key_dir = get_signing_key_dir();
     let key_path = get_public_key_path();
-    
+
     // Ensure directory exists
     if let Err(e) = fs::create_dir_all(&key_dir) {
         return Err(format!("cannot create signing key directory: {}", e));
     }
-    
+
     // Save public key as binary (32 bytes)
     let public_bytes = verifying_key.to_bytes();
     if let Err(e) = fs::write(&key_path, public_bytes) {
         return Err(format!("cannot write public key: {}", e));
     }
-    
+
     Ok(())
 }
 
 /// Load the private signing key from disk
-/// 
+///
 /// Returns None if the key doesn't exist
 pub fn load_private_key() -> Option<SigningKey> {
     let key_path = get_private_key_path();
-    
+
     if !key_path.exists() {
         return None;
     }
-    
+
     let private_bytes = match fs::read(&key_path) {
         Ok(b) => b,
         Err(_) => return None,
     };
-    
+
     // Private key seed is 32 bytes
     if private_bytes.len() != 32 {
-        eprintln!("WARNING: private key has unexpected length: {}", private_bytes.len());
+        eprintln!(
+            "WARNING: private key has unexpected length: {}",
+            private_bytes.len()
+        );
         return None;
     }
-    
+
     // Try to parse the seed
     let seed = Zeroizing::new(private_bytes.try_into().ok()?);
     // SigningKey::from_bytes takes a SecretKey (&[u8; 32])
@@ -154,23 +157,26 @@ pub fn load_private_key() -> Option<SigningKey> {
 }
 
 /// Load the public signing key from disk
-/// 
+///
 /// Returns None if the key doesn't exist
 pub fn load_public_key() -> Option<VerifyingKey> {
     let key_path = get_public_key_path();
-    
+
     if !key_path.exists() {
         return None;
     }
-    
+
     let public_bytes = match fs::read(&key_path) {
         Ok(b) => b,
         Err(_) => return None,
     };
-    
+
     // Public key is 32 bytes
     if public_bytes.len() != 32 {
-        eprintln!("WARNING: public key has unexpected length: {}", public_bytes.len());
+        eprintln!(
+            "WARNING: public key has unexpected length: {}",
+            public_bytes.len()
+        );
         return None;
     }
 
@@ -212,26 +218,31 @@ pub fn verify_signature(
         Ok(b) => b,
         Err(e) => return Err(format!("invalid base64 signature: {}", e)),
     };
-    
+
     // Signature is 64 bytes
     if signature_bytes.len() != 64 {
-        return Err(format!("invalid signature length: {}", signature_bytes.len()));
+        return Err(format!(
+            "invalid signature length: {}",
+            signature_bytes.len()
+        ));
     }
-    
+
     // Signature::from_bytes takes &[u8; 64] and returns Result<Signature, SignatureError>
     // We need to convert Vec<u8> to [u8; 64]
-    let signature = Signature::from_bytes(&signature_bytes.try_into().map_err(
-        |_| "invalid signature length"
-    )?);
-    
+    let signature = Signature::from_bytes(
+        &signature_bytes
+            .try_into()
+            .map_err(|_| "invalid signature length")?,
+    );
+
     // Note: In ed25519-dalek 2.x, from_bytes may still fail for invalid signatures
     // but the error type doesn't implement Display, so we'll just use the signature
-    
+
     Ok(verifying_key.verify(message.as_bytes(), &signature).is_ok())
 }
 
 /// Sign a beacon message
-/// 
+///
 /// Creates the signed beacon string in the format:
 /// "name\tsigning_public_key_b64\tssh_public_key\tip\tport\ttimestamp\tsignature_b64"
 pub fn sign_beacon(
@@ -244,33 +255,27 @@ pub fn sign_beacon(
 ) -> Result<String, String> {
     // Create the message to sign: "name|ssh_public_key|ip|port|timestamp"
     let message = format!("{}|{}|{}|{}|{}", name, ssh_public_key, ip, port, timestamp);
-    
+
     // Sign the message
     let signature_b64 = sign_message(&message, signing_key)?;
-    
+
     // Get the verifying key from the signing key
     let verifying_key = signing_key.verifying_key();
-    
+
     // Encode the signing public key as base64
     let base64_engine = base64::engine::general_purpose::STANDARD;
     let signing_public_key_b64 = base64_engine.encode(&verifying_key.to_bytes());
-    
+
     // Create the beacon string with tab-separated fields
     // Format: name\tsigning_public_key_b64\tssh_public_key\tip\tport\ttimestamp\tsignature_b64
     Ok(format!(
         "{}\t{}\t{}\t{}\t{}\t{}\t{}",
-        name,
-        signing_public_key_b64,
-        ssh_public_key,
-        ip,
-        port,
-        timestamp,
-        signature_b64
+        name, signing_public_key_b64, ssh_public_key, ip, port, timestamp, signature_b64
     ))
 }
 
 /// Verify a beacon signature
-/// 
+///
 /// Parses a beacon string and verifies its signature
 /// Returns (name, ssh_public_key, ip, port, timestamp) if valid, or an error
 pub fn verify_beacon(
@@ -282,20 +287,25 @@ pub fn verify_beacon(
     // Expected format: name\tsigning_public_key_b64\tssh_public_key\tip\tport\ttimestamp\tsignature_b64
     // That's 7 fields total
     if parts.len() != 7 {
-        return Err(format!("invalid beacon format: expected 7 fields, got {}", parts.len()));
+        return Err(format!(
+            "invalid beacon format: expected 7 fields, got {}",
+            parts.len()
+        ));
     }
 
     let name = parts[0].to_string();
     let signing_public_key_b64 = parts[1];
     let ssh_public_key = SshPublicKey::from(parts[2]);
     let ip = parts[3].to_string();
-    let port: u16 = parts[4].parse().map_err(|_| "invalid port number".to_string())?;
+    let port: u16 = parts[4]
+        .parse()
+        .map_err(|_| "invalid port number".to_string())?;
     let timestamp = parts[5].to_string();
     let signature_b64 = SignatureB64::from(parts[6]);
-    
+
     // Decode the signing public key
     let base64_engine = base64::engine::general_purpose::STANDARD;
-    
+
     let signing_public_key_bytes = match base64_engine.decode(signing_public_key_b64) {
         Ok(b) => b,
         Err(e) => return Err(format!("invalid base64 signing public key: {}", e)),
@@ -311,7 +321,7 @@ pub fn verify_beacon(
             return Err(format!(
                 "invalid signing public key length: {} bytes (expected 32)",
                 signing_public_key_len
-            ))
+            ));
         }
     };
 
@@ -319,17 +329,17 @@ pub fn verify_beacon(
         Ok(key) => key,
         Err(e) => return Err(format!("invalid signing public key bytes: {}", e)),
     };
-    
+
     // If we have an expected signing public key, verify it matches
     if let Some(expected_key) = expected_signing_public_key {
         if signing_public_key.to_bytes() != expected_key.to_bytes() {
             return Err("signing public key mismatch".to_string());
         }
     }
-    
+
     // Reconstruct the message to verify
     let message = format!("{}|{}|{}|{}|{}", name, ssh_public_key, ip, port, timestamp);
-    
+
     // Verify the signature
     let is_valid = verify_signature(&message, &signature_b64, &signing_public_key)?;
 
@@ -350,7 +360,7 @@ pub fn signing_keys_exist() -> bool {
 }
 
 /// Initialize signing keys (generate if they don't exist)
-/// 
+///
 /// Returns (signing_key, verifying_key) tuple
 pub fn initialize_signing_keys() -> Result<(SigningKey, VerifyingKey), String> {
     if signing_keys_exist() {
@@ -364,11 +374,11 @@ pub fn initialize_signing_keys() -> Result<(SigningKey, VerifyingKey), String> {
             eprintln!("WARNING: signing key pair inconsistent, regenerating...");
         }
     }
-    
+
     // Generate new keypair
     let (signing_key, verifying_key) = generate_keypair()?;
     save_private_key(&signing_key)?;
     save_public_key(&verifying_key)?;
-    
+
     Ok((signing_key, verifying_key))
 }

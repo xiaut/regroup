@@ -18,21 +18,18 @@ pub fn git_init(repo_path: &Path) -> io::Result<()> {
     if repo_path.join(".git").exists() {
         return Ok(());
     }
-    
+
     fs::create_dir_all(repo_path)?;
-    
+
     let status = Command::new("git")
         .current_dir(repo_path)
         .arg("init")
         .status()?;
-    
+
     if !status.success() {
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
-            "git init failed",
-        ));
+        return Err(io::Error::new(io::ErrorKind::Other, "git init failed"));
     }
-    
+
     // Ensure the initial branch is "main": pull/push operations hardcode it.
     // git_init only runs on a freshly created repository (no commits yet), so
     // moving HEAD is safe even if git's default branch is "master".
@@ -52,7 +49,7 @@ pub fn git_init(repo_path: &Path) -> io::Result<()> {
                 .status();
         }
     }
-    
+
     // Configure git to allow commits without user info
     let _ = Command::new("git")
         .current_dir(repo_path)
@@ -60,14 +57,14 @@ pub fn git_init(repo_path: &Path) -> io::Result<()> {
         .arg("user.email")
         .arg("regroup@local")
         .status();
-    
+
     let _ = Command::new("git")
         .current_dir(repo_path)
         .arg("config")
         .arg("user.name")
         .arg("regroup")
         .status();
-    
+
     // Configure git to allow pushing to the currently checked-out branch
     // This is essential for decentralized sync where each device pushes to others
     let _ = Command::new("git")
@@ -76,7 +73,7 @@ pub fn git_init(repo_path: &Path) -> io::Result<()> {
         .arg("receive.denyCurrentBranch")
         .arg("updateInstead")
         .status();
-    
+
     // Configure pull to use rebase by default for cleaner history
     let _ = Command::new("git")
         .current_dir(repo_path)
@@ -84,6 +81,6 @@ pub fn git_init(repo_path: &Path) -> io::Result<()> {
         .arg("pull.rebase")
         .arg("true")
         .status();
-    
+
     Ok(())
 }

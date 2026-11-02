@@ -15,9 +15,9 @@
 
 use std::env;
 use std::fs;
+use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::io::Write;
 
 use super::keys::{SshFingerprint, SshPublicKey};
 
@@ -259,11 +259,12 @@ fn keyscan(ip: &str, port: u16) -> std::io::Result<String> {
         .output();
 
     match output {
-        Ok(o) if o.status.success() && !o.stdout.is_empty() => {
-            String::from_utf8(o.stdout)
-                .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid key data"))
-        }
-        _ => Err(std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "host unreachable")),
+        Ok(o) if o.status.success() && !o.stdout.is_empty() => String::from_utf8(o.stdout)
+            .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid key data")),
+        _ => Err(std::io::Error::new(
+            std::io::ErrorKind::ConnectionRefused,
+            "host unreachable",
+        )),
     }
 }
 
@@ -289,7 +290,12 @@ fn append_known_hosts_entries(ip: &str, port: u16, keyscan_str: &str) -> std::io
     // Get the HOME directory
     let home_dir = match env::var("HOME") {
         Ok(h) if !h.is_empty() => PathBuf::from(h),
-        _ => return Err(std::io::Error::new(std::io::ErrorKind::NotFound, "HOME not set")),
+        _ => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "HOME not set",
+            ));
+        }
     };
 
     let ssh_dir = home_dir.join(".ssh");

@@ -17,7 +17,7 @@ fn get_termux_persistent_id() -> String {
             return format!("termux-{}", android_id);
         }
     }
-    
+
     // Try to get device serial
     if let Ok(serial) = Command::new("getprop").arg("ro.serialno").output() {
         if serial.status.success() {
@@ -27,7 +27,7 @@ fn get_termux_persistent_id() -> String {
             }
         }
     }
-    
+
     // Try to get device model
     if let Ok(model) = env::var("ANDROID_DEVICE") {
         if !model.is_empty() {
@@ -40,14 +40,14 @@ fn get_termux_persistent_id() -> String {
             return format!("termux-{}", model);
         }
     }
-    
+
     // Fallback: use USER if available
     if let Ok(user) = env::var("USER") {
         if !user.is_empty() {
             return format!("termux-{}", user);
         }
     }
-    
+
     // Last resort: generate a semi-persistent ID based on PREFIX path
     // The PREFIX path is relatively stable in Termux
     if let Ok(prefix) = env::var("PREFIX") {
@@ -59,7 +59,7 @@ fn get_termux_persistent_id() -> String {
         let hash = hasher.finish();
         return format!("termux-{:x}", hash);
     }
-    
+
     // Absolute last resort (should never happen)
     format!("termux-{}", std::process::id())
 }
@@ -67,9 +67,9 @@ fn get_termux_persistent_id() -> String {
 /// Get the local hostname
 pub fn host_name() -> String {
     // Check if we're running in Termux
-    let is_termux = env::var("TERMUX_VERSION").is_ok() || 
-                    env::var("PREFIX").map_or(false, |p| p.contains("com.termux"));
-    
+    let is_termux = env::var("TERMUX_VERSION").is_ok()
+        || env::var("PREFIX").map_or(false, |p| p.contains("com.termux"));
+
     if is_termux {
         // Try Termux-specific hostname detection
         // First try getprop (Android property system)
@@ -81,7 +81,7 @@ pub fn host_name() -> String {
                 }
             }
         }
-        
+
         // Fallback: try /proc/sys/kernel/hostname
         if let Ok(hostname) = std::fs::read_to_string("/proc/sys/kernel/hostname") {
             let n = hostname.trim().to_string();
@@ -89,7 +89,7 @@ pub fn host_name() -> String {
                 return n;
             }
         }
-        
+
         // Fallback: use hostname command but handle Termux default
         if let Ok(o) = Command::new("hostname").output() {
             if o.status.success() {
@@ -110,18 +110,17 @@ pub fn host_name() -> String {
                                 return format!("{}-termux", user);
                             }
                         }
-                        return format!("termux-{}", 
-                            std::process::id());
+                        return format!("termux-{}", std::process::id());
                     }
                     return n;
                 }
             }
         }
-        
+
         // Last resort for Termux - use persistent identifier
         return get_termux_persistent_id();
     }
-    
+
     // Standard hostname detection
     if let Ok(o) = Command::new("hostname").output() {
         if o.status.success() {
@@ -137,16 +136,16 @@ pub fn host_name() -> String {
 /// Get the local IP address
 pub fn my_ip() -> Option<String> {
     use std::net::UdpSocket;
-    
+
     // Check if we're running in Termux
-    let is_termux = env::var("TERMUX_VERSION").is_ok() || 
-                    env::var("PREFIX").map_or(false, |p| p.contains("com.termux"));
-    
+    let is_termux = env::var("TERMUX_VERSION").is_ok()
+        || env::var("PREFIX").map_or(false, |p| p.contains("com.termux"));
+
     if is_termux {
         // Termux-specific IP detection
         // Try common Termux network interfaces
         let termux_interfaces = ["wlan0", "rmnet_data", "eth0", "tun0", "lo"];
-        
+
         // Try with ifconfig
         for iface in &termux_interfaces {
             if let Ok(o) = Command::new("ifconfig").arg(iface).output() {
@@ -165,7 +164,7 @@ pub fn my_ip() -> Option<String> {
                 }
             }
         }
-        
+
         // Try with ip addr
         if let Ok(o) = Command::new("ip").args(["addr", "show"]).output() {
             if o.status.success() {
@@ -187,7 +186,7 @@ pub fn my_ip() -> Option<String> {
             }
         }
     }
-    
+
     // "Connecting" a UDP socket sends no packet but selects the default
     // interface and reveals its source address.
     if let Ok(s) = UdpSocket::bind("0.0.0.0:0") {
@@ -244,11 +243,18 @@ pub fn get_local_interfaces() -> Vec<NetworkInterface> {
                             }
                             // Calculate broadcast address for the /24 subnet
                             let octets = ip.octets();
-                            let broadcast = format!("{}.{}.{}.255", octets[0], octets[1], octets[2]);
+                            let broadcast =
+                                format!("{}.{}.{}.255", octets[0], octets[1], octets[2]);
                             let ip_string = ip.to_string();
                             // Only add if not already present
-                            if !interfaces.iter().any(|existing: &NetworkInterface| existing.ip == ip_string) {
-                                interfaces.push(NetworkInterface { ip: ip_string, broadcast });
+                            if !interfaces
+                                .iter()
+                                .any(|existing: &NetworkInterface| existing.ip == ip_string)
+                            {
+                                interfaces.push(NetworkInterface {
+                                    ip: ip_string,
+                                    broadcast,
+                                });
                             }
                         }
                     }
@@ -264,7 +270,10 @@ pub fn get_local_interfaces() -> Vec<NetworkInterface> {
                 let text = String::from_utf8_lossy(&output.stdout);
                 for line in text.lines() {
                     let trimmed = line.trim();
-                    if trimmed.contains("inet ") && !trimmed.contains("127.0.0.1") && !trimmed.contains("::1") {
+                    if trimmed.contains("inet ")
+                        && !trimmed.contains("127.0.0.1")
+                        && !trimmed.contains("::1")
+                    {
                         let parts: Vec<&str> = trimmed.split_whitespace().collect();
                         for part in &parts {
                             if let Ok(ip) = part.parse::<Ipv4Addr>() {
@@ -273,10 +282,17 @@ pub fn get_local_interfaces() -> Vec<NetworkInterface> {
                                     continue;
                                 }
                                 let octets = ip.octets();
-                                let broadcast = format!("{}.{}.{}.255", octets[0], octets[1], octets[2]);
+                                let broadcast =
+                                    format!("{}.{}.{}.255", octets[0], octets[1], octets[2]);
                                 let ip_string = ip.to_string();
-                                if !interfaces.iter().any(|existing: &NetworkInterface| existing.ip == ip_string) {
-                                    interfaces.push(NetworkInterface { ip: ip_string, broadcast });
+                                if !interfaces
+                                    .iter()
+                                    .any(|existing: &NetworkInterface| existing.ip == ip_string)
+                                {
+                                    interfaces.push(NetworkInterface {
+                                        ip: ip_string,
+                                        broadcast,
+                                    });
                                 }
                                 break;
                             }
