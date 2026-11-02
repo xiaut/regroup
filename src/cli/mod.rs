@@ -38,7 +38,9 @@ pub fn warn(msg: &str) {
 // Selftest
 // ============================================================
 
-/// Run built-in selftest
+/// Run the built-in selftest: checks that only make sense against the real
+/// environment (external tools, ssh-keygen fingerprint agreement).
+/// Pure logic (config parsing, beacon signing) is covered by `cargo test`.
 pub fn run_selftest() -> ! {
     let mut ok = true;
 
@@ -60,49 +62,10 @@ pub fn run_selftest() -> ! {
     );
     ok &= tools_ok;
 
-    // 2. test config loading with sample data
-    let sample_dir = PathBuf::from("/tmp/regroup-selftest");
-    let _ = fs::remove_dir_all(&sample_dir);
-
-    if let Err(e) = fs::create_dir_all(&sample_dir) {
-        println!("temp dir creation — FAIL ({})", e);
-        ok = false;
-    } else {
-        let devices_dir = sample_dir.join(DEVICES_DIR);
-        let _ = fs::create_dir_all(&devices_dir);
-
-        let device_file = devices_dir.join("test.json");
-        let device_config = r#"{"name": "test", "ssh_public_key": "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAAB", "signing_public_key": "MCowBQYDK2VwAyEAGXNlbGZ0ZXN0a2V5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXk=", "user": "testuser", "port": 22}"#;
-        if let Err(e) = fs::write(&device_file, device_config) {
-            println!("device file creation — FAIL ({})", e);
-            ok = false;
-        } else {
-            match crate::config::device::load_device_file(&device_file) {
-                Ok(m) => {
-                    let device_ok = m.name == "test"
-                        && m.ssh_public_key.as_str() == "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAAB"
-                        && m.user == "testuser"
-                        && m.port == 22
-                        && m.port_explicit;
-                    println!(
-                        "device config loading — {}",
-                        if device_ok { "OK" } else { "FAIL" }
-                    );
-                    ok &= device_ok;
-                }
-                Err(e) => {
-                    println!("device config loading — FAIL ({})", e);
-                    ok = false;
-                }
-            }
-        }
-
-        let _ = fs::remove_dir_all(&sample_dir);
-    }
-
-    // 3. host key fingerprint verification helper
+    // 2. host key fingerprint verification helper
     // Generate a throwaway key, then check that the fingerprint computed by
     // compute_fingerprint_from_public_key matches ssh-keygen -lf's output.
+    // (Config parsing and beacon signing are covered by `cargo test`.)
     {
         let key_path = PathBuf::from("/tmp/regroup-selftest-key");
         let pub_path = PathBuf::from("/tmp/regroup-selftest-key.pub");
@@ -154,47 +117,6 @@ pub fn run_selftest() -> ! {
         let _ = fs::remove_file(&pub_path);
     }
 
-    // 4. signed beacon verification (roundtrip, tampering, malformed input)
-    {
-        use crate::signing;
-        use crate::ssh::keys::SshPublicKey;
-
-        let mut beacons_ok = true;
-        if let Ok((signing_key, _)) = signing::generate_keypair() {
-            let ssh_key =
-                SshPublicKey::from("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAISelftestKeyNotReal");
-            match signing::sign_beacon("selftest", &ssh_key, "10.1.2.3", 22, "0", &signing_key) {
-                Ok(beacon) => {
-                    // roundtrip
-                    match signing::verify_beacon(&beacon, None) {
-                        Ok((name, key, ip, port)) => {
-                            beacons_ok &= name == "selftest"
-                                && key == ssh_key
-                                && ip == "10.1.2.3"
-                                && port == 22;
-                        }
-                        Err(_) => beacons_ok = false,
-                    }
-                    // a tampered field must break the signature
-                    let tampered = beacon.replace("10.1.2.3", "10.9.9.9");
-                    beacons_ok &= signing::verify_beacon(&tampered, None).is_err();
-                }
-                Err(_) => beacons_ok = false,
-            }
-            // a malformed signing key must be rejected, never panic
-            // (regression: this used to crash the process)
-            let malformed = "selftest\tAAAA\tssh-ed25519 AAAA\t10.1.2.3\t22\t0\tAAAA".to_string();
-            beacons_ok &= signing::verify_beacon(&malformed, None).is_err();
-        } else {
-            beacons_ok = false;
-        }
-        println!(
-            "signed beacon verification — {}",
-            if beacons_ok { "OK" } else { "FAIL" }
-        );
-        ok &= beacons_ok;
-    }
-
     println!("selftest: {}", if ok { "OK" } else { "FAIL" });
     std::process::exit(if ok { 0 } else { 1 });
 }
@@ -206,7 +128,7 @@ pub fn run_selftest() -> ! {
 /// Print usage information
 pub fn usage() {
     println!(
-        "regroup — find machines by their SSH host key and update ~/.ssh/config.\nDevices announce themselves via signed UDP beacons; regroup listens for them\ncontinuously and prompts for each new device.\n\nConfiguration is stored in ~/.regroup-config/git/ (a git repository) where each\ndevice has its own JSON file in the devices/ directory. Git remotes can be\nconfigured for all other devices to enable decentralized sync (press 'r' in\ninteractive mode to pull from and push to them).\n\nUsage:\n  ./regroup                continuous interactive mode, update ~/.ssh/config\n  ./regroup test           dry run: nothing is modified\n  ./regroup -v             verbose\n  ./regroup selftest       built-in checks (tools, config parsing)\n  ./regroup setup-cd       install 'regroup-cd' shell function to change to config directory\n  ./regroup -h             this help\n\nInteractive commands:\n  y/N             - add or skip the current device\n  r               - refresh git (pull from remotes, push to remotes)\n  q               - quit the program\n\nConfig repository structure (~/.regroup-config/git/):\n  settings.json           (optional: udp_port, wait_secs)\n  devices/\n    <hostname>.json       (each device's config: name, ssh_public_key, user, port)\n\nExit codes:\n  0  normal exit\n  1  selftest failure\n  2  configuration or environment error"
+        "regroup — find machines by their SSH host key and update ~/.ssh/config.\nDevices announce themselves via signed UDP beacons; regroup listens for them\ncontinuously and prompts for each new device.\n\nConfiguration is stored in ~/.regroup-config/git/ (a git repository) where each\ndevice has its own JSON file in the devices/ directory. Git remotes can be\nconfigured for all other devices to enable decentralized sync (press 'r' in\ninteractive mode to pull from and push to them).\n\nUsage:\n  ./regroup                continuous interactive mode, update ~/.ssh/config\n  ./regroup test           dry run: nothing is modified\n  ./regroup -v             verbose\n  ./regroup selftest       built-in checks (external tools, ssh-keygen fingerprint)\n  ./regroup setup-cd       install 'regroup-cd' shell function to change to config directory\n  ./regroup -h             this help\n\nInteractive commands:\n  y/N             - add or skip the current device\n  r               - refresh git (pull from remotes, push to remotes)\n  q               - quit the program\n\nConfig repository structure (~/.regroup-config/git/):\n  settings.json           (optional: udp_port, wait_secs)\n  devices/\n    <hostname>.json       (each device's config: name, ssh_public_key, user, port)\n\nExit codes:\n  0  normal exit\n  1  selftest failure\n  2  configuration or environment error"
     );
 }
 
@@ -598,4 +520,52 @@ fn configure_remotes(config_dir: &Path) -> Vec<String> {
         })
         .collect();
     git::refresh_git_remotes(config_dir, &machines, &local_name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ssh_config_has_host_matches_exact_blocks() {
+        let content = "Host laptop\n  HostName 1.2.3.4\n\nHost a b laptop2\n  User x\n\n# commented\nHostname decoy\n";
+        assert!(ssh_config_has_host(content, "laptop"));
+        // Multi-pattern Host lines count too
+        assert!(ssh_config_has_host(content, "laptop2"));
+        assert!(!ssh_config_has_host(content, "laptop3"));
+        // HostName (lowercase, no space) must not be treated as a Host block
+        assert!(!ssh_config_has_host(content, "decoy"));
+    }
+
+    #[test]
+    fn name_taken_detects_all_three_sources() {
+        let dir = std::env::temp_dir().join(format!("regroup-cli-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("create temp dir");
+
+        let machine = Machine {
+            name: "known".to_string(),
+            ssh_public_key: crate::ssh::keys::SshPublicKey::from("ssh-rsa AAAA"),
+            signing_public_key: crate::ssh::keys::SigningPublicKeyB64::from("MCowBQYDK2VwAyEA=="),
+            user: String::new(),
+            port: 22,
+            port_explicit: false,
+        };
+        let machines = vec![machine];
+        fs::write(dir.join("on-disk.json"), "{}").unwrap();
+        let ssh = "Host in-ssh\n  User x\n";
+
+        assert!(name_taken("known", "", &dir, &machines), "machine list");
+        assert!(
+            name_taken("on-disk", "", &dir, &machines),
+            "devices dir file"
+        );
+        assert!(
+            name_taken("in-ssh", ssh, &dir, &machines),
+            "ssh config block"
+        );
+        assert!(!name_taken("free", ssh, &dir, &machines), "free name");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

@@ -136,3 +136,176 @@ pub fn save_device_file(path: &Path, machine: &Machine) -> io::Result<()> {
     fs::write(path, serde_json::to_string_pretty(&value)?)?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Unique temp directory for a test, cleaned up on drop.
+    struct TempDir(std::path::PathBuf);
+
+    impl TempDir {
+        fn new(tag: &str) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "regroup-device-test-{}-{}",
+                tag,
+                std::process::id()
+            ));
+            let _ = fs::remove_dir_all(&path);
+            fs::create_dir_all(&path).expect("create temp dir");
+            TempDir(path)
+        }
+
+        fn path(&self, file: &str) -> std::path::PathBuf {
+            self.0.join(file)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    const VALID_DEVICE: &str = r#"{
+        "name": "laptop",
+        "ssh_public_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeKeyForTests",
+        "signing_public_key": "MCowBQYDK2VwAyEAGXNlbGZ0ZXN0a2V5eXl5eXl5eXl5eXl5eXl5eXl5eXk=",
+        "user": "alice",
+        "port": 8022
+    }"#;
+
+    #[test]
+    fn load_device_file_parses_all_fields() {
+        let dir = TempDir::new("parse");
+        let path = dir.path("laptop.json");
+        fs::write(&path, VALID_DEVICE).unwrap();
+
+        let m = load_device_file(&path).expect("valid device file must load");
+        assert_eq!(m.name, "laptop");
+        assert_eq!(m.user, "alice");
+        assert_eq!(m.port, 8022);
+        assert!(m.port_explicit);
+        assert_eq!(
+            m.ssh_public_key.as_str(),
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeKeyForTests"
+        );
+        assert_eq!(
+            m.signing_public_key.as_str(),
+            "MCowBQYDK2VwAyEAGXNlbGZ0ZXN0a2V5eXl5eXl5eXl5eXl5eXl5eXl5eXk="
+        );
+    }
+
+    #[test]
+    fn load_device_file_requires_ssh_public_key() {
+        let dir = TempDir::new("no-ssh-key");
+        let path = dir.path("a.json");
+        fs::write(
+            &path,
+            r#"{"name": "a", "signing_public_key": "MCowBQYDK2VwAyEA=="}"#,
+        )
+        .unwrap();
+
+        let err = load_device_file(&path).unwrap_err();
+        assert!(err.contains("ssh_public_key"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn load_device_file_requires_signing_public_key() {
+        let dir = TempDir::new("no-signing-key");
+        let path = dir.path("b.json");
+        fs::write(&path, r#"{"name": "b", "ssh_public_key": "ssh-rsa AAAA"}"#).unwrap();
+
+        let err = load_device_file(&path).unwrap_err();
+        assert!(
+            err.contains("signing_public_key"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn load_device_file_rejects_out_of_range_port() {
+        let dir = TempDir::new("bad-port");
+        for port in ["0", "65536", "not-a-number"] {
+            let path = dir.path(format!("p{port}.json").as_str());
+            fs::write(
+                &path,
+                format!(
+                    r#"{{"name": "p", "ssh_public_key": "ssh-rsa AAAA",
+                    "signing_public_key": "MCowBQYDK2VwAyEA==", "port": {port}}}"#
+                ),
+            )
+            .unwrap();
+            assert!(
+                load_device_file(&path).is_err(),
+                "port {port} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn load_device_file_falls_back_to_filename_for_name() {
+        let dir = TempDir::new("filename");
+        let path = dir.path("from-filename.json");
+        fs::write(
+            &path,
+            r#"{"ssh_public_key": "ssh-rsa AAAA", "signing_public_key": "MCowBQYDK2VwAyEA=="}"#,
+        )
+        .unwrap();
+
+        let m = load_device_file(&path).expect("name must fall back to filename");
+        assert_eq!(m.name, "from-filename");
+        assert_eq!(m.user, "");
+        assert_eq!(m.port, 22);
+        assert!(!m.port_explicit);
+    }
+
+    #[test]
+    fn load_device_file_rejects_placeholder_and_localhost() {
+        let dir = TempDir::new("invalid");
+        let cases = [
+            (
+                r#"{"name": "x", "ssh_public_key": "", "signing_public_key": "MCowBQYDK2VwAyEA=="}"#,
+                "empty key",
+            ),
+            (
+                r#"{"name": "localhost", "ssh_public_key": "ssh-rsa AAAA", "signing_public_key": "MCowBQYDK2VwAyEA=="}"#,
+                "localhost",
+            ),
+        ];
+        for (i, (json, why)) in cases.iter().enumerate() {
+            let path = dir.path(format!("c{i}.json").as_str());
+            fs::write(&path, json).unwrap();
+            assert!(load_device_file(&path).is_err(), "must reject {why}");
+        }
+    }
+
+    #[test]
+    fn save_device_file_roundtrip() {
+        let dir = TempDir::new("roundtrip");
+        let path = dir.path("roundtrip.json");
+        let machine = Machine {
+            name: "roundtrip".to_string(),
+            ssh_public_key: SshPublicKey::from("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFake"),
+            signing_public_key: SigningPublicKeyB64::from("MCowBQYDK2VwAyEA=="),
+            user: "bob".to_string(),
+            port: 2222,
+            port_explicit: true,
+        };
+
+        save_device_file(&path, &machine).expect("save must succeed");
+        let loaded = load_device_file(&path).expect("saved device must load back");
+        assert_eq!(loaded.name, machine.name);
+        assert_eq!(loaded.user, machine.user);
+        assert_eq!(loaded.port, machine.port);
+        assert!(loaded.port_explicit);
+        assert_eq!(
+            loaded.ssh_public_key.as_str(),
+            machine.ssh_public_key.as_str()
+        );
+        assert_eq!(
+            loaded.signing_public_key.as_str(),
+            machine.signing_public_key.as_str()
+        );
+    }
+}

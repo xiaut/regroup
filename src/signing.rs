@@ -380,3 +380,71 @@ pub fn initialize_signing_keys() -> Result<(SigningKey, VerifyingKey), String> {
 
     Ok((signing_key, verifying_key))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ssh_key() -> SshPublicKey {
+        SshPublicKey::from("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFake")
+    }
+
+    fn signed_beacon() -> (String, SigningKey) {
+        let (signing_key, _) = generate_keypair().expect("keypair generation");
+        let beacon = sign_beacon("selftest", &ssh_key(), "10.1.2.3", 22, "0", &signing_key)
+            .expect("beacon signing");
+        (beacon, signing_key)
+    }
+
+    #[test]
+    fn sign_beacon_verify_roundtrip() {
+        let (beacon, signing_key) = signed_beacon();
+        let verifying_key = signing_key.verifying_key();
+
+        let (name, key, ip, port) =
+            verify_beacon(&beacon, Some(&verifying_key)).expect("a beacon we signed must verify");
+        assert_eq!(name, "selftest");
+        assert_eq!(key.as_str(), ssh_key().as_str());
+        assert_eq!(ip, "10.1.2.3");
+        assert_eq!(port, 22);
+    }
+
+    #[test]
+    fn tampered_beacon_field_breaks_signature() {
+        let (beacon, signing_key) = signed_beacon();
+        let verifying_key = signing_key.verifying_key();
+
+        let tampered = beacon.replace("10.1.2.3", "10.9.9.9");
+        assert!(verify_beacon(&tampered, Some(&verifying_key)).is_err());
+
+        let truncated = beacon.replace("selftest", "attacker");
+        assert!(verify_beacon(&truncated, Some(&verifying_key)).is_err());
+    }
+
+    #[test]
+    fn beacon_signed_with_wrong_key_is_rejected() {
+        let (beacon, _) = signed_beacon();
+        let (other_key, _) = generate_keypair().expect("keypair generation");
+        let other_verifying = other_key.verifying_key();
+
+        // A pinned key that did not sign this beacon must fail the check.
+        assert!(verify_beacon(&beacon, Some(&other_verifying)).is_err());
+    }
+
+    #[test]
+    fn malformed_beacon_is_rejected_without_panicking() {
+        // Not enough fields
+        assert!(verify_beacon("only\tthree\tfields", None).is_err());
+        // Malformed signing key (base64 that decodes to 3 bytes, not 32)
+        let malformed = "selftest\tAAAA\tssh-ed25519 AAAA\t10.1.2.3\t22\t0\tAAAA";
+        assert!(verify_beacon(malformed, None).is_err());
+        // Non-numeric port
+        let (beacon, _) = signed_beacon();
+        let parts: Vec<&str> = beacon.split('\t').collect();
+        let bad_port = format!(
+            "{}\t{}\t{}\t{}\txx\t{}\t{}",
+            parts[0], parts[1], parts[2], parts[3], parts[5], parts[6]
+        );
+        assert!(verify_beacon(&bad_port, None).is_err());
+    }
+}
