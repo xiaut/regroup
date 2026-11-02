@@ -41,19 +41,19 @@ pub const PUBLIC_KEY_FILE: &str = "signing_public_key";
 // ============================================================
 
 /// Get the signing keys directory path
-fn get_signing_key_dir() -> PathBuf {
-    let home = env::var("HOME").expect("HOME variable not set");
-    PathBuf::from(home).join(CONFIG_DIR).join(SIGNING_KEY_DIR)
+fn get_signing_key_dir() -> Result<PathBuf, String> {
+    let home = env::var("HOME").map_err(|_| "HOME variable not set".to_string())?;
+    Ok(PathBuf::from(home).join(CONFIG_DIR).join(SIGNING_KEY_DIR))
 }
 
 /// Get the private key file path
-pub fn get_private_key_path() -> PathBuf {
-    get_signing_key_dir().join(PRIVATE_KEY_FILE)
+pub fn get_private_key_path() -> Result<PathBuf, String> {
+    Ok(get_signing_key_dir()?.join(PRIVATE_KEY_FILE))
 }
 
 /// Get the public key file path
-pub fn get_public_key_path() -> PathBuf {
-    get_signing_key_dir().join(PUBLIC_KEY_FILE)
+pub fn get_public_key_path() -> Result<PathBuf, String> {
+    Ok(get_signing_key_dir()?.join(PUBLIC_KEY_FILE))
 }
 
 /// Generate a new Ed25519 keypair
@@ -77,8 +77,8 @@ pub fn generate_keypair() -> Result<(SigningKey, VerifyingKey), String> {
 /// SECURITY: This file contains sensitive data and should NEVER be committed to git
 /// The file is stored in ~/.regroup-config/signing/signing_private_key
 pub fn save_private_key(signing_key: &SigningKey) -> Result<(), String> {
-    let key_dir = get_signing_key_dir();
-    let key_path = get_private_key_path();
+    let key_dir = get_signing_key_dir()?;
+    let key_path = get_private_key_path()?;
 
     // Ensure directory exists
     if let Err(e) = fs::create_dir_all(&key_dir) {
@@ -107,8 +107,8 @@ pub fn save_private_key(signing_key: &SigningKey) -> Result<(), String> {
 ///
 /// This can be safely shared and committed to git as it's public data
 pub fn save_public_key(verifying_key: &VerifyingKey) -> Result<(), String> {
-    let key_dir = get_signing_key_dir();
-    let key_path = get_public_key_path();
+    let key_dir = get_signing_key_dir()?;
+    let key_path = get_public_key_path()?;
 
     // Ensure directory exists
     if let Err(e) = fs::create_dir_all(&key_dir) {
@@ -128,7 +128,7 @@ pub fn save_public_key(verifying_key: &VerifyingKey) -> Result<(), String> {
 ///
 /// Returns None if the key doesn't exist
 pub fn load_private_key() -> Option<SigningKey> {
-    let key_path = get_private_key_path();
+    let key_path = get_private_key_path().ok()?;
 
     if !key_path.exists() {
         return None;
@@ -160,7 +160,7 @@ pub fn load_private_key() -> Option<SigningKey> {
 ///
 /// Returns None if the key doesn't exist
 pub fn load_public_key() -> Option<VerifyingKey> {
-    let key_path = get_public_key_path();
+    let key_path = get_public_key_path().ok()?;
 
     if !key_path.exists() {
         return None;
@@ -353,7 +353,8 @@ pub fn verify_beacon(
 
 /// Check if signing keys exist
 pub fn signing_keys_exist() -> bool {
-    get_private_key_path().exists() && get_public_key_path().exists()
+    get_private_key_path().is_ok_and(|p| p.exists())
+        && get_public_key_path().is_ok_and(|p| p.exists())
 }
 
 /// Initialize signing keys (generate if they don't exist)

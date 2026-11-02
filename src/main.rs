@@ -241,29 +241,21 @@ fn main() {
         None
     };
 
-    // Build lookup maps from config
-    let mut known_keys: HashSet<SshPublicKey> = conf
-        .machines
-        .iter()
-        .map(|m| m.ssh_public_key.clone())
-        .collect();
-
+    // Build the lookup maps used by the interactive loop from the config on
+    // disk; they are rebuilt the same way after each git refresh.
+    let mut known_keys: HashSet<SshPublicKey> = HashSet::new();
     // Map from SSH public key to machine info for known devices
-    let mut key_to_machine: HashMap<SshPublicKey, Machine> = conf
-        .machines
-        .iter()
-        .map(|m| (m.ssh_public_key.clone(), m.clone()))
-        .collect();
-
+    let mut key_to_machine: HashMap<SshPublicKey, Machine> = HashMap::new();
     // Pinned Ed25519 signing keys (feature D): machines are keyed by their SSH
     // public key, and their beacons must be signed with the signing key pinned
     // at first acceptance. A different key means reinstall (ask the user) or
     // spoofing (reject).
-    let mut pinned_signing_keys: HashMap<SshPublicKey, SigningPublicKeyB64> = conf
-        .machines
-        .iter()
-        .map(|m| (m.ssh_public_key.clone(), m.signing_public_key.clone()))
-        .collect();
+    let mut pinned_signing_keys: HashMap<SshPublicKey, SigningPublicKeyB64> = HashMap::new();
+    reload_known_devices(
+        &mut known_keys,
+        &mut key_to_machine,
+        &mut pinned_signing_keys,
+    );
 
     // Signing keys the user explicitly refused (rotation declined)
     let mut rejected_signing_keys: HashSet<(SshPublicKey, SigningPublicKeyB64)> = HashSet::new();
@@ -463,14 +455,11 @@ fn main() {
                     pending_devices.push_back(device);
                     if !dry_run {
                         let added_device = pending_devices.back().unwrap();
-                        let key_preview = if added_device.ssh_public_key.as_str().len() > 16 {
-                            format!("{}...", &added_device.ssh_public_key.as_str()[..13])
-                        } else {
-                            added_device.ssh_public_key.to_string()
-                        };
                         println!(
                             "\n[!] New device: {} ({}) - key: {}",
-                            added_device.name, added_device.ip, key_preview
+                            added_device.name,
+                            added_device.ip,
+                            key_preview(&added_device.ssh_public_key)
                         );
                         println!(
                             "    Type 'y' to add, 'N' to skip, 'r' to refresh git, 'q' to quit"
@@ -641,14 +630,11 @@ fn main() {
                 // Dry run: show all devices as they are detected
                 let device = pending_devices.pop_front().unwrap();
                 pending_keys.remove(&device.ssh_public_key);
-                let key_preview = if device.ssh_public_key.as_str().len() > 16 {
-                    format!("{}...", &device.ssh_public_key.as_str()[..13])
-                } else {
-                    device.ssh_public_key.to_string()
-                };
                 println!(
                     "\n[DRY RUN] New device: {} ({}) - key: {}",
-                    device.name, device.ip, key_preview
+                    device.name,
+                    device.ip,
+                    key_preview(&device.ssh_public_key)
                 );
                 new_count += 1;
             }
@@ -707,13 +693,19 @@ fn main() {
 
     println!("Done.");
 
-    // Calculate final statistics
-    // missing = original machines that were not seen
-    // For now, we only track new (added). Updated and missing would require more complex tracking.
-    // Since we're in continuous mode, we can't easily detect missing without periodic scans.
-    // For updated, we'd need to track IP changes, which we're not currently doing.
+    // Only devices added this run are tracked; detecting updates or missing
+    // devices would require periodic scans the continuous mode does not do.
+    println!("\n== {} new device(s) added ==", new_count);
+}
 
-    println!("\n== {} new, 0 updated, 0 missing ==", new_count);
+/// Short preview of an SSH public key for display, e.g. "ssh-ed25519 AA...".
+fn key_preview(key: &SshPublicKey) -> String {
+    let s = key.as_str();
+    if s.len() > 16 {
+        format!("{}...", &s[..13])
+    } else {
+        s.to_string()
+    }
 }
 
 /// Start beacon listener thread - continuous mode with short timeout.
