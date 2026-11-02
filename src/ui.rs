@@ -72,7 +72,7 @@ pub enum Question {
 /// mode, from input lines).
 pub enum Action {
     Quit,
-    Refresh,
+    Sync,
     AddCurrent,
     SkipCurrent,
     TrustKey,
@@ -133,7 +133,7 @@ impl Ui {
         }
     }
 
-    /// Refresh the display (no-op in plain mode).
+    /// Redraw the display (no-op in plain mode).
     pub fn draw(&mut self) {
         if let Ui::Tty(ui) = self {
             let _ = ui.draw();
@@ -225,10 +225,10 @@ impl TtyUi {
             }
             KeyCode::Char(c) => match (&self.question, c) {
                 (Question::Idle, 'q') => Some(Action::Quit),
-                (Question::Idle, 'r') => Some(Action::Refresh),
+                (Question::Idle, 's') => Some(Action::Sync),
                 (Question::AddDevice { .. }, 'y') => Some(Action::AddCurrent),
                 (Question::AddDevice { .. }, 'n') => Some(Action::SkipCurrent),
-                (Question::AddDevice { .. }, 'r') => Some(Action::Refresh),
+                (Question::AddDevice { .. }, 's') => Some(Action::Sync),
                 (Question::AddDevice { .. }, 'q') => Some(Action::Quit),
                 (Question::TrustKey { .. }, 'y') => Some(Action::TrustKey),
                 (Question::TrustKey { .. }, 'n') => Some(Action::RejectKey),
@@ -368,13 +368,13 @@ fn render_question(
             "Status",
             Color::Blue,
             "Waiting for devices…".to_string(),
-            Line::from("[r] refresh git   [q] quit   [Up/Dn] scroll activity"),
+            Line::from("[s] sync git   [q] quit   [Up/Dn] scroll activity"),
         ),
         Question::AddDevice { name, ip } => (
             "New device",
             Color::Yellow,
             format!("Add {name} ({ip}) to config?"),
-            Line::from("[y] add   [n] skip   [r] refresh git   [q] quit"),
+            Line::from("[y] add   [n] skip   [s] sync git   [q] quit"),
         ),
         Question::TrustKey { name } => (
             "Signing key changed",
@@ -452,7 +452,7 @@ impl PlainUi {
     /// Prompt text for the current question.
     fn prompt(&self) -> String {
         match &self.question {
-            Question::Idle => "[q=quit, r=refresh git]:".to_string(),
+            Question::Idle => "[q=quit, s=sync git]:".to_string(),
             Question::AddDevice { name, ip } => {
                 format!("Add {name} ({ip}) to config? [y/N/q/r]:")
             }
@@ -470,10 +470,10 @@ impl PlainUi {
         let line = line.trim();
         match (&self.question, line) {
             (Question::Idle, "q" | "quit") => Some(Action::Quit),
-            (Question::Idle, "r" | "refresh") => Some(Action::Refresh),
+            (Question::Idle, "s" | "sync") => Some(Action::Sync),
             (Question::Idle, _) => None,
             (Question::AddDevice { .. }, "y" | "yes") => Some(Action::AddCurrent),
-            (Question::AddDevice { .. }, "r") => Some(Action::Refresh),
+            (Question::AddDevice { .. }, "s") => Some(Action::Sync),
             (Question::AddDevice { .. }, "q") => Some(Action::Quit),
             (Question::AddDevice { .. }, _) => Some(Action::SkipCurrent),
             (Question::TrustKey { .. }, "y" | "yes") => Some(Action::TrustKey),

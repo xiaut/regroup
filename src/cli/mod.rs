@@ -130,7 +130,7 @@ pub fn run_selftest() -> ! {
 /// Print usage information
 pub fn usage() {
     println!(
-        "regroup — find machines by their SSH host key and update ~/.ssh/config.\nDevices announce themselves via signed UDP beacons; regroup listens for them\ncontinuously and prompts for each new device.\n\nConfiguration is stored in ~/.regroup-config/git/ (a git repository) where each\ndevice has its own JSON file in the devices/ directory. Git remotes can be\nconfigured for all other devices to enable decentralized sync (press 'r' in\ninteractive mode to pull from and push to them).\n\nUsage:\n  ./regroup                continuous interactive mode, update ~/.ssh/config\n  ./regroup test           dry run: nothing is modified\n  ./regroup -v             verbose\n  ./regroup selftest       built-in checks (external tools, ssh-keygen fingerprint)\n  ./regroup setup-cd       install 'regroup-cd' shell function to change to config directory\n  ./regroup -h             this help\n\nInteractive commands:\n  y/N             - add or skip the current device\n  r               - refresh git (pull from remotes, push to remotes)\n  q               - quit the program\n\nConfig repository structure (~/.regroup-config/git/):\n  settings.json           (optional: udp_port, wait_secs)\n  devices/\n    <hostname>.json       (each device's config: name, ssh_public_key, user, port)\n\nExit codes:\n  0  normal exit\n  1  selftest failure\n  2  configuration or environment error"
+        "regroup — find machines by their SSH host key and update ~/.ssh/config.\nDevices announce themselves via signed UDP beacons; regroup listens for them\ncontinuously and prompts for each new device.\n\nConfiguration is stored in ~/.regroup-config/git/ (a git repository) where each\ndevice has its own JSON file in the devices/ directory. Git remotes can be\nconfigured for all other devices to enable decentralized sync (press 's' in\ninteractive mode to pull from and push to them).\n\nUsage:\n  ./regroup                continuous interactive mode, update ~/.ssh/config\n  ./regroup test           dry run: nothing is modified\n  ./regroup -v             verbose\n  ./regroup selftest       built-in checks (external tools, ssh-keygen fingerprint)\n  ./regroup setup-cd       install 'regroup-cd' shell function to change to config directory\n  ./regroup -h             this help\n\nInteractive commands:\n  y/N             - add or skip the current device\n  s               - sync git (pull from remotes, push to remotes)\n  q               - quit the program\n\nConfig repository structure (~/.regroup-config/git/):\n  settings.json           (optional: udp_port, wait_secs)\n  devices/\n    <hostname>.json       (each device's config: name, ssh_public_key, user, port)\n\nExit codes:\n  0  normal exit\n  1  selftest failure\n  2  configuration or environment error"
     );
 }
 
@@ -464,9 +464,9 @@ pub fn trust_new_signing_key(home: &str, device: &BeaconDevice) {
 // Git operations
 // ============================================================
 
-/// Refresh git remotes: configure remotes for all known devices (except self),
-/// then pull from all remotes and push to all remotes.
-pub fn refresh_git(home: &str) {
+/// Sync the git configuration repository: configure remotes for all known
+/// devices (except self), then pull from all remotes and push to all remotes.
+pub fn sync_git(home: &str) {
     // The git repository lives in ~/.regroup-config/git (not the root directory)
     let config_dir = PathBuf::from(home).join(CONFIG_DIR).join(GIT_DIR);
 
@@ -475,7 +475,7 @@ pub fn refresh_git(home: &str) {
         return;
     }
 
-    crate::ui::log("Refreshing git...");
+    crate::ui::log("Syncing git...");
 
     // Configure remotes for all known machines before syncing: pull/push can
     // only reach devices that already have a remote.
@@ -491,13 +491,13 @@ pub fn refresh_git(home: &str) {
     }
 
     // A pull may have brought device files for machines we did not know yet:
-    // configure their remotes so the next refresh reaches them too.
+    // configure their remotes so the next sync reaches them too.
     let remote_errors = configure_remotes(&config_dir);
     for error in &remote_errors {
         warn(&format!("[sync] {}", error));
     }
 
-    crate::ui::log("Git refresh complete.");
+    crate::ui::log("Git sync complete.");
 }
 
 /// Configure git remotes for all known machines except this device.
@@ -516,7 +516,7 @@ fn configure_remotes(config_dir: &Path) -> Vec<String> {
             m.name != local_name && local_ssh_public_key.as_ref() != Some(&m.ssh_public_key)
         })
         .collect();
-    git::refresh_git_remotes(config_dir, &machines, &local_name)
+    git::sync_git_remotes(config_dir, &machines, &local_name)
 }
 
 #[cfg(test)]

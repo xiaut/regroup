@@ -114,8 +114,8 @@ pub fn git_list_remotes(repo_path: &Path) -> Vec<String> {
     }
 }
 
-/// Refresh git remotes to match all machines except self
-pub fn refresh_git_remotes(
+/// Sync git remotes to match all machines except self
+pub fn sync_git_remotes(
     repo_path: &Path,
     machines: &[Machine],
     local_hostname: &str,

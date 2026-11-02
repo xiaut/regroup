@@ -15,8 +15,7 @@ use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::Duration;
 
 use crate::cli::{
-    add_device_to_config, device_name_taken, refresh_git, trust_new_signing_key,
-    unique_device_name,
+    add_device_to_config, device_name_taken, sync_git, trust_new_signing_key, unique_device_name,
 };
 use crate::config::{Machine, load_config};
 use crate::discovery::beacon::BeaconDevice;
@@ -128,7 +127,7 @@ impl InteractiveState {
     }
 
     /// Rebuild the lookup maps from the device files on disk (e.g. after a
-    /// git refresh pulled new device files).
+    /// git sync pulled new device files).
     fn reload(&mut self) {
         let conf = load_config();
         self.known_keys = conf
@@ -356,12 +355,12 @@ impl InteractiveState {
     fn handle_action(&mut self, ctx: &Context, action: Action) -> bool {
         match action {
             Action::Quit => return true,
-            Action::Refresh => {
-                // Dry run must not modify anything: skip git refresh
+            Action::Sync => {
+                // Dry run must not modify anything: skip git sync
                 if ctx.dry_run {
-                    ui::log("  (dry run - git refresh skipped)");
+                    ui::log("  (dry run - git sync skipped)");
                 } else {
-                    refresh_git(ctx.home);
+                    sync_git(ctx.home);
                     // A pull may have brought new device configs: reload
                     self.reload();
                 }

@@ -117,7 +117,7 @@ This handles:
    the corresponding device disappears from the config; other remotes (e.g.
    a backup repo you added yourself) are left untouched.
 
-2. **Sync operations** (triggered with 'r' in interactive mode):
+2. **Sync operations** (triggered with 's' in interactive mode):
    - `git pull` from all remotes
    - `git push` to all remotes
    - Failures are logged as warnings (one-way SSH is OK)
@@ -157,7 +157,7 @@ Usage:
 
 Interactive commands:
   y/N             - add or skip the current device
-  r               - refresh git (pull from remotes, push to remotes)
+  s               - sync git (pull from remotes, push to remotes)
   q               - quit the program
 
 Config repository structure (~/.regroup-config/git/):
@@ -235,17 +235,17 @@ Fields:
 
 **Device A:**
 ```bash
-# On next run, laptop's beacon is received (or press 'r' after adding
+# On next run, laptop's beacon is received (or press 's' after adding
 # laptop as a remote manually)
 # Both devices now have each other's configs
 ```
 
-### Refreshing from git remotes
+### Syncing with git remotes
 
 ```bash
-# In interactive mode, press r to pull from and push to all remotes
+# In interactive mode, press s to pull from and push to all remotes
 ./regroup
-# ... then press r
+# ... then press s
 
 # Useful when you know there are updates but UDP discovery might miss them
 ```

@@ -7,7 +7,7 @@
 // source of truth. Devices identify themselves via their public key (SSH fingerprint).
 //
 // Continuous interactive mode: listens for UDP beacons in background, prompts user
-// for each new device. User can press 'r' to sync with git, 'q' to quit.
+// for each new device. User can press 's' to sync with git, 'q' to quit.
 // Each device owns its own config file and can only overwrite it.
 //
 // Build (Termux):  pkg install rust openssh && cargo build --release
@@ -21,7 +21,7 @@
 //
 // Interactive commands:
 //   y/N             - add or skip current device
-//   r               - refresh git (pull from remotes, push to remotes)
+//   s               - sync git (pull from remotes, push to remotes)
 //   q               - quit the program
 //
 // Exit codes: 0 = normal exit; 1 = selftest failure; 2 = configuration or environment error.
