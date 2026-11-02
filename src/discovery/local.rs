@@ -12,40 +12,41 @@ use crate::discovery::net::NetworkInterface;
 /// This ensures the same identifier is used across restarts
 fn get_termux_persistent_id() -> String {
     // Try to get ANDROID_ID (most reliable on Android)
-    if let Ok(android_id) = env::var("ANDROID_ID") {
-        if !android_id.is_empty() && android_id != "0" {
-            return format!("termux-{}", android_id);
-        }
+    if let Ok(android_id) = env::var("ANDROID_ID")
+        && !android_id.is_empty()
+        && android_id != "0"
+    {
+        return format!("termux-{}", android_id);
     }
 
     // Try to get device serial
-    if let Ok(serial) = Command::new("getprop").arg("ro.serialno").output() {
-        if serial.status.success() {
-            let s = String::from_utf8_lossy(&serial.stdout).trim().to_string();
-            if !s.is_empty() && s != "unknown" && s != "0" {
-                return format!("termux-{}", s);
-            }
+    if let Ok(serial) = Command::new("getprop").arg("ro.serialno").output()
+        && serial.status.success()
+    {
+        let s = String::from_utf8_lossy(&serial.stdout).trim().to_string();
+        if !s.is_empty() && s != "unknown" && s != "0" {
+            return format!("termux-{}", s);
         }
     }
 
     // Try to get device model
-    if let Ok(model) = env::var("ANDROID_DEVICE") {
-        if !model.is_empty() {
-            // Also try to get user to make it more unique
-            if let Ok(user) = env::var("USER") {
-                if !user.is_empty() {
-                    return format!("termux-{}-{}", model, user);
-                }
-            }
-            return format!("termux-{}", model);
+    if let Ok(model) = env::var("ANDROID_DEVICE")
+        && !model.is_empty()
+    {
+        // Also try to get user to make it more unique
+        if let Ok(user) = env::var("USER")
+            && !user.is_empty()
+        {
+            return format!("termux-{}-{}", model, user);
         }
+        return format!("termux-{}", model);
     }
 
     // Fallback: use USER if available
-    if let Ok(user) = env::var("USER") {
-        if !user.is_empty() {
-            return format!("termux-{}", user);
-        }
+    if let Ok(user) = env::var("USER")
+        && !user.is_empty()
+    {
+        return format!("termux-{}", user);
     }
 
     // Last resort: generate a semi-persistent ID based on PREFIX path
@@ -68,17 +69,17 @@ fn get_termux_persistent_id() -> String {
 pub fn host_name() -> String {
     // Check if we're running in Termux
     let is_termux = env::var("TERMUX_VERSION").is_ok()
-        || env::var("PREFIX").map_or(false, |p| p.contains("com.termux"));
+        || env::var("PREFIX").is_ok_and(|p| p.contains("com.termux"));
 
     if is_termux {
         // Try Termux-specific hostname detection
         // First try getprop (Android property system)
-        if let Ok(o) = Command::new("getprop").arg("net.hostname").output() {
-            if o.status.success() {
-                let n = String::from_utf8_lossy(&o.stdout).trim().to_string();
-                if !n.is_empty() && n != "localhost" && n != "127.0.0.1" && n != "local" {
-                    return n;
-                }
+        if let Ok(o) = Command::new("getprop").arg("net.hostname").output()
+            && o.status.success()
+        {
+            let n = String::from_utf8_lossy(&o.stdout).trim().to_string();
+            if !n.is_empty() && n != "localhost" && n != "127.0.0.1" && n != "local" {
+                return n;
             }
         }
 
@@ -91,29 +92,29 @@ pub fn host_name() -> String {
         }
 
         // Fallback: use hostname command but handle Termux default
-        if let Ok(o) = Command::new("hostname").output() {
-            if o.status.success() {
-                let n = String::from_utf8_lossy(&o.stdout).trim().to_string();
-                if !n.is_empty() {
-                    // In Termux, hostname often returns "localhost", "local", or a generic name
-                    // Try to get a better identifier
-                    if n == "localhost" || n == "127.0.0.1" || n == "local" {
-                        // Try to use device model or other identifier
-                        if let Ok(model) = env::var("ANDROID_DEVICE") {
-                            if !model.is_empty() {
-                                return model;
-                            }
-                        }
-                        // Try to use a more unique identifier
-                        if let Ok(user) = env::var("USER") {
-                            if !user.is_empty() {
-                                return format!("{}-termux", user);
-                            }
-                        }
-                        return format!("termux-{}", std::process::id());
+        if let Ok(o) = Command::new("hostname").output()
+            && o.status.success()
+        {
+            let n = String::from_utf8_lossy(&o.stdout).trim().to_string();
+            if !n.is_empty() {
+                // In Termux, hostname often returns "localhost", "local", or a generic name
+                // Try to get a better identifier
+                if n == "localhost" || n == "127.0.0.1" || n == "local" {
+                    // Try to use device model or other identifier
+                    if let Ok(model) = env::var("ANDROID_DEVICE")
+                        && !model.is_empty()
+                    {
+                        return model;
                     }
-                    return n;
+                    // Try to use a more unique identifier
+                    if let Ok(user) = env::var("USER")
+                        && !user.is_empty()
+                    {
+                        return format!("{}-termux", user);
+                    }
+                    return format!("termux-{}", std::process::id());
                 }
+                return n;
             }
         }
 
@@ -122,12 +123,12 @@ pub fn host_name() -> String {
     }
 
     // Standard hostname detection
-    if let Ok(o) = Command::new("hostname").output() {
-        if o.status.success() {
-            let n = String::from_utf8_lossy(&o.stdout).trim().to_string();
-            if !n.is_empty() {
-                return n;
-            }
+    if let Ok(o) = Command::new("hostname").output()
+        && o.status.success()
+    {
+        let n = String::from_utf8_lossy(&o.stdout).trim().to_string();
+        if !n.is_empty() {
+            return n;
         }
     }
     "machine".to_string()
@@ -139,7 +140,7 @@ pub fn my_ip() -> Option<String> {
 
     // Check if we're running in Termux
     let is_termux = env::var("TERMUX_VERSION").is_ok()
-        || env::var("PREFIX").map_or(false, |p| p.contains("com.termux"));
+        || env::var("PREFIX").is_ok_and(|p| p.contains("com.termux"));
 
     if is_termux {
         // Termux-specific IP detection
@@ -148,17 +149,17 @@ pub fn my_ip() -> Option<String> {
 
         // Try with ifconfig
         for iface in &termux_interfaces {
-            if let Ok(o) = Command::new("ifconfig").arg(iface).output() {
-                if o.status.success() {
-                    let text = String::from_utf8_lossy(&o.stdout);
-                    for line in text.lines() {
-                        let parts: Vec<&str> = line.split_whitespace().collect();
-                        for part in &parts {
-                            if let Ok(ip) = part.parse::<Ipv4Addr>() {
-                                if !ip.is_loopback() {
-                                    return Some(ip.to_string());
-                                }
-                            }
+            if let Ok(o) = Command::new("ifconfig").arg(iface).output()
+                && o.status.success()
+            {
+                let text = String::from_utf8_lossy(&o.stdout);
+                for line in text.lines() {
+                    let parts: Vec<&str> = line.split_whitespace().collect();
+                    for part in &parts {
+                        if let Ok(ip) = part.parse::<Ipv4Addr>()
+                            && !ip.is_loopback()
+                        {
+                            return Some(ip.to_string());
                         }
                     }
                 }
@@ -166,20 +167,19 @@ pub fn my_ip() -> Option<String> {
         }
 
         // Try with ip addr
-        if let Ok(o) = Command::new("ip").args(["addr", "show"]).output() {
-            if o.status.success() {
-                let text = String::from_utf8_lossy(&o.stdout);
-                for line in text.lines() {
-                    if line.trim().starts_with("inet ") && !line.contains("127.0.0.1") {
-                        let parts: Vec<&str> = line.split_whitespace().collect();
-                        for part in &parts {
-                            if let Some(ip_str) = part.split('/').next() {
-                                if let Ok(ip) = ip_str.parse::<Ipv4Addr>() {
-                                    if !ip.is_loopback() {
-                                        return Some(ip.to_string());
-                                    }
-                                }
-                            }
+        if let Ok(o) = Command::new("ip").args(["addr", "show"]).output()
+            && o.status.success()
+        {
+            let text = String::from_utf8_lossy(&o.stdout);
+            for line in text.lines() {
+                if line.trim().starts_with("inet ") && !line.contains("127.0.0.1") {
+                    let parts: Vec<&str> = line.split_whitespace().collect();
+                    for part in &parts {
+                        if let Some(ip_str) = part.split('/').next()
+                            && let Ok(ip) = ip_str.parse::<Ipv4Addr>()
+                            && !ip.is_loopback()
+                        {
+                            return Some(ip.to_string());
                         }
                     }
                 }
@@ -189,30 +189,28 @@ pub fn my_ip() -> Option<String> {
 
     // "Connecting" a UDP socket sends no packet but selects the default
     // interface and reveals its source address.
-    if let Ok(s) = UdpSocket::bind("0.0.0.0:0") {
-        if s.connect("1.1.1.1:80").is_ok() {
-            if let Ok(a) = s.local_addr() {
-                let ip = a.ip().to_string();
-                if ip.parse::<Ipv4Addr>().is_ok() {
-                    return Some(ip);
-                }
-            }
+    if let Ok(s) = UdpSocket::bind("0.0.0.0:0")
+        && s.connect("1.1.1.1:80").is_ok()
+        && let Ok(a) = s.local_addr()
+    {
+        let ip = a.ip().to_string();
+        if ip.parse::<Ipv4Addr>().is_ok() {
+            return Some(ip);
         }
     }
     // Fallback: ask the kernel via "ip route get".
     if let Ok(o) = Command::new("ip")
         .args(["route", "get", "1.1.1.1"])
         .output()
+        && o.status.success()
     {
-        if o.status.success() {
-            let words: Vec<String> = String::from_utf8_lossy(&o.stdout)
-                .split_whitespace()
-                .map(ToString::to_string)
-                .collect();
-            for (i, w) in words.iter().enumerate() {
-                if *w == "src" && i + 1 < words.len() {
-                    return Some(words[i + 1].to_string());
-                }
+        let words: Vec<String> = String::from_utf8_lossy(&o.stdout)
+            .split_whitespace()
+            .map(ToString::to_string)
+            .collect();
+        for (i, w) in words.iter().enumerate() {
+            if *w == "src" && i + 1 < words.len() {
+                return Some(words[i + 1].to_string());
             }
         }
     }
@@ -228,35 +226,33 @@ pub fn get_local_interfaces() -> Vec<NetworkInterface> {
     if let Ok(output) = Command::new("ip")
         .args(["-o", "addr", "show", "up"])
         .output()
+        && output.status.success()
     {
-        if output.status.success() {
-            let text = String::from_utf8_lossy(&output.stdout);
-            for line in text.lines() {
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                if parts.len() >= 4 {
-                    let addr_part = parts[3];
-                    if let Some(ip_str) = addr_part.split('/').next() {
-                        if let Ok(ip) = ip_str.parse::<Ipv4Addr>() {
-                            // Skip loopback
-                            if ip.is_loopback() {
-                                continue;
-                            }
-                            // Calculate broadcast address for the /24 subnet
-                            let octets = ip.octets();
-                            let broadcast =
-                                format!("{}.{}.{}.255", octets[0], octets[1], octets[2]);
-                            let ip_string = ip.to_string();
-                            // Only add if not already present
-                            if !interfaces
-                                .iter()
-                                .any(|existing: &NetworkInterface| existing.ip == ip_string)
-                            {
-                                interfaces.push(NetworkInterface {
-                                    ip: ip_string,
-                                    broadcast,
-                                });
-                            }
-                        }
+        let text = String::from_utf8_lossy(&output.stdout);
+        for line in text.lines() {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 4 {
+                let addr_part = parts[3];
+                if let Some(ip_str) = addr_part.split('/').next()
+                    && let Ok(ip) = ip_str.parse::<Ipv4Addr>()
+                {
+                    // Skip loopback
+                    if ip.is_loopback() {
+                        continue;
+                    }
+                    // Calculate broadcast address for the /24 subnet
+                    let octets = ip.octets();
+                    let broadcast = format!("{}.{}.{}.255", octets[0], octets[1], octets[2]);
+                    let ip_string = ip.to_string();
+                    // Only add if not already present
+                    if !interfaces
+                        .iter()
+                        .any(|existing: &NetworkInterface| existing.ip == ip_string)
+                    {
+                        interfaces.push(NetworkInterface {
+                            ip: ip_string,
+                            broadcast,
+                        });
                     }
                 }
             }
@@ -264,39 +260,37 @@ pub fn get_local_interfaces() -> Vec<NetworkInterface> {
     }
 
     // Method 2: Fallback with `ifconfig` (Mac, BSD, etc.)
-    if interfaces.is_empty() {
-        if let Ok(output) = Command::new("ifconfig").output() {
-            if output.status.success() {
-                let text = String::from_utf8_lossy(&output.stdout);
-                for line in text.lines() {
-                    let trimmed = line.trim();
-                    if trimmed.contains("inet ")
-                        && !trimmed.contains("127.0.0.1")
-                        && !trimmed.contains("::1")
-                    {
-                        let parts: Vec<&str> = trimmed.split_whitespace().collect();
-                        for part in &parts {
-                            if let Ok(ip) = part.parse::<Ipv4Addr>() {
-                                // Skip loopback
-                                if ip.is_loopback() {
-                                    continue;
-                                }
-                                let octets = ip.octets();
-                                let broadcast =
-                                    format!("{}.{}.{}.255", octets[0], octets[1], octets[2]);
-                                let ip_string = ip.to_string();
-                                if !interfaces
-                                    .iter()
-                                    .any(|existing: &NetworkInterface| existing.ip == ip_string)
-                                {
-                                    interfaces.push(NetworkInterface {
-                                        ip: ip_string,
-                                        broadcast,
-                                    });
-                                }
-                                break;
-                            }
+    if interfaces.is_empty()
+        && let Ok(output) = Command::new("ifconfig").output()
+        && output.status.success()
+    {
+        let text = String::from_utf8_lossy(&output.stdout);
+        for line in text.lines() {
+            let trimmed = line.trim();
+            if trimmed.contains("inet ")
+                && !trimmed.contains("127.0.0.1")
+                && !trimmed.contains("::1")
+            {
+                let parts: Vec<&str> = trimmed.split_whitespace().collect();
+                for part in &parts {
+                    if let Ok(ip) = part.parse::<Ipv4Addr>() {
+                        // Skip loopback
+                        if ip.is_loopback() {
+                            continue;
                         }
+                        let octets = ip.octets();
+                        let broadcast = format!("{}.{}.{}.255", octets[0], octets[1], octets[2]);
+                        let ip_string = ip.to_string();
+                        if !interfaces
+                            .iter()
+                            .any(|existing: &NetworkInterface| existing.ip == ip_string)
+                        {
+                            interfaces.push(NetworkInterface {
+                                ip: ip_string,
+                                broadcast,
+                            });
+                        }
+                        break;
                     }
                 }
             }
@@ -306,12 +300,12 @@ pub fn get_local_interfaces() -> Vec<NetworkInterface> {
     // Method 3: Pure Rust fallback - try to discover interfaces
     if interfaces.is_empty() {
         // Try to get at least the default interface
-        if let Some(ip) = my_ip() {
-            if let Ok(ipv4) = ip.parse::<Ipv4Addr>() {
-                let octets = ipv4.octets();
-                let broadcast = format!("{}.{}.{}.255", octets[0], octets[1], octets[2]);
-                interfaces.push(NetworkInterface { ip, broadcast });
-            }
+        if let Some(ip) = my_ip()
+            && let Ok(ipv4) = ip.parse::<Ipv4Addr>()
+        {
+            let octets = ipv4.octets();
+            let broadcast = format!("{}.{}.{}.255", octets[0], octets[1], octets[2]);
+            interfaces.push(NetworkInterface { ip, broadcast });
         }
     }
 

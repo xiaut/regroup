@@ -5,7 +5,7 @@
 use std::collections::HashSet;
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
 use super::device::{load_device_file, save_device_file};
@@ -39,7 +39,7 @@ fn warn(msg: &str) {
 // ============================================================
 
 /// Auto-create device configuration with self-detected information
-pub fn create_device_config(config_dir: &PathBuf) -> Result<Machine, String> {
+pub fn create_device_config(config_dir: &Path) -> Result<Machine, String> {
     let hostname = host_name();
 
     // Validate hostname
@@ -84,10 +84,10 @@ pub fn create_device_config(config_dir: &PathBuf) -> Result<Machine, String> {
 
     // Save to device file
     let devices_dir = config_dir.join(DEVICES_DIR);
-    if !devices_dir.exists() {
-        if let Err(e) = fs::create_dir_all(&devices_dir) {
-            return Err(format!("cannot create devices directory: {}", e));
-        }
+    if !devices_dir.exists()
+        && let Err(e) = fs::create_dir_all(&devices_dir)
+    {
+        return Err(format!("cannot create devices directory: {}", e));
     }
 
     let device_path = devices_dir.join(format!("{}.json", hostname));
@@ -148,10 +148,10 @@ pub fn load_config() -> Conf {
     }
 
     // Create default settings if they don't exist
-    if !config_dir.join(GLOBAL_CONFIG_FILE).exists() {
-        if let Err(e) = save_default_global_settings(&config_dir) {
-            die(&format!("cannot create default settings: {}", e));
-        }
+    if !config_dir.join(GLOBAL_CONFIG_FILE).exists()
+        && let Err(e) = save_default_global_settings(&config_dir)
+    {
+        die(&format!("cannot create default settings: {}", e));
     }
 
     // Create devices directory
@@ -170,17 +170,15 @@ pub fn load_config() -> Conf {
     let mut machines: Vec<Machine> = Vec::new();
     let devices_dir = config_dir.join(DEVICES_DIR);
 
-    if devices_dir.exists() {
-        if let Ok(entries) = fs::read_dir(&devices_dir) {
-            for entry in entries {
-                if let Ok(entry) = entry {
-                    let path = entry.path();
-                    if path.is_file() && path.extension().map_or(false, |ext| ext == "json") {
-                        match load_device_file(&path) {
-                            Ok(machine) => machines.push(machine),
-                            Err(e) => warn(&format!("skipping {}: {}", path.display(), e)),
-                        }
-                    }
+    if devices_dir.exists()
+        && let Ok(entries) = fs::read_dir(&devices_dir)
+    {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() && path.extension().is_some_and(|ext| ext == "json") {
+                match load_device_file(&path) {
+                    Ok(machine) => machines.push(machine),
+                    Err(e) => warn(&format!("skipping {}: {}", path.display(), e)),
                 }
             }
         }
@@ -191,10 +189,7 @@ pub fn load_config() -> Conf {
     let local_ssh_public_key = get_ssh_server_public_key();
 
     let current_machine_exists = machines.iter().any(|m| {
-        m.name == local_hostname
-            || (local_ssh_public_key
-                .as_ref()
-                .map_or(false, |k| &m.ssh_public_key == k))
+        m.name == local_hostname || (local_ssh_public_key.as_ref() == Some(&m.ssh_public_key))
     });
 
     if !current_machine_exists {

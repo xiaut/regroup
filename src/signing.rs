@@ -182,10 +182,7 @@ pub fn load_public_key() -> Option<VerifyingKey> {
 
     // Length is checked above; try_into cannot fail here, but do not unwrap
     let public_array: [u8; 32] = public_bytes.try_into().ok()?;
-    match VerifyingKey::from_bytes(&public_array) {
-        Ok(key) => Some(key),
-        Err(_) => None,
-    }
+    VerifyingKey::from_bytes(&public_array).ok()
 }
 
 // ============================================================
@@ -201,7 +198,7 @@ pub fn sign_message(message: &str, signing_key: &SigningKey) -> Result<Signature
     // Encode signature as base64 for transmission
     let signature_bytes = signature.to_bytes();
     let base64_engine = base64::engine::general_purpose::STANDARD;
-    Ok(SignatureB64::new(base64_engine.encode(&signature_bytes)))
+    Ok(SignatureB64::new(base64_engine.encode(signature_bytes)))
 }
 
 /// Verify a message signature with the given public key
@@ -264,7 +261,7 @@ pub fn sign_beacon(
 
     // Encode the signing public key as base64
     let base64_engine = base64::engine::general_purpose::STANDARD;
-    let signing_public_key_b64 = base64_engine.encode(&verifying_key.to_bytes());
+    let signing_public_key_b64 = base64_engine.encode(verifying_key.to_bytes());
 
     // Create the beacon string with tab-separated fields
     // Format: name\tsigning_public_key_b64\tssh_public_key\tip\tport\ttimestamp\tsignature_b64
@@ -331,10 +328,10 @@ pub fn verify_beacon(
     };
 
     // If we have an expected signing public key, verify it matches
-    if let Some(expected_key) = expected_signing_public_key {
-        if signing_public_key.to_bytes() != expected_key.to_bytes() {
-            return Err("signing public key mismatch".to_string());
-        }
+    if let Some(expected_key) = expected_signing_public_key
+        && signing_public_key.to_bytes() != expected_key.to_bytes()
+    {
+        return Err("signing public key mismatch".to_string());
     }
 
     // Reconstruct the message to verify

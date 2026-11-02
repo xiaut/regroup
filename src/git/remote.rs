@@ -42,10 +42,7 @@ pub fn git_add_remote(repo_path: &Path, remote_name: &str, remote_url: &str) -> 
                     .arg(remote_url)
                     .status()?;
                 if !status.success() {
-                    return Err(io::Error::new(
-                        io::ErrorKind::Other,
-                        "failed to update remote",
-                    ));
+                    return Err(io::Error::other("failed to update remote"));
                 }
             }
             Ok(())
@@ -60,7 +57,7 @@ pub fn git_add_remote(repo_path: &Path, remote_name: &str, remote_url: &str) -> 
                 .arg(remote_url)
                 .status()?;
             if !status.success() {
-                return Err(io::Error::new(io::ErrorKind::Other, "failed to add remote"));
+                return Err(io::Error::other("failed to add remote"));
             }
             Ok(())
         }
@@ -81,10 +78,7 @@ pub fn git_remove_remote(repo_path: &Path, remote_name: &str) -> io::Result<()> 
         .status()?;
 
     if !status.success() {
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
-            "failed to remove remote",
-        ));
+        return Err(io::Error::other("failed to remove remote"));
     }
 
     Ok(())
@@ -141,11 +135,9 @@ pub fn refresh_git_remotes(
             // (stale device remotes); leave remotes the user configured for
             // other purposes (e.g. a backup repo) untouched.
             let is_regroup_remote =
-                git_get_remote_url(repo_path, remote).map_or(true, |url| url.contains(CONFIG_DIR));
-            if is_regroup_remote {
-                if let Err(e) = git_remove_remote(repo_path, remote) {
-                    errors.push(format!("failed to remove stale remote {}: {}", remote, e));
-                }
+                git_get_remote_url(repo_path, remote).is_none_or(|url| url.contains(CONFIG_DIR));
+            if is_regroup_remote && let Err(e) = git_remove_remote(repo_path, remote) {
+                errors.push(format!("failed to remove stale remote {}: {}", remote, e));
             }
         }
     }

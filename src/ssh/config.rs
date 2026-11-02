@@ -27,7 +27,7 @@ pub fn update_block(
         let words: Vec<&str> = line.split_whitespace().collect();
         if !words.is_empty() && words[0] == "Host" {
             in_block = false;
-            if words[1..].iter().any(|w| *w == name) {
+            if words[1..].contains(&name) {
                 in_block = true;
                 continue;
             }

@@ -4,7 +4,7 @@
 
 use std::fs;
 use std::io;
-use std::path::PathBuf;
+use std::path::Path;
 
 use serde_json::Value;
 
@@ -21,7 +21,7 @@ pub fn default_global_settings() -> GlobalSettings {
 }
 
 /// Load global settings from settings.json
-pub fn load_global_settings(config_dir: &PathBuf) -> GlobalSettings {
+pub fn load_global_settings(config_dir: &Path) -> GlobalSettings {
     let settings_path = config_dir.join(GLOBAL_CONFIG_FILE);
 
     let defaults = default_global_settings();
@@ -55,7 +55,7 @@ pub fn load_global_settings(config_dir: &PathBuf) -> GlobalSettings {
 }
 
 /// Save default global settings
-pub fn save_default_global_settings(config_dir: &PathBuf) -> io::Result<()> {
+pub fn save_default_global_settings(config_dir: &Path) -> io::Result<()> {
     let settings_path = config_dir.join(GLOBAL_CONFIG_FILE);
     let settings = serde_json::json!({
         "udp_port": 4242,

@@ -9,12 +9,13 @@ pub fn int_value(v: &Value) -> Option<u64> {
     if let Some(n) = v.as_u64() {
         return Some(n);
     }
-    if v.is_number() {
-        if let Some(f) = v.as_f64() {
-            if f >= 0.0 && f.fract() == 0.0 && f <= u64::MAX as f64 {
-                return Some(f as u64);
-            }
-        }
+    if v.is_number()
+        && let Some(f) = v.as_f64()
+        && f >= 0.0
+        && f.fract() == 0.0
+        && f <= u64::MAX as f64
+    {
+        return Some(f as u64);
     }
     None
 }

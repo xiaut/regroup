@@ -35,6 +35,18 @@ pub struct BeaconDevice {
     pub port: u16,
 }
 
+/// What a device announces about itself in every beacon: its name, its SSH
+/// server's public key (its unique identity on the network), the IP and port
+/// its SSH server listens on, and the Ed25519 key beacons are signed with.
+#[derive(Clone)]
+pub struct BeaconIdentity {
+    pub name: String,
+    pub ssh_public_key: SshPublicKey,
+    pub ip: String,
+    pub ssh_port: u16,
+    pub signing_key: ed25519_dalek::SigningKey,
+}
+
 /// Broadcasts signed beacon message every 2 s until the deadline on all local interfaces.
 /// Runs in its own thread, in parallel with the continuous listener, for the same window.
 /// Each interface sends to its own broadcast address.
@@ -45,13 +57,9 @@ pub struct BeaconDevice {
 /// The beacon format is: name\tsigning_public_key_b64\tssh_public_key\tip\tport\ttimestamp\tsignature_b64
 /// The signed message is: "name|ssh_public_key|ip|port|timestamp"
 pub fn announce_beacon(
+    identity: &BeaconIdentity,
     port: u16,
     secs: u64,
-    name: &str,
-    ssh_public_key: &SshPublicKey,
-    ip: &str,
-    port_ssh: u16,
-    signing_key: &ed25519_dalek::SigningKey,
     interfaces: &[NetworkInterface],
     running: Option<&AtomicBool>,
 ) {
@@ -68,10 +76,10 @@ pub fn announce_beacon(
     // Create one socket per interface to send on the correct broadcast address
     let mut sockets = Vec::new();
     for iface in interfaces {
-        if let Ok(sock) = std::net::UdpSocket::bind(format!("{}:0", iface.ip)) {
-            if sock.set_broadcast(true).is_ok() {
-                sockets.push((sock, iface.broadcast.clone(), iface.ip.clone()));
-            }
+        if let Ok(sock) = std::net::UdpSocket::bind(format!("{}:0", iface.ip))
+            && sock.set_broadcast(true).is_ok()
+        {
+            sockets.push((sock, iface.broadcast.clone(), iface.ip.clone()));
         }
     }
 
@@ -81,18 +89,24 @@ pub fn announce_beacon(
     }
 
     // Create the signed beacon message
-    let beacon_message =
-        match signing::sign_beacon(name, ssh_public_key, ip, port_ssh, &timestamp, signing_key) {
-            Ok(msg) => msg,
-            Err(e) => {
-                eprintln!("WARNING: cannot sign beacon: {}", e);
-                return;
-            }
-        };
+    let beacon_message = match signing::sign_beacon(
+        &identity.name,
+        &identity.ssh_public_key,
+        &identity.ip,
+        identity.ssh_port,
+        &timestamp,
+        &identity.signing_key,
+    ) {
+        Ok(msg) => msg,
+        Err(e) => {
+            eprintln!("WARNING: cannot sign beacon: {}", e);
+            return;
+        }
+    };
 
     let mut last_send: Option<Instant> = None;
-    while Instant::now() < deadline && running.map_or(true, |r| r.load(Ordering::Relaxed)) {
-        if last_send.map_or(true, |t| t.elapsed() >= Duration::from_secs(2)) {
+    while Instant::now() < deadline && running.is_none_or(|r| r.load(Ordering::Relaxed)) {
+        if last_send.is_none_or(|t| t.elapsed() >= Duration::from_secs(2)) {
             last_send = Some(Instant::now());
             for (sock, broadcast, _) in &sockets {
                 let target = format!("{}:{}", broadcast, port);

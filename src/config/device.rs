@@ -27,13 +27,13 @@ pub fn load_device_file(path: &Path) -> Result<Machine, String> {
 
     let obj = match root.as_object() {
         Some(o) => o,
-        None => return Err(format!("top-level value must be a JSON object")),
+        None => return Err("top-level value must be a JSON object".to_string()),
     };
 
     let name = match obj.get("name") {
         Some(v) => match v.as_str() {
             Some(s) => s.trim().to_string(),
-            None => return Err(format!("\"name\" must be a string")),
+            None => return Err("\"name\" must be a string".to_string()),
         },
         None => {
             // Try to get name from filename
@@ -52,15 +52,15 @@ pub fn load_device_file(path: &Path) -> Result<Machine, String> {
     let ssh_public_key = match obj.get("ssh_public_key") {
         Some(v) => match v.as_str() {
             Some(s) => SshPublicKey::from(s.trim()),
-            None => return Err(format!("\"ssh_public_key\" must be a string")),
+            None => return Err("\"ssh_public_key\" must be a string".to_string()),
         },
-        None => return Err(format!("\"ssh_public_key\" is required")),
+        None => return Err("\"ssh_public_key\" is required".to_string()),
     };
 
     let user = match obj.get("user") {
         Some(v) => match v.as_str() {
             Some(s) => s.trim().to_string(),
-            None => return Err(format!("\"user\" must be a string")),
+            None => return Err("\"user\" must be a string".to_string()),
         },
         None => String::new(),
     };
@@ -68,9 +68,9 @@ pub fn load_device_file(path: &Path) -> Result<Machine, String> {
     let signing_public_key = match obj.get("signing_public_key") {
         Some(v) => match v.as_str() {
             Some(s) => SigningPublicKeyB64::from(s.trim()),
-            None => return Err(format!("\"signing_public_key\" must be a string")),
+            None => return Err("\"signing_public_key\" must be a string".to_string()),
         },
-        None => return Err(format!("\"signing_public_key\" is required")),
+        None => return Err("\"signing_public_key\" is required".to_string()),
     };
 
     let (port, port_explicit) = match obj.get("port") {
@@ -78,10 +78,10 @@ pub fn load_device_file(path: &Path) -> Result<Machine, String> {
         Some(v) => {
             let n = match int_value(v) {
                 Some(n) => n,
-                None => return Err(format!("\"port\" must be an integer")),
+                None => return Err("\"port\" must be an integer".to_string()),
             };
-            if n < 1 || n > 65535 {
-                return Err(format!("\"port\" must be between 1 and 65535"));
+            if !(1..=65535).contains(&n) {
+                return Err("\"port\" must be between 1 and 65535".to_string());
             }
             (n as u16, true)
         }

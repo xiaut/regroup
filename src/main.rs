@@ -51,7 +51,7 @@ use cli::{
     trust_new_signing_key, unique_device_name, usage,
 };
 use config::{Machine, load_config};
-use discovery::beacon::{BeaconDevice, announce_beacon, listen_beacons_continuous};
+use discovery::beacon::{BeaconDevice, BeaconIdentity, announce_beacon, listen_beacons_continuous};
 use discovery::{get_local_interfaces, host_name, my_ip};
 use ssh::config::update_block;
 use ssh::keys::{SigningPublicKeyB64, SshPublicKey};
@@ -216,14 +216,17 @@ fn main() {
         match crate::signing::initialize_signing_keys() {
             Ok((signing_key, _)) => {
                 let ip_for_announcer = local_ip.clone().unwrap_or_else(|| "0.0.0.0".to_string());
+                let identity = BeaconIdentity {
+                    name: local_name.clone(),
+                    ssh_public_key: local_public_key.clone(),
+                    ip: ip_for_announcer,
+                    ssh_port: local_ssh_port,
+                    signing_key,
+                };
                 Some(start_beacon_announcer(
+                    identity,
                     conf.udp_port,
                     conf.wait_secs,
-                    local_name.clone(),
-                    local_public_key.clone(),
-                    ip_for_announcer,
-                    local_ssh_port,
-                    signing_key,
                     running_announcer,
                 ))
             }
@@ -334,125 +337,120 @@ fn main() {
 
                 // Signing key pinning: a beacon from a known machine must be
                 // signed with the key pinned when it was accepted.
-                if let Some(pinned) = pinned_signing_keys.get(&device.ssh_public_key) {
-                    if pinned.as_str() != device.signing_public_key.as_str() {
-                        // Either the machine was reinstalled (regroup
-                        // regenerated its signing keys) or this is spoofing.
-                        let pair = (
-                            device.ssh_public_key.clone(),
-                            device.signing_public_key.clone(),
-                        );
-                        if !rejected_signing_keys.contains(&pair) && rotation_pending.is_none() {
-                            if dry_run {
-                                eprintln!(
-                                    "\n[DRY RUN] {} announces with a NEW signing key — would ask to trust it",
-                                    device.name
-                                );
-                            } else {
-                                eprintln!(
-                                    "\n[!] {} announces with a NEW signing key (expected: {}…, received: {}…)",
-                                    device.name,
-                                    &pinned.as_str()[..8.min(pinned.as_str().len())],
-                                    &device.signing_public_key.as_str()
-                                        [..8.min(device.signing_public_key.as_str().len())]
-                                );
-                                println!(
-                                    "    This is expected after a reinstall (regroup regenerates its signing keys)."
-                                );
-                                println!(
-                                    "    If you do not expect a reinstall, this may be spoofing."
-                                );
-                                print!(
-                                    "    Trust the new signing key for {}? [y/N]: ",
-                                    device.name
-                                );
-                                io::stdout().flush().ok();
-                                last_prompt_time = std::time::Instant::now();
-                                rotation_pending = Some(device);
-                            }
+                if let Some(pinned) = pinned_signing_keys.get(&device.ssh_public_key)
+                    && pinned.as_str() != device.signing_public_key.as_str()
+                {
+                    // Either the machine was reinstalled (regroup
+                    // regenerated its signing keys) or this is spoofing.
+                    let pair = (
+                        device.ssh_public_key.clone(),
+                        device.signing_public_key.clone(),
+                    );
+                    if !rejected_signing_keys.contains(&pair) && rotation_pending.is_none() {
+                        if dry_run {
+                            eprintln!(
+                                "\n[DRY RUN] {} announces with a NEW signing key — would ask to trust it",
+                                device.name
+                            );
+                        } else {
+                            eprintln!(
+                                "\n[!] {} announces with a NEW signing key (expected: {}…, received: {}…)",
+                                device.name,
+                                &pinned.as_str()[..8.min(pinned.as_str().len())],
+                                &device.signing_public_key.as_str()
+                                    [..8.min(device.signing_public_key.as_str().len())]
+                            );
+                            println!(
+                                "    This is expected after a reinstall (regroup regenerates its signing keys)."
+                            );
+                            println!("    If you do not expect a reinstall, this may be spoofing.");
+                            print!("    Trust the new signing key for {}? [y/N]: ", device.name);
+                            io::stdout().flush().ok();
+                            last_prompt_time = std::time::Instant::now();
+                            rotation_pending = Some(device);
                         }
-                        continue;
                     }
+                    continue;
                 }
 
                 // Check if this is a known device
                 if known_keys.contains(&device.ssh_public_key) {
                     // Check if IP changed before notifying
-                    if let Some(last_ip) = known_ip.get(&device.ssh_public_key) {
-                        if last_ip == &device.ip {
-                            continue; // IP unchanged, skip silently
-                        }
+                    if let Some(last_ip) = known_ip.get(&device.ssh_public_key)
+                        && last_ip == &device.ip
+                    {
+                        continue; // IP unchanged, skip silently
                     }
                     // Known device with new IP: verify the host key at the new IP
                     // before trusting it, then update SSH config and known_hosts.
                     // A mismatch means the announced IP does not serve this
                     // machine's key (spoofing/MITM): keep the last verified IP.
-                    if let Some(machine) = key_to_machine.get(&device.ssh_public_key) {
-                        if !dry_run {
-                            let verified = match public_key::compute_fingerprint_from_public_key(
-                                machine.ssh_public_key.as_str(),
+                    if let Some(machine) = key_to_machine.get(&device.ssh_public_key)
+                        && !dry_run
+                    {
+                        let verified = match public_key::compute_fingerprint_from_public_key(
+                            machine.ssh_public_key.as_str(),
+                        ) {
+                            Some(expected) => match public_key::verify_and_add_to_known_hosts(
+                                &device.ip,
+                                device.port,
+                                &expected,
                             ) {
-                                Some(expected) => match public_key::verify_and_add_to_known_hosts(
-                                    &device.ip,
-                                    device.port,
-                                    &expected,
-                                ) {
-                                    public_key::HostKeyVerification::Success => true,
-                                    public_key::HostKeyVerification::HostUnreachable => {
-                                        println!(
-                                            "\n[~] Known device: {} at {} — unreachable, keeping last verified IP",
-                                            machine.name, device.ip
-                                        );
-                                        false
-                                    }
-                                    public_key::HostKeyVerification::WriteError => {
-                                        // Verification passed; only the known_hosts write failed
-                                        eprintln!(
-                                            "WARNING: could not write {} to ~/.ssh/known_hosts",
-                                            machine.name
-                                        );
-                                        true
-                                    }
-                                    public_key::HostKeyVerification::FingerprintMismatch {
-                                        expected,
-                                        actual,
-                                    } => {
-                                        eprintln!(
-                                            "\n[!] SECURITY: {} announces IP {} but serves a DIFFERENT host key — possible spoofing/MITM. SSH config NOT updated.",
-                                            machine.name, device.ip
-                                        );
-                                        eprintln!("    expected fingerprint: {}", expected);
-                                        eprintln!("    actual fingerprint:   {}", actual);
-                                        false
-                                    }
-                                },
-                                None => {
-                                    eprintln!(
-                                        "WARNING: cannot compute fingerprint of {}'s host key — keeping last verified IP",
-                                        machine.name
+                                public_key::HostKeyVerification::Success => true,
+                                public_key::HostKeyVerification::HostUnreachable => {
+                                    println!(
+                                        "\n[~] Known device: {} at {} — unreachable, keeping last verified IP",
+                                        machine.name, device.ip
                                     );
                                     false
                                 }
-                            };
-                            if verified {
-                                let _ = update_block(
-                                    &ssh_config,
-                                    &machine.name,
-                                    &device.ip,
-                                    &machine.user,
-                                    machine.port,
-                                    machine.port_explicit,
+                                public_key::HostKeyVerification::WriteError => {
+                                    // Verification passed; only the known_hosts write failed
+                                    eprintln!(
+                                        "WARNING: could not write {} to ~/.ssh/known_hosts",
+                                        machine.name
+                                    );
+                                    true
+                                }
+                                public_key::HostKeyVerification::FingerprintMismatch {
+                                    expected,
+                                    actual,
+                                } => {
+                                    eprintln!(
+                                        "\n[!] SECURITY: {} announces IP {} but serves a DIFFERENT host key — possible spoofing/MITM. SSH config NOT updated.",
+                                        machine.name, device.ip
+                                    );
+                                    eprintln!("    expected fingerprint: {}", expected);
+                                    eprintln!("    actual fingerprint:   {}", actual);
+                                    false
+                                }
+                            },
+                            None => {
+                                eprintln!(
+                                    "WARNING: cannot compute fingerprint of {}'s host key — keeping last verified IP",
+                                    machine.name
                                 );
-                                println!(
-                                    "\n[~] Known device: {} at {} (IP updated, host key verified)",
-                                    machine.name, device.ip
-                                );
+                                false
                             }
-                            // Remember this IP either way, so we do not
-                            // re-attempt (and re-warn about) the same IP on
-                            // every beacon.
-                            known_ip.insert(device.ssh_public_key.clone(), device.ip.clone());
+                        };
+                        if verified {
+                            let _ = update_block(
+                                &ssh_config,
+                                &machine.name,
+                                &device.ip,
+                                &machine.user,
+                                machine.port,
+                                machine.port_explicit,
+                            );
+                            println!(
+                                "\n[~] Known device: {} at {} (IP updated, host key verified)",
+                                machine.name, device.ip
+                            );
                         }
+                        // Remember this IP either way, so we do not
+                        // re-attempt (and re-warn about) the same IP on
+                        // every beacon.
+                        known_ip.insert(device.ssh_public_key.clone(), device.ip.clone());
                     }
                     continue; // Don't add to pending queue
                 }
@@ -734,29 +732,15 @@ fn start_beacon_listener(
 
 /// Start beacon announcer thread
 fn start_beacon_announcer(
+    identity: BeaconIdentity,
     port: u16,
     secs: u64,
-    name: String,
-    ssh_public_key: SshPublicKey,
-    ip: String,
-    ssh_port: u16,
-    signing_key: ed25519_dalek::SigningKey,
     running: Arc<AtomicBool>,
 ) -> thread::JoinHandle<()> {
     let interfaces = get_local_interfaces();
     thread::spawn(move || {
         while running.load(Ordering::Relaxed) {
-            announce_beacon(
-                port,
-                secs,
-                &name,
-                &ssh_public_key,
-                &ip,
-                ssh_port,
-                &signing_key,
-                &interfaces,
-                Some(&running),
-            );
+            announce_beacon(&identity, port, secs, &interfaces, Some(&running));
             std::thread::sleep(Duration::from_secs(2));
         }
     })

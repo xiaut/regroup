@@ -27,7 +27,7 @@ pub fn git_init(repo_path: &Path) -> io::Result<()> {
         .status()?;
 
     if !status.success() {
-        return Err(io::Error::new(io::ErrorKind::Other, "git init failed"));
+        return Err(io::Error::other("git init failed"));
     }
 
     // Ensure the initial branch is "main": pull/push operations hardcode it.
@@ -39,15 +39,16 @@ pub fn git_init(repo_path: &Path) -> io::Result<()> {
         .arg("--short")
         .arg("HEAD")
         .output();
-    if let Ok(o) = head {
-        if o.status.success() && String::from_utf8_lossy(&o.stdout).trim() != "main" {
-            let _ = Command::new("git")
-                .current_dir(repo_path)
-                .arg("symbolic-ref")
-                .arg("HEAD")
-                .arg("refs/heads/main")
-                .status();
-        }
+    if let Ok(o) = head
+        && o.status.success()
+        && String::from_utf8_lossy(&o.stdout).trim() != "main"
+    {
+        let _ = Command::new("git")
+            .current_dir(repo_path)
+            .arg("symbolic-ref")
+            .arg("HEAD")
+            .arg("refs/heads/main")
+            .status();
     }
 
     // Configure git to allow commits without user info

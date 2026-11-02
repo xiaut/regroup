@@ -4,7 +4,7 @@
 
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::config::device::save_device_file;
@@ -183,7 +183,7 @@ pub fn run_selftest() -> ! {
             }
             // a malformed signing key must be rejected, never panic
             // (regression: this used to crash the process)
-            let malformed = format!("selftest\tAAAA\tssh-ed25519 AAAA\t10.1.2.3\t22\t0\tAAAA");
+            let malformed = "selftest\tAAAA\tssh-ed25519 AAAA\t10.1.2.3\t22\t0\tAAAA".to_string();
             beacons_ok &= signing::verify_beacon(&malformed, None).is_err();
         } else {
             beacons_ok = false;
@@ -233,14 +233,7 @@ pub fn setup_cd() -> ! {
     };
 
     // Read current content
-    let current_content = if config_file.exists() {
-        match fs::read_to_string(&config_file) {
-            Ok(c) => c,
-            Err(_) => String::new(),
-        }
-    } else {
-        String::new()
-    };
+    let current_content = fs::read_to_string(&config_file).unwrap_or_default();
 
     // Prepare new content - remove any existing definition
     let new_content: String = current_content
@@ -313,7 +306,7 @@ pub fn setup_cd() -> ! {
 fn ssh_config_has_host(ssh_content: &str, name: &str) -> bool {
     for line in ssh_content.lines() {
         let words: Vec<&str> = line.split_whitespace().collect();
-        if !words.is_empty() && words[0] == "Host" && words[1..].iter().any(|w| *w == name) {
+        if !words.is_empty() && words[0] == "Host" && words[1..].contains(&name) {
             return true;
         }
     }
@@ -335,7 +328,7 @@ fn devices_dir_for(home: &str) -> PathBuf {
 /// - an existing `devices/<name>.json` file (even one that failed to load), or
 /// - an existing "Host <name>" block in ~/.ssh/config, whether regroup-managed
 ///   or configured by the user for an unrelated host.
-pub fn device_name_taken(name: &str, home: &str, ssh_config: &PathBuf) -> bool {
+pub fn device_name_taken(name: &str, home: &str, ssh_config: &Path) -> bool {
     let ssh_content = fs::read_to_string(ssh_config).unwrap_or_default();
     name_taken(
         name,
@@ -348,7 +341,7 @@ pub fn device_name_taken(name: &str, home: &str, ssh_config: &PathBuf) -> bool {
 fn name_taken(
     name: &str,
     ssh_content: &str,
-    devices_dir: &PathBuf,
+    devices_dir: &Path,
     known_machines: &[Machine],
 ) -> bool {
     known_machines.iter().any(|m| m.name == name)
@@ -359,7 +352,7 @@ fn name_taken(
 /// Suggest the first free name for a device: `desired` if free, otherwise
 /// "name-2", "name-3", ... Used as the default answer when asking the user
 /// to pick a new name for a device whose name is already taken.
-pub fn unique_device_name(desired: &str, home: &str, ssh_config: &PathBuf) -> String {
+pub fn unique_device_name(desired: &str, home: &str, ssh_config: &Path) -> String {
     let ssh_content = fs::read_to_string(ssh_config).unwrap_or_default();
     let known_machines = load_config().machines;
     let devices_dir = devices_dir_for(home);
@@ -392,7 +385,7 @@ pub fn unique_device_name(desired: &str, home: &str, ssh_config: &PathBuf) -> St
 /// not be written.
 pub fn add_device_to_config(
     home: &str,
-    ssh_config: &PathBuf,
+    ssh_config: &Path,
     device: &BeaconDevice,
     name: &str,
     new_count: &mut usize,
@@ -593,7 +586,7 @@ pub fn refresh_git(home: &str) {
 /// Self-detection uses both the hostname and the SSH public key: a stale
 /// device file written under an old hostname (hostnames can change, e.g.
 /// Termux) must not come back as a remote pointing at ourselves.
-fn configure_remotes(config_dir: &PathBuf) -> Vec<String> {
+fn configure_remotes(config_dir: &Path) -> Vec<String> {
     let conf = load_config();
     let local_name = host_name();
     let local_ssh_public_key = public_key::get_ssh_server_public_key();

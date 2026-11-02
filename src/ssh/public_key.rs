@@ -192,7 +192,7 @@ pub fn compute_fingerprint_from_public_key(public_key: &str) -> Option<SshFinger
         // which is: hostname key_type key_base64
         // But we only have key_type key_base64, so we need to add a dummy hostname
         let key_with_hostname = format!("dummy {}", public_key);
-        if let Err(_) = stdin.write_all(key_with_hostname.as_bytes()) {
+        if stdin.write_all(key_with_hostname.as_bytes()).is_err() {
             return None;
         }
     }
@@ -280,7 +280,7 @@ fn known_hosts_has_ip_entry(content: &str, ip: &str, port: u16) -> bool {
     content.lines().any(|line| {
         line.split_whitespace()
             .next()
-            .map_or(false, |patterns| patterns.split(',').any(|p| p == ip_entry))
+            .is_some_and(|patterns| patterns.split(',').any(|p| p == ip_entry))
     })
 }
 
@@ -315,10 +315,10 @@ fn append_known_hosts_entries(ip: &str, port: u16, keyscan_str: &str) -> std::io
     }
 
     // Avoid duplicates: only add if this ip:port is not pinned yet
-    if let Ok(existing) = fs::read_to_string(&known_hosts_path) {
-        if known_hosts_has_ip_entry(&existing, ip, port) {
-            return Ok(());
-        }
+    if let Ok(existing) = fs::read_to_string(&known_hosts_path)
+        && known_hosts_has_ip_entry(&existing, ip, port)
+    {
+        return Ok(());
     }
 
     // Append the new keys to known_hosts

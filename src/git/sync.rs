@@ -22,10 +22,10 @@ pub fn git_pull_remote(repo_path: &Path, remote_name: &str) -> io::Result<()> {
         .status()?;
 
     if !status.success() {
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
-            format!("failed to pull from {}", remote_name),
-        ));
+        return Err(io::Error::other(format!(
+            "failed to pull from {}",
+            remote_name
+        )));
     }
 
     Ok(())
@@ -45,10 +45,10 @@ pub fn git_push_remote(repo_path: &Path, remote_name: &str) -> io::Result<()> {
         .status()?;
 
     if !status.success() {
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
-            format!("failed to push to {}", remote_name),
-        ));
+        return Err(io::Error::other(format!(
+            "failed to push to {}",
+            remote_name
+        )));
     }
 
     Ok(())
@@ -121,7 +121,7 @@ pub fn git_add_and_commit_file(
         .status()?;
 
     if !add_status.success() {
-        return Err(io::Error::new(io::ErrorKind::Other, "failed to add file"));
+        return Err(io::Error::other("failed to add file"));
     }
 
     // Commit
