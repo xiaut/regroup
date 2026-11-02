@@ -151,7 +151,7 @@ Usage:
   ./regroup                continuous interactive mode, update ~/.ssh/config
   ./regroup test           dry run: nothing is modified
   ./regroup -v             verbose
-  ./regroup selftest       built-in checks (tools, config parsing)
+  ./regroup selftest       built-in checks (external tools, ssh-keygen fingerprint)
   ./regroup setup-cd       install 'regroup-cd' shell function to change to config directory
   ./regroup -h             this help
 
@@ -163,7 +163,7 @@ Interactive commands:
 Config repository structure (~/.regroup-config/git/):
   settings.json           (optional: udp_port, wait_secs)
   devices/
-    <hostname>.json       (each device's config: name, ssh_public_key, user, port)
+    <hostname>.json       (each device's config: name, ssh_public_key, signing_public_key, user, port)
 
 Exit codes:
   0  normal exit
@@ -254,10 +254,13 @@ Fields:
 
 ```bash
 # On any device, add a new device config
+# signing_public_key is required: take it from the device's own config
+# (~/.regroup-config/git/devices/<name>.json on that device)
 cat > ~/.regroup-config/git/devices/newdevice.json << EOF
 {
   "name": "newdevice",
   "ssh_public_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA...",
+  "signing_public_key": "MCowBQYDK2VwAyEA...",
   "user": "username"
 }
 EOF

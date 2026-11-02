@@ -16,7 +16,7 @@
 // Run:            ./regroup                (continuous interactive mode)
 //                 ./regroup test           (dry run: nothing is modified)
 //                 ./regroup -v             (verbose)
-//                 ./regroup selftest       (built-in checks)
+//                 ./regroup selftest       (external tools + ssh-keygen fingerprint checks)
 //                 ./regroup -h             (this help)
 //
 // Interactive commands:
