@@ -39,7 +39,7 @@ This will:
 1. Create local `~/.regroup-config/git/`
 2. Create its own device file
 3. Discover the first device via its UDP beacon and prompt to add it
-4. Enter continuous interactive mode (press `r` to pull from and push to git remotes)
+4. Enter continuous interactive mode (press `s` to pull from and push to git remotes)
 
 ## First Manual Git Sync
 
@@ -86,12 +86,23 @@ On every run, regroup enters continuous interactive mode:
    - Beacons older than 5 minutes, or dated too far in the future, are rejected
    - Beacons announcing an SSH public key we already know only update the
      machine's IP in ~/.ssh/config (silently, when the IP changed)
-3. New machines are queued and the user is prompted (y/N) for each one
+3. New machines appear in the "Detected" panel of the interactive ui; select
+   one with Up/Down and add it with Enter/y ('n' ignores it for this run);
+   in plain (piped) mode, each one is prompted (y/N) instead
 4. Accepted machines are verified against the live server (see below), then
    written to ~/.ssh/config, ~/.ssh/known_hosts and the git config repository
    (committed)
-5. Pressing 'r' pulls from and pushes to all configured git remotes
+5. Pressing 's' pulls from and pushes to all configured git remotes
 ```
+
+The interactive ui shows two machine panels side by side — **Detected** on
+the left (announced, waiting for a decision), **Added** on the right (in the
+configuration) — above an activity log and the current question. General
+messages (git syncs, dry run) go to the activity log; messages about one
+machine (IP updates, signing-key changes, security warnings) appear as a
+brief animated status on that machine's row instead of cluttering the log.
+Security warnings are additionally kept in the activity log so they cannot
+be missed.
 
 This handles:
 - **IP address changes**: devices are identified by SSH public key, not IP
@@ -157,10 +168,13 @@ Usage:
   ./regroup setup-cd       install 'regroup-cd' shell function to change to config directory
   ./regroup -h             this help
 
-Interactive commands:
-  y/N             - add or skip the current device
+Interactive commands (full-screen mode):
+  Up/Dn           - select a machine in the Detected panel
+  Enter/y         - add the selected machine (it moves to the Added panel)
+  n               - ignore the selected machine (its beacons are ignored this run)
   s               - sync git (pull from remotes, push to remotes)
-  d               - delete a known device (select in the panel, Enter confirms, Esc cancels)
+  d               - delete a known device (select in the Added panel, Enter confirms, Esc cancels)
+  PgUp/PgDn       - scroll the activity log
   q               - quit the program
 
 Config repository structure (~/.regroup-config/git/):

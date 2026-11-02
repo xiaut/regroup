@@ -5,9 +5,11 @@
 //! pending-device queue, the signing-key rotation prompt and the rename
 //! prompt. All decisions that affect what is written to disk live here.
 //!
-//! All output goes through `ui::log`; the ui renders it (activity pane of the
-//! full-screen interface, stdout in plain mode) and keeps the current
-//! question visible as the bottom block at all times.
+//! General messages go through `ui::log` (activity pane of the full-screen
+//! interface, stdout in plain mode); messages about one machine go through
+//! `ui::log_device`, which the full-screen ui shows as an animated status on
+//! the machine's row. The current question stays visible as the bottom block
+//! at all times.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::Path;
@@ -23,7 +25,7 @@ use crate::discovery::beacon::BeaconDevice;
 use crate::ssh::config::update_block;
 use crate::ssh::keys::{SigningPublicKeyB64, SshPublicKey};
 use crate::ssh::public_key;
-use crate::ui::{self, Action, Device, Question};
+use crate::ui::{self, Action, Device, Level, Question};
 
 /// How long each loop iteration waits for user input before checking the
 /// beacon channel again.
@@ -69,14 +71,21 @@ pub fn run(ctx: &Context, udp_port: u16, beacons: &Receiver<BeaconDevice>) -> us
         }
 
         // The display always reflects the state after processing.
-        ui.set_question(state.current_question(ctx));
-        let devices = state.devices_view();
+        let plain = !matches!(ui, ui::Ui::Tty(_));
+        ui.set_question(state.current_question(ctx, plain));
+        let detected = state.detected_view();
+        let added = state.added_view();
         let selected = state
+            .pending_selected
+            .as_ref()
+            .and_then(|key| detected.iter().position(|d| d.key == key.as_str()));
+        let delete_selected = state
             .delete_selection
             .as_ref()
-            .and_then(|name| devices.iter().position(|d| d.name == *name));
-        ui.set_devices(devices);
+            .and_then(|name| added.iter().position(|d| &d.name == name));
+        ui.set_devices(detected, added);
         ui.set_selected(selected);
+        ui.set_delete_selected(delete_selected);
         ui.draw();
     }
     state.new_count
@@ -101,6 +110,9 @@ struct InteractiveState {
     pending_devices: VecDeque<BeaconDevice>,
     /// Pending devices by public key, to prevent duplicates.
     pending_keys: HashSet<SshPublicKey>,
+    /// Machine selected in the Detected panel (full-screen ui), by public
+    /// key. None when the queue is empty.
+    pending_selected: Option<SshPublicKey>,
     /// Last known IP for known devices, to avoid redundant notifications.
     known_ip: HashMap<SshPublicKey, String>,
     /// Devices the user rejected, to avoid re-asking.
@@ -127,6 +139,7 @@ impl InteractiveState {
             rotation_pending: None,
             pending_devices: VecDeque::new(),
             pending_keys: HashSet::new(),
+            pending_selected: None,
             known_ip: HashMap::new(),
             rejected_keys: HashSet::new(),
             rename_state: None,
@@ -175,8 +188,10 @@ impl InteractiveState {
     }
 
     /// The question to display, derived from the current state. Dry run
-    /// never asks anything: pending devices are only logged.
-    fn current_question(&self, ctx: &Context) -> Question {
+    /// never asks anything: pending devices are only logged. In plain mode
+    /// the pending queue is asked one device at a time; the full-screen ui
+    /// adds machines from the Detected panel instead.
+    fn current_question(&self, ctx: &Context, plain: bool) -> Question {
         if let Some(name) = &self.delete_selection {
             Question::Delete {
                 name: name.clone(),
@@ -190,7 +205,8 @@ impl InteractiveState {
             Question::TrustKey {
                 name: device.name.clone(),
             }
-        } else if !ctx.dry_run
+        } else if plain
+            && !ctx.dry_run
             && let Some(device) = self.pending_devices.front()
         {
             Question::AddDevice {
@@ -202,29 +218,36 @@ impl InteractiveState {
         }
     }
 
-    /// The machines to show in the devices panel: known machines with their
-    /// last known IP, plus pending devices marked as pending.
-    fn devices_view(&self) -> Vec<Device> {
+    /// The machines to show in the Detected panel: announced machines
+    /// waiting for a decision, sorted by name.
+    fn detected_view(&self) -> Vec<Device> {
+        let mut devices: Vec<Device> = self
+            .pending_devices
+            .iter()
+            .map(|d| Device {
+                key: d.ssh_public_key.as_str().to_string(),
+                name: d.name.clone(),
+                ip: Some(d.ip.clone()),
+                port: d.port,
+            })
+            .collect();
+        devices.sort_by(|a, b| a.name.cmp(&b.name));
+        devices
+    }
+
+    /// The machines to show in the Added panel: known machines with their
+    /// last known IP, sorted by name.
+    fn added_view(&self) -> Vec<Device> {
         let mut devices: Vec<Device> = self
             .key_to_machine
             .values()
             .map(|m| Device {
+                key: m.ssh_public_key.as_str().to_string(),
                 name: m.name.clone(),
                 ip: self.known_ip.get(&m.ssh_public_key).cloned(),
                 port: m.port,
-                pending: false,
             })
             .collect();
-        for device in &self.pending_devices {
-            if !devices.iter().any(|d| d.name == device.name) {
-                devices.push(Device {
-                    name: device.name.clone(),
-                    ip: Some(device.ip.clone()),
-                    port: device.port,
-                    pending: true,
-                });
-            }
-        }
         devices.sort_by(|a, b| a.name.cmp(&b.name));
         devices
     }
@@ -260,13 +283,19 @@ impl InteractiveState {
                         device.name
                     ));
                 } else {
-                    ui::log(&format!(
-                        "[!] {} announces with a NEW signing key (expected: {}…, received: {}…)\n    This is expected after a reinstall (regroup regenerates its signing keys).\n    If you do not expect a reinstall, this may be spoofing.",
-                        device.name,
-                        &pinned.as_str()[..8.min(pinned.as_str().len())],
-                        &device.signing_public_key.as_str()
-                            [..8.min(device.signing_public_key.as_str().len())]
-                    ));
+                    ui::log_device(
+                        &device.ssh_public_key,
+                        &device.name,
+                        Level::Warning,
+                        "NEW signing key — reinstall or spoofing?",
+                        Some(&format!(
+                            "[!] {} announces with a NEW signing key (expected: {}…, received: {}…)\n    This is expected after a reinstall (regroup regenerates its signing keys).\n    If you do not expect a reinstall, this may be spoofing.",
+                            device.name,
+                            &pinned.as_str()[..8.min(pinned.as_str().len())],
+                            &device.signing_public_key.as_str()
+                                [..8.min(device.signing_public_key.as_str().len())]
+                        )),
+                    );
                     self.rotation_pending = Some(device);
                 }
             }
@@ -298,36 +327,60 @@ impl InteractiveState {
                     ) {
                         public_key::HostKeyVerification::Success => true,
                         public_key::HostKeyVerification::HostUnreachable => {
-                            ui::log(&format!(
-                                "[~] Known device: {} at {} — unreachable, keeping last verified IP",
-                                machine.name, device.ip
-                            ));
+                            ui::log_device(
+                                &machine.ssh_public_key,
+                                &machine.name,
+                                Level::Warning,
+                                "unreachable — keeping last verified IP",
+                                Some(&format!(
+                                    "[~] Known device: {} at {} — unreachable, keeping last verified IP",
+                                    machine.name, device.ip
+                                )),
+                            );
                             false
                         }
                         public_key::HostKeyVerification::WriteError => {
                             // Verification passed; only the known_hosts write failed
-                            ui::log(&format!(
-                                "WARNING: could not write {} to ~/.ssh/known_hosts",
-                                machine.name
-                            ));
+                            ui::log_device(
+                                &machine.ssh_public_key,
+                                &machine.name,
+                                Level::Warning,
+                                "verified, but known_hosts write failed",
+                                Some(&format!(
+                                    "WARNING: could not write {} to ~/.ssh/known_hosts",
+                                    machine.name
+                                )),
+                            );
                             true
                         }
                         public_key::HostKeyVerification::FingerprintMismatch {
                             expected,
                             actual,
                         } => {
-                            ui::log(&format!(
-                                "[!] SECURITY: {} announces IP {} but serves a DIFFERENT host key — possible spoofing/MITM. SSH config NOT updated.\n    expected fingerprint: {}\n    actual fingerprint:   {}",
-                                machine.name, device.ip, expected, actual
-                            ));
+                            ui::log_device(
+                                &machine.ssh_public_key,
+                                &machine.name,
+                                Level::Security,
+                                "host key MISMATCH — possible spoofing/MITM",
+                                Some(&format!(
+                                    "[!] SECURITY: {} announces IP {} but serves a DIFFERENT host key — possible spoofing/MITM. SSH config NOT updated.\n    expected fingerprint: {}\n    actual fingerprint:   {}",
+                                    machine.name, device.ip, expected, actual
+                                )),
+                            );
                             false
                         }
                     },
                     None => {
-                        ui::log(&format!(
-                            "WARNING: cannot compute fingerprint of {}'s host key — keeping last verified IP",
-                            machine.name
-                        ));
+                        ui::log_device(
+                            &machine.ssh_public_key,
+                            &machine.name,
+                            Level::Warning,
+                            "cannot compute fingerprint — keeping last verified IP",
+                            Some(&format!(
+                                "WARNING: cannot compute fingerprint of {}'s host key — keeping last verified IP",
+                                machine.name
+                            )),
+                        );
                         false
                     }
                 };
@@ -351,14 +404,26 @@ impl InteractiveState {
                         })
                         && public_key::remove_known_host(&old_ip) > 0
                     {
-                        ui::log(&format!(
-                            "  ~ Cleaned old known_hosts entries for {old_ip}"
-                        ));
+                        ui::log_device(
+                            &machine.ssh_public_key,
+                            &machine.name,
+                            Level::Info,
+                            "cleaned old known_hosts entries",
+                            Some(&format!(
+                                "  ~ Cleaned old known_hosts entries for {old_ip}"
+                            )),
+                        );
                     }
-                    ui::log(&format!(
-                        "[~] Known device: {} at {} (IP updated, host key verified)",
-                        machine.name, device.ip
-                    ));
+                    ui::log_device(
+                        &machine.ssh_public_key,
+                        &machine.name,
+                        Level::Success,
+                        "IP updated — host key verified",
+                        Some(&format!(
+                            "[~] Known device: {} at {} (IP updated, host key verified)",
+                            machine.name, device.ip
+                        )),
+                    );
                 }
                 // Remember this IP either way, so we do not
                 // re-attempt (and re-warn about) the same IP on
@@ -387,13 +452,23 @@ impl InteractiveState {
             return false;
         }
         self.pending_devices.push_back(device);
+        // Select the new machine so it can be added right away.
+        if self.pending_selected.is_none() {
+            self.pending_selected = Some(self.pending_devices.back().unwrap().ssh_public_key.clone());
+        }
         let added_device = self.pending_devices.back().unwrap();
-        ui::log(&format!(
-            "[!] New device: {} ({}) - key: {}",
-            added_device.name,
-            added_device.ip,
-            key_preview(&added_device.ssh_public_key)
-        ));
+        ui::log_device(
+            &added_device.ssh_public_key,
+            &added_device.name,
+            Level::Info,
+            "new device detected",
+            Some(&format!(
+                "[!] New device: {} ({}) - key: {}",
+                added_device.name,
+                added_device.ip,
+                key_preview(&added_device.ssh_public_key)
+            )),
+        );
         false
     }
 
@@ -411,7 +486,9 @@ impl InteractiveState {
                     self.reload(ctx);
                 }
             }
-            Action::AddCurrent => self.accept_current(ctx),
+            Action::Add => self.accept_selected(ctx),
+            Action::Ignore => self.ignore_selected(),
+            Action::AddCurrent => self.accept_front(ctx),
             Action::SkipCurrent => {
                 if let Some(device) = self.pending_devices.pop_front() {
                     self.pending_keys.remove(&device.ssh_public_key);
@@ -419,6 +496,7 @@ impl InteractiveState {
                     self.rejected_keys.insert(device.ssh_public_key);
                     ui::log(&format!("  Skipped {}.", device.name));
                 }
+                self.after_selection_change();
             }
             Action::TrustKey => {
                 if let Some(device) = self.rotation_pending.take() {
@@ -427,10 +505,16 @@ impl InteractiveState {
                         device.signing_public_key.clone(),
                     );
                     trust_new_signing_key(ctx.home, &device);
-                    ui::log(&format!(
-                        "  + New signing key for {} trusted — its next beacon will be processed normally.",
-                        device.name
-                    ));
+                    ui::log_device(
+                        &device.ssh_public_key,
+                        &device.name,
+                        Level::Success,
+                        "new signing key trusted",
+                        Some(&format!(
+                            "  + New signing key for {} trusted — its next beacon will be processed normally.",
+                            device.name
+                        )),
+                    );
                 }
             }
             Action::RejectKey => {
@@ -439,10 +523,16 @@ impl InteractiveState {
                         device.ssh_public_key.clone(),
                         device.signing_public_key.clone(),
                     ));
-                    ui::log(&format!(
-                        "  New signing key for {} rejected — its beacons are ignored.",
-                        device.name
-                    ));
+                    ui::log_device(
+                        &device.ssh_public_key,
+                        &device.name,
+                        Level::Warning,
+                        "new signing key rejected",
+                        Some(&format!(
+                            "  New signing key for {} rejected — its beacons are ignored.",
+                            device.name
+                        )),
+                    );
                 }
             }
             Action::Rename(name) => self.rename(ctx, name),
@@ -456,11 +546,23 @@ impl InteractiveState {
                     ui::log("  (dry run - device removal skipped)");
                 } else {
                     // Select the first deletable device, if any.
-                    self.move_selection(true);
+                    self.move_delete_selection(true);
                 }
             }
-            Action::SelectPrev => self.move_selection(false),
-            Action::SelectNext => self.move_selection(true),
+            Action::SelectPrev => {
+                if self.delete_selection.is_some() {
+                    self.move_delete_selection(false);
+                } else {
+                    self.move_pending_selection(false);
+                }
+            }
+            Action::SelectNext => {
+                if self.delete_selection.is_some() {
+                    self.move_delete_selection(true);
+                } else {
+                    self.move_pending_selection(true);
+                }
+            }
             Action::DeleteConfirm => self.delete_selected(ctx),
             Action::DeleteCancel => self.delete_selection = None,
         }
@@ -479,10 +581,10 @@ impl InteractiveState {
         names
     }
 
-    /// Move the delete-mode selection to the next (or previous when
-    /// `forward` is false) known device. With no selection, selects the
-    /// first one.
-    fn move_selection(&mut self, forward: bool) {
+    /// Move the delete-mode selection (Added panel) to the next (or
+    /// previous when `forward` is false) known device. With no selection,
+    /// selects the first one.
+    fn move_delete_selection(&mut self, forward: bool) {
         let names = self.deletable_names();
         if names.is_empty() {
             self.delete_selection = None;
@@ -497,6 +599,36 @@ impl InteractiveState {
             None => 0,
         };
         self.delete_selection = Some(names[new_pos].clone());
+    }
+
+    /// Move the selection of the Detected panel to the next (or previous
+    /// when `forward` is false) pending machine, in name order. With no
+    /// selection, selects the first one.
+    fn move_pending_selection(&mut self, forward: bool) {
+        let mut sorted: Vec<&BeaconDevice> = self.pending_devices.iter().collect();
+        sorted.sort_by(|a, b| a.name.cmp(&b.name));
+        if sorted.is_empty() {
+            self.pending_selected = None;
+            return;
+        }
+        let pos = sorted
+            .iter()
+            .position(|d| Some(&d.ssh_public_key) == self.pending_selected.as_ref());
+        let new_pos = match pos {
+            Some(p) if forward => (p + 1).min(sorted.len() - 1),
+            Some(p) => p.saturating_sub(1),
+            None => 0,
+        };
+        self.pending_selected = Some(sorted[new_pos].ssh_public_key.clone());
+    }
+
+    /// Point the Detected-panel selection at a sensible machine after the
+    /// selected one left the queue (added or ignored).
+    fn after_selection_change(&mut self) {
+        self.pending_selected = None;
+        if let Some(front) = self.pending_devices.front() {
+            self.pending_selected = Some(front.ssh_public_key.clone());
+        }
     }
 
     /// Remove the selected device: delete its config file (committed, so
@@ -534,13 +666,42 @@ impl InteractiveState {
         self.known_ip.remove(&key);
     }
 
-    /// Accept the pending device at the front of the queue. A name collision
+    /// Add the machine selected in the Detected panel. A name collision
     /// redirects to the rename question instead.
-    fn accept_current(&mut self, ctx: &Context) {
+    fn accept_selected(&mut self, ctx: &Context) {
+        let Some(key) = self
+            .pending_selected
+            .clone()
+            .or_else(|| self.pending_devices.front().map(|d| d.ssh_public_key.clone()))
+        else {
+            return;
+        };
+        let Some(pos) = self
+            .pending_devices
+            .iter()
+            .position(|d| d.ssh_public_key == key)
+        else {
+            return;
+        };
+        let device = self.pending_devices.remove(pos).unwrap();
+        self.pending_keys.remove(&device.ssh_public_key);
+        self.after_selection_change();
+        self.accept_device(ctx, device);
+    }
+
+    /// Add the front of the pending queue (plain mode). A name collision
+    /// redirects to the rename question instead.
+    fn accept_front(&mut self, ctx: &Context) {
         let Some(device) = self.pending_devices.pop_front() else {
             return;
         };
         self.pending_keys.remove(&device.ssh_public_key);
+        self.after_selection_change();
+        self.accept_device(ctx, device);
+    }
+
+    /// Accept `device`: a name collision redirects to the rename question.
+    fn accept_device(&mut self, ctx: &Context, device: BeaconDevice) {
         // If the name is already used by another machine,
         // ask the user to pick a new one.
         if device_name_taken(&device.name, ctx.home, ctx.ssh_config) {
@@ -554,6 +715,34 @@ impl InteractiveState {
         }
         let name = device.name.clone();
         self.add_device(ctx, device, name);
+    }
+
+    /// Ignore the machine selected in the Detected panel: it is dropped
+    /// from the queue and its beacons are ignored for the rest of the run.
+    fn ignore_selected(&mut self) {
+        let Some(key) = self
+            .pending_selected
+            .clone()
+            .or_else(|| self.pending_devices.front().map(|d| d.ssh_public_key.clone()))
+        else {
+            return;
+        };
+        let Some(pos) = self
+            .pending_devices
+            .iter()
+            .position(|d| d.ssh_public_key == key)
+        else {
+            return;
+        };
+        let device = self.pending_devices.remove(pos).unwrap();
+        self.pending_keys.remove(&device.ssh_public_key);
+        // Device rejected, remember to not ask again
+        self.rejected_keys.insert(device.ssh_public_key);
+        ui::log(&format!(
+            "  Ignored {} — its beacons are ignored for this run.",
+            device.name
+        ));
+        self.after_selection_change();
     }
 
     /// The user picked a new name for the pending rename. A name that is
