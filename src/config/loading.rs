@@ -97,6 +97,17 @@ pub fn create_device_config(config_dir: &Path) -> Result<Machine, String> {
         return Err(format!("cannot save device config: {}", e));
     }
 
+    // First run: the device file is the repository's initial commit, so the
+    // local branch exists before any sync with another machine (a removal
+    // on a commit-less repository cannot be committed).
+    if let Err(e) = crate::git::sync::git_add_and_commit_file(
+        config_dir,
+        &device_path,
+        &format!("Add device {hostname}"),
+    ) {
+        warn(&format!("could not commit device config: {}", e));
+    }
+
     Ok(machine)
 }
 
