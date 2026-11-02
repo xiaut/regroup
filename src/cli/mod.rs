@@ -21,13 +21,15 @@ use crate::ssh::public_key::{self};
 
 /// Terminate with an error message
 pub fn die(msg: &str) -> ! {
+    // Restore the terminal first: process::exit runs no destructors.
+    crate::ui::restore();
     eprintln!("ERROR: {}", msg);
     std::process::exit(2);
 }
 
 /// Print a warning message
 pub fn warn(msg: &str) {
-    eprintln!("WARNING: {}", msg);
+    crate::ui::log(&format!("WARNING: {}", msg));
 }
 
 // ============================================================
@@ -342,10 +344,10 @@ pub fn add_device_to_config(
         Some(expected) => {
             match public_key::verify_and_add_to_known_hosts(&device.ip, device.port, &expected) {
                 public_key::HostKeyVerification::Success => {
-                    println!(
+                    crate::ui::log(&format!(
                         "  + Added {} to ~/.ssh/known_hosts (host key verified)",
                         name
-                    );
+                    ));
                 }
                 public_key::HostKeyVerification::HostUnreachable => {
                     // Host unreachable: we cannot verify. Do not pin anything;
@@ -359,29 +361,24 @@ pub fn add_device_to_config(
                     warn(&format!("could not write {} to ~/.ssh/known_hosts", name));
                 }
                 public_key::HostKeyVerification::FingerprintMismatch { expected, actual } => {
-                    eprintln!();
-                    eprintln!(
-                        "[!] SECURITY: {} announces key {} at {}",
+                    crate::ui::log(&format!(
+                        "[!] SECURITY: {} announces key {} at {}\n    but the server there serves a DIFFERENT host key — possible spoofing or MITM.\n    expected fingerprint: {}\n    actual fingerprint:   {}\n    Device NOT added.",
                         name,
                         &device.ssh_public_key.as_str()
                             [..16.min(device.ssh_public_key.as_str().len())],
-                        device.ip
-                    );
-                    eprintln!(
-                        "    but the server there serves a DIFFERENT host key — possible spoofing or MITM."
-                    );
-                    eprintln!("    expected fingerprint: {}", expected);
-                    eprintln!("    actual fingerprint:   {}", actual);
-                    eprintln!("    Device NOT added.");
+                        device.ip,
+                        expected,
+                        actual
+                    ));
                     return None;
                 }
             }
         }
         None => {
-            eprintln!(
+            crate::ui::log(&format!(
                 "[!] SECURITY: {} announces a host key that is not a valid OpenSSH public key — device NOT added.",
                 name
-            );
+            ));
             return None;
         }
     }
@@ -399,10 +396,10 @@ pub fn add_device_to_config(
             ) {
                 warn(&format!("could not update SSH config for {}: {}", name, e));
             } else {
-                println!(
+                crate::ui::log(&format!(
                     "  + Added {} -> {} (~/.ssh/config updated)",
                     name, device.ip
-                );
+                ));
             }
 
             // Commit to git so changes persist across runs
@@ -478,7 +475,7 @@ pub fn refresh_git(home: &str) {
         return;
     }
 
-    println!("\nRefreshing git...");
+    crate::ui::log("Refreshing git...");
 
     // Configure remotes for all known machines before syncing: pull/push can
     // only reach devices that already have a remote.
@@ -500,7 +497,7 @@ pub fn refresh_git(home: &str) {
         warn(&format!("[sync] {}", error));
     }
 
-    println!("Git refresh complete.");
+    crate::ui::log("Git refresh complete.");
 }
 
 /// Configure git remotes for all known machines except this device.

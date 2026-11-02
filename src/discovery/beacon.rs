@@ -66,7 +66,7 @@ pub fn announce_beacon(
     use crate::signing;
 
     if interfaces.is_empty() {
-        eprintln!("WARNING: no local interfaces found — announcing disabled");
+        crate::ui::log("WARNING: no local interfaces found — announcing disabled");
         return;
     }
 
@@ -84,7 +84,7 @@ pub fn announce_beacon(
     }
 
     if sockets.is_empty() {
-        eprintln!("WARNING: cannot bind to any interface for announcing");
+        crate::ui::log("WARNING: cannot bind to any interface for announcing");
         return;
     }
 
@@ -99,7 +99,7 @@ pub fn announce_beacon(
     ) {
         Ok(msg) => msg,
         Err(e) => {
-            eprintln!("WARNING: cannot sign beacon: {}", e);
+            crate::ui::log(&format!("WARNING: cannot sign beacon: {}", e));
             return;
         }
     };
@@ -152,10 +152,10 @@ pub fn listen_beacons_continuous(
     let sock = match std::net::UdpSocket::bind(("0.0.0.0", port)) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!(
+            crate::ui::log(&format!(
                 "WARNING: cannot listen on UDP port {} ({}) — beacons ignored",
                 port, e
-            );
+            ));
             return;
         }
     };
@@ -186,11 +186,11 @@ pub fn listen_beacons_continuous(
                     .as_secs();
 
                 if now.saturating_sub(timestamp) > MAX_BEACON_AGE {
-                    eprintln!(
+                    crate::ui::log(&format!(
                         "WARNING: received expired beacon from {} (age: {}s)",
                         ip,
                         now.saturating_sub(timestamp)
-                    );
+                    ));
                     continue;
                 }
 
@@ -198,11 +198,11 @@ pub fn listen_beacons_continuous(
                 // forever (saturating_sub yields 0): allow only a small
                 // clock skew between machines.
                 if timestamp > now + MAX_BEACON_FUTURE {
-                    eprintln!(
+                    crate::ui::log(&format!(
                         "WARNING: received beacon from {} with a future timestamp ({}s ahead) — rejected",
                         ip,
                         timestamp - now
-                    );
+                    ));
                     continue;
                 }
 
@@ -212,10 +212,10 @@ pub fn listen_beacons_continuous(
                     Ok((name, ssh_public_key, ip_verified, port)) => {
                         // Check IP consistency
                         if ip_verified != ip {
-                            eprintln!(
+                            crate::ui::log(&format!(
                                 "WARNING: beacon IP mismatch - claimed: {}, verified: {}",
                                 ip, ip_verified
-                            );
+                            ));
                             continue;
                         }
 
@@ -240,7 +240,10 @@ pub fn listen_beacons_continuous(
                         }
                     }
                     Err(e) => {
-                        eprintln!("WARNING: invalid beacon signature from {}: {}", ip, e);
+                        crate::ui::log(&format!(
+                            "WARNING: invalid beacon signature from {}: {}",
+                            ip, e
+                        ));
                     }
                 }
             }

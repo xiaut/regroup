@@ -8,6 +8,8 @@ homepage = "https://github.com/xiaut/regroup"
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
+crossterm = "0.28"
+ratatui = "0.29"
 serde_json = "1.0.154"
 ed25519-dalek = "2.2.0"
 rand_core = { version = "0.6.4", features = ["getrandom"] }

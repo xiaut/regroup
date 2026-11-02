@@ -5,7 +5,16 @@
 use std::fs;
 use std::io;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
+
+/// Run a git command quietly: its output would corrupt the interactive
+/// display (which owns the terminal), and failures are reported through the
+/// returned errors.
+fn quiet(mut cmd: Command) -> Command {
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::null());
+    cmd
+}
 
 /// Check if a directory is a git repository
 pub fn is_git_repo(path: &Path) -> bool {
@@ -21,7 +30,7 @@ pub fn git_init(repo_path: &Path) -> io::Result<()> {
 
     fs::create_dir_all(repo_path)?;
 
-    let status = Command::new("git")
+    let status = quiet(Command::new("git"))
         .current_dir(repo_path)
         .arg("init")
         .status()?;
@@ -43,7 +52,7 @@ pub fn git_init(repo_path: &Path) -> io::Result<()> {
         && o.status.success()
         && String::from_utf8_lossy(&o.stdout).trim() != "main"
     {
-        let _ = Command::new("git")
+        let _ = quiet(Command::new("git"))
             .current_dir(repo_path)
             .arg("symbolic-ref")
             .arg("HEAD")
@@ -52,14 +61,14 @@ pub fn git_init(repo_path: &Path) -> io::Result<()> {
     }
 
     // Configure git to allow commits without user info
-    let _ = Command::new("git")
+    let _ = quiet(Command::new("git"))
         .current_dir(repo_path)
         .arg("config")
         .arg("user.email")
         .arg("regroup@local")
         .status();
 
-    let _ = Command::new("git")
+    let _ = quiet(Command::new("git"))
         .current_dir(repo_path)
         .arg("config")
         .arg("user.name")
@@ -68,7 +77,7 @@ pub fn git_init(repo_path: &Path) -> io::Result<()> {
 
     // Configure git to allow pushing to the currently checked-out branch
     // This is essential for decentralized sync where each device pushes to others
-    let _ = Command::new("git")
+    let _ = quiet(Command::new("git"))
         .current_dir(repo_path)
         .arg("config")
         .arg("receive.denyCurrentBranch")
@@ -76,7 +85,7 @@ pub fn git_init(repo_path: &Path) -> io::Result<()> {
         .status();
 
     // Configure pull to use rebase by default for cleaner history
-    let _ = Command::new("git")
+    let _ = quiet(Command::new("git"))
         .current_dir(repo_path)
         .arg("config")
         .arg("pull.rebase")

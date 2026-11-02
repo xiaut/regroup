@@ -5,9 +5,18 @@
 use std::env;
 use std::io;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use crate::config::{CONFIG_DIR, GIT_DIR, Machine};
+
+/// Run a git command quietly: its output would corrupt the interactive
+/// display (which owns the terminal), and failures are reported through the
+/// returned errors.
+fn quiet(mut cmd: Command) -> Command {
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::null());
+    cmd
+}
 
 /// Get the URL of an existing remote, or None if it doesn't exist
 fn git_get_remote_url(repo_path: &Path, remote_name: &str) -> Option<String> {
@@ -34,7 +43,7 @@ pub fn git_add_remote(repo_path: &Path, remote_name: &str, remote_url: &str) -> 
         Some(existing_url) => {
             if existing_url != remote_url {
                 // Update existing remote
-                let status = Command::new("git")
+                let status = quiet(Command::new("git"))
                     .current_dir(repo_path)
                     .arg("remote")
                     .arg("set-url")
@@ -49,7 +58,7 @@ pub fn git_add_remote(repo_path: &Path, remote_name: &str, remote_url: &str) -> 
         }
         None => {
             // Add new remote
-            let status = Command::new("git")
+            let status = quiet(Command::new("git"))
                 .current_dir(repo_path)
                 .arg("remote")
                 .arg("add")
@@ -70,7 +79,7 @@ pub fn git_remove_remote(repo_path: &Path, remote_name: &str) -> io::Result<()> 
         return Ok(());
     }
 
-    let status = Command::new("git")
+    let status = quiet(Command::new("git"))
         .current_dir(repo_path)
         .arg("remote")
         .arg("remove")

@@ -21,6 +21,8 @@ static WARNING_TRACKER: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
 /// Terminate with an error message
 fn die(msg: &str) -> ! {
+    // Restore the terminal first: process::exit runs no destructors.
+    crate::ui::restore();
     eprintln!("ERROR: {}", msg);
     std::process::exit(2);
 }
@@ -30,7 +32,7 @@ fn warn(msg: &str) {
     let tracker = WARNING_TRACKER.get_or_init(|| Mutex::new(HashSet::new()));
     let mut tracker = tracker.lock().unwrap();
     if tracker.insert(msg.to_string()) {
-        eprintln!("WARNING: {}", msg);
+        crate::ui::log(&format!("WARNING: {}", msg));
     }
 }
 

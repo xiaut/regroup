@@ -4,9 +4,18 @@
 
 use std::io;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use crate::git::remote;
+
+/// Run a git command quietly: its output would corrupt the interactive
+/// display (which owns the terminal), and failures are reported through the
+/// returned errors.
+fn quiet(mut cmd: Command) -> Command {
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::null());
+    cmd
+}
 
 /// Pull from a specific remote
 pub fn git_pull_remote(repo_path: &Path, remote_name: &str) -> io::Result<()> {
@@ -14,7 +23,7 @@ pub fn git_pull_remote(repo_path: &Path, remote_name: &str) -> io::Result<()> {
         return Ok(());
     }
 
-    let status = Command::new("git")
+    let status = quiet(Command::new("git"))
         .current_dir(repo_path)
         .arg("pull")
         .arg(remote_name)
@@ -37,7 +46,7 @@ pub fn git_push_remote(repo_path: &Path, remote_name: &str) -> io::Result<()> {
         return Ok(());
     }
 
-    let status = Command::new("git")
+    let status = quiet(Command::new("git"))
         .current_dir(repo_path)
         .arg("push")
         .arg(remote_name)
@@ -114,7 +123,7 @@ pub fn git_add_and_commit_file(
     }
 
     // Add the file
-    let add_status = Command::new("git")
+    let add_status = quiet(Command::new("git"))
         .current_dir(repo_path)
         .arg("add")
         .arg(file_path)
@@ -125,7 +134,7 @@ pub fn git_add_and_commit_file(
     }
 
     // Commit
-    let commit_status = Command::new("git")
+    let commit_status = quiet(Command::new("git"))
         .current_dir(repo_path)
         .arg("commit")
         .arg("-m")

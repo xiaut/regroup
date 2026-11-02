@@ -39,6 +39,7 @@ mod git;
 mod interactive;
 mod signing;
 mod ssh;
+mod ui;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc};
