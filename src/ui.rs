@@ -20,7 +20,7 @@ use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifier
 use ratatui::DefaultTerminal;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Position, Rect};
-use ratatui::style::{Color, Style, Stylize};
+use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Text};
 use ratatui::widgets::{Block, Cell, Paragraph, Row, Table};
 
@@ -66,6 +66,7 @@ pub enum Question {
     AddDevice { name: String, ip: String },
     TrustKey { name: String },
     Rename { name: String, suggested: String },
+    Delete { name: String },
 }
 
 /// A user decision, translated by the ui from key presses (or, in plain
@@ -79,11 +80,17 @@ pub enum Action {
     RejectKey,
     Rename(String),
     SkipRename,
+    /// Enter delete mode (device selection in the devices panel).
+    DeleteMode,
+    SelectPrev,
+    SelectNext,
+    DeleteConfirm,
+    DeleteCancel,
 }
 
 /// The interface used by the interactive loop.
 pub enum Ui {
-    Tty(TtyUi),
+    Tty(Box<TtyUi>),
     Plain(PlainUi),
 }
 
@@ -95,7 +102,7 @@ impl Ui {
             let terminal = ratatui::init();
             let (tx, log_rx) = mpsc::channel();
             let _ = LOG_TX.set(tx);
-            Ui::Tty(TtyUi {
+            Ui::Tty(Box::new(TtyUi {
                 terminal,
                 log_rx,
                 log: Vec::new(),
@@ -103,7 +110,8 @@ impl Ui {
                 question: Question::Idle,
                 input: String::new(),
                 devices: Vec::new(),
-            })
+                selected: None,
+            }))
         } else {
             Ui::Plain(PlainUi::new())
         }
@@ -122,6 +130,13 @@ impl Ui {
     pub fn set_devices(&mut self, devices: Vec<Device>) {
         if let Ui::Tty(ui) = self {
             ui.devices = devices;
+        }
+    }
+
+    /// Highlight the selected row of the devices panel (delete mode).
+    pub fn set_selected(&mut self, selected: Option<usize>) {
+        if let Ui::Tty(ui) = self {
+            ui.selected = selected;
         }
     }
 
@@ -152,6 +167,8 @@ pub struct TtyUi {
     /// Text typed for the rename question.
     input: String,
     devices: Vec<Device>,
+    /// Row of the devices panel highlighted in delete mode.
+    selected: Option<usize>,
 }
 
 impl Drop for TtyUi {
@@ -199,14 +216,24 @@ impl TtyUi {
     }
 
     /// Translate one key press into an action. Scroll keys are handled here
-    /// and do not produce actions.
+    /// and do not produce actions. In delete mode, Up/Down select a device
+    /// instead of scrolling the activity pane.
     fn key_action(&mut self, key: KeyEvent) -> Option<Action> {
         if key.modifiers.contains(KeyModifiers::CONTROL)
             && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('d'))
         {
             return Some(Action::Quit);
         }
+        let in_delete = matches!(self.question, Question::Delete { .. });
         match key.code {
+            KeyCode::Up if in_delete => Some(Action::SelectPrev),
+            KeyCode::Down if in_delete => Some(Action::SelectNext),
+            KeyCode::Enter if in_delete => Some(Action::DeleteConfirm),
+            KeyCode::Esc if in_delete => Some(Action::DeleteCancel),
+            // In delete mode, any other command key cancels.
+            KeyCode::Char(c) if in_delete => {
+                (c == 'd' || c == 'q').then_some(Action::DeleteCancel)
+            }
             KeyCode::Up => {
                 self.scroll = self.scroll.saturating_add(1);
                 None
@@ -226,9 +253,11 @@ impl TtyUi {
             KeyCode::Char(c) => match (&self.question, c) {
                 (Question::Idle, 'q') => Some(Action::Quit),
                 (Question::Idle, 's') => Some(Action::Sync),
+                (Question::Idle, 'd') => Some(Action::DeleteMode),
                 (Question::AddDevice { .. }, 'y') => Some(Action::AddCurrent),
                 (Question::AddDevice { .. }, 'n') => Some(Action::SkipCurrent),
                 (Question::AddDevice { .. }, 's') => Some(Action::Sync),
+                (Question::AddDevice { .. }, 'd') => Some(Action::DeleteMode),
                 (Question::AddDevice { .. }, 'q') => Some(Action::Quit),
                 (Question::TrustKey { .. }, 'y') => Some(Action::TrustKey),
                 (Question::TrustKey { .. }, 'n') => Some(Action::RejectKey),
@@ -266,6 +295,7 @@ impl TtyUi {
             question,
             input,
             devices,
+            selected,
             ..
         } = self;
         let mut cursor = None;
@@ -276,7 +306,7 @@ impl TtyUi {
                 Constraint::Length(4),
             ])
             .areas(frame.area());
-            render_devices(frame, devices_area, devices);
+            render_devices(frame, devices_area, devices, *selected);
             render_log(frame, log_area, log, *scroll);
             cursor = render_question(frame, question_area, question, input);
         })?;
@@ -291,11 +321,14 @@ impl TtyUi {
     }
 }
 
-/// Devices panel: one row per known or pending machine.
-fn render_devices(frame: &mut Frame, area: Rect, devices: &[Device]) {
+/// Devices panel: one row per known or pending machine. In delete mode,
+/// the selected row is highlighted.
+fn render_devices(frame: &mut Frame, area: Rect, devices: &[Device], selected: Option<usize>) {
     let known = devices.iter().filter(|d| !d.pending).count();
-    let rows = devices.iter().map(|d| {
-        let style = if d.pending {
+    let rows = devices.iter().enumerate().map(|(i, d)| {
+        let style = if Some(i) == selected {
+            Style::new().add_modifier(Modifier::REVERSED)
+        } else if d.pending {
             Style::new().fg(Color::Yellow)
         } else {
             Style::new().fg(Color::Green)
@@ -304,8 +337,9 @@ fn render_devices(frame: &mut Frame, area: Rect, devices: &[Device]) {
             Cell::from(d.name.clone()),
             Cell::from(d.ip.clone().unwrap_or_else(|| "-".to_string())),
             Cell::from(d.port.to_string()),
-            Cell::from(if d.pending { "pending" } else { "known" }).style(style),
+            Cell::from(if d.pending { "pending" } else { "known" }),
         ])
+        .style(style)
     });
     let table = Table::new(
         rows,
@@ -388,6 +422,12 @@ fn render_question(
             format!("New name for {name} ([Enter] = {suggested}, [Esc] = skip)"),
             Line::from(format!("> {input}")),
         ),
+        Question::Delete { name } => (
+            "Delete device",
+            Color::Red,
+            format!("Delete {name} from configuration?"),
+            Line::from("[Up/Dn] select   [Enter] confirm   [Esc] cancel"),
+        ),
     };
     let text = Text::from(vec![
         Line::styled(question_line, Style::new().bold()),
@@ -462,6 +502,7 @@ impl PlainUi {
             Question::Rename { name, suggested } => {
                 format!("New name for {name} (empty = {suggested}):")
             }
+            Question::Delete { name } => format!("Delete {name}? [y/N]:"),
         }
     }
 
@@ -471,9 +512,11 @@ impl PlainUi {
         match (&self.question, line) {
             (Question::Idle, "q" | "quit") => Some(Action::Quit),
             (Question::Idle, "s" | "sync") => Some(Action::Sync),
+            (Question::Idle, "d") => Some(Action::DeleteMode),
             (Question::Idle, _) => None,
             (Question::AddDevice { .. }, "y" | "yes") => Some(Action::AddCurrent),
             (Question::AddDevice { .. }, "s") => Some(Action::Sync),
+            (Question::AddDevice { .. }, "d") => Some(Action::DeleteMode),
             (Question::AddDevice { .. }, "q") => Some(Action::Quit),
             (Question::AddDevice { .. }, _) => Some(Action::SkipCurrent),
             (Question::TrustKey { .. }, "y" | "yes") => Some(Action::TrustKey),
@@ -481,6 +524,8 @@ impl PlainUi {
             (Question::Rename { suggested, .. }, "") => Some(Action::Rename(suggested.clone())),
             (Question::Rename { .. }, "q") => Some(Action::SkipRename),
             (Question::Rename { .. }, name) => Some(Action::Rename(name.to_string())),
+            (Question::Delete { .. }, "y" | "yes") => Some(Action::DeleteConfirm),
+            (Question::Delete { .. }, _) => Some(Action::DeleteCancel),
         }
     }
 }

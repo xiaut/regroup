@@ -15,6 +15,8 @@
 //
 // Run:            ./regroup                (continuous interactive mode)
 //                 ./regroup test           (dry run: nothing is modified)
+//                 ./regroup remove <name>  (remove a device)
+//                 ./regroup wipe [--yes]   (delete the whole configuration)
 //                 ./regroup -v             (verbose)
 //                 ./regroup selftest       (external tools + ssh-keygen fingerprint checks)
 //                 ./regroup -h             (this help)
@@ -22,6 +24,7 @@
 // Interactive commands:
 //   y/N             - add or skip current device
 //   s               - sync git (pull from remotes, push to remotes)
+//   d               - delete a known device (panel selection, Enter confirms)
 //   q               - quit the program
 //
 // Exit codes: 0 = normal exit; 1 = selftest failure; 2 = configuration or environment error.
@@ -46,7 +49,9 @@ use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::Duration;
 
-use cli::{die, run_selftest, setup_cd, usage};
+use cli::{
+    confirm, die, remove_device, run_selftest, setup_cd, usage, wipe as wipe_config,
+};
 use config::load_config;
 use discovery::beacon::{BeaconDevice, BeaconIdentity, announce_beacon, listen_beacons_continuous};
 use discovery::{get_local_interfaces, host_name, my_ip};
@@ -60,6 +65,9 @@ fn main() {
     let mut dry_run = false;
     let mut help = false;
     let mut selftest = false;
+    let mut remove_name: Option<String> = None;
+    let mut wipe = false;
+    let mut assume_yes = false;
     let mut i = 0;
     while i < args.len() {
         let a = &args[i];
@@ -73,6 +81,22 @@ fn main() {
             selftest = true;
         } else if a == "setup-cd" {
             setup_cd();
+        } else if a == "remove" {
+            remove_name = match args.get(i + 1) {
+                Some(name) => {
+                    i += 1;
+                    Some(name.clone())
+                }
+                None => {
+                    eprintln!("ERROR: remove needs a device name");
+                    usage();
+                    std::process::exit(2);
+                }
+            };
+        } else if a == "wipe" {
+            wipe = true;
+        } else if a == "--yes" || a == "-y" {
+            assume_yes = true;
         } else {
             eprintln!("ERROR: unknown option: {}", a);
             usage();
@@ -124,6 +148,43 @@ fn main() {
         {
             die("~/.ssh/config is not writable");
         }
+    }
+
+    // --- device removal / full wipe (non-interactive) ---
+    if let Some(name) = &remove_name {
+        let machine = conf
+            .machines
+            .iter()
+            .find(|m| &m.name == name)
+            .cloned()
+            .unwrap_or_else(|| die(&format!("no device named \"{name}\" in the configuration")));
+        if !assume_yes
+            && !confirm(&format!(
+                "Remove {}? (device file, ~/.ssh/config block, git remote)",
+                machine.name
+            ))
+        {
+            println!("Aborted.");
+            return;
+        }
+        if remove_device(&home, &ssh_config, &machine, None) {
+            println!("Removed {}.", machine.name);
+        } else {
+            std::process::exit(2);
+        }
+        return;
+    }
+    if wipe {
+        if !assume_yes
+            && !confirm(
+                "Delete the entire regroup configuration and all device blocks in ~/.ssh/config?",
+            )
+        {
+            println!("Aborted.");
+            return;
+        }
+        wipe_config(&home, &ssh_config, &conf.machines);
+        return;
     }
 
     // --- local identity ---

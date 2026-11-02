@@ -150,6 +150,8 @@ continuously and prompts for each new device.
 Usage:
   ./regroup                continuous interactive mode, update ~/.ssh/config
   ./regroup test           dry run: nothing is modified
+  ./regroup remove <name>  remove a device (device file, ~/.ssh/config block, git remote)
+  ./regroup wipe [--yes]   delete the entire regroup configuration
   ./regroup -v             verbose
   ./regroup selftest       built-in checks (external tools, ssh-keygen fingerprint)
   ./regroup setup-cd       install 'regroup-cd' shell function to change to config directory
@@ -158,6 +160,7 @@ Usage:
 Interactive commands:
   y/N             - add or skip the current device
   s               - sync git (pull from remotes, push to remotes)
+  d               - delete a known device (select in the panel, Enter confirms, Esc cancels)
   q               - quit the program
 
 Config repository structure (~/.regroup-config/git/):
@@ -249,6 +252,30 @@ Fields:
 
 # Useful when you know there are updates but UDP discovery might miss them
 ```
+
+### Removing devices
+
+```bash
+# Interactive mode: press d, select a device with arrow keys, Enter confirms, Esc cancels
+./regroup
+
+# From the command line
+./regroup remove <name>
+
+# Delete the whole configuration (device files, git repo, ~/.ssh/config blocks)
+./regroup wipe --yes
+```
+
+Removing a device deletes its device file (committed, so the removal
+propagates to other machines on the next git sync), its `~/.ssh/config`
+block, its git remote and the `~/.ssh/known_hosts` entries of its last
+known IP. Machines that were removed on another machine get the same
+local cleanup automatically when they sync. A removed device that is
+still online will be proposed again as a new device: removing means
+forgetting, not banning.
+
+`regroup wipe` does not touch `~/.ssh/known_hosts` (past IPs are not
+recorded) and is handy for testing a fresh setup.
 
 ### Adding a device manually
 

@@ -4,6 +4,7 @@
 
 use std::env;
 use std::fs;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -12,7 +13,7 @@ use crate::config::{CONFIG_DIR, DEVICES_DIR, GIT_DIR, Machine, load_config};
 use crate::discovery::beacon::BeaconDevice;
 use crate::discovery::host_name;
 use crate::git::{self, sync::git_add_and_commit_file};
-use crate::ssh::config::update_block;
+use crate::ssh::config::{remove_block, update_block};
 use crate::ssh::public_key::{self};
 
 // ============================================================
@@ -130,7 +131,7 @@ pub fn run_selftest() -> ! {
 /// Print usage information
 pub fn usage() {
     println!(
-        "regroup — find machines by their SSH host key and update ~/.ssh/config.\nDevices announce themselves via signed UDP beacons; regroup listens for them\ncontinuously and prompts for each new device.\n\nConfiguration is stored in ~/.regroup-config/git/ (a git repository) where each\ndevice has its own JSON file in the devices/ directory. Git remotes can be\nconfigured for all other devices to enable decentralized sync (press 's' in\ninteractive mode to pull from and push to them).\n\nUsage:\n  ./regroup                continuous interactive mode, update ~/.ssh/config\n  ./regroup test           dry run: nothing is modified\n  ./regroup -v             verbose\n  ./regroup selftest       built-in checks (external tools, ssh-keygen fingerprint)\n  ./regroup setup-cd       install 'regroup-cd' shell function to change to config directory\n  ./regroup -h             this help\n\nInteractive commands:\n  y/N             - add or skip the current device\n  s               - sync git (pull from remotes, push to remotes)\n  q               - quit the program\n\nConfig repository structure (~/.regroup-config/git/):\n  settings.json           (optional: udp_port, wait_secs)\n  devices/\n    <hostname>.json       (each device's config: name, ssh_public_key, user, port)\n\nExit codes:\n  0  normal exit\n  1  selftest failure\n  2  configuration or environment error"
+        "regroup — find machines by their SSH host key and update ~/.ssh/config.\nDevices announce themselves via signed UDP beacons; regroup listens for them\ncontinuously and prompts for each new device.\n\nConfiguration is stored in ~/.regroup-config/git/ (a git repository) where each\ndevice has its own JSON file in the devices/ directory. Git remotes can be\nconfigured for all other devices to enable decentralized sync (press 's' in\ninteractive mode to pull from and push to them).\n\nUsage:\n  ./regroup                continuous interactive mode, update ~/.ssh/config\n  ./regroup test           dry run: nothing is modified\n  ./regroup remove <name>  remove a device (device file, ~/.ssh/config block, git remote)\n  ./regroup wipe [--yes]   delete the entire regroup configuration\n  ./regroup -v             verbose\n  ./regroup selftest       built-in checks (external tools, ssh-keygen fingerprint)\n  ./regroup setup-cd       install 'regroup-cd' shell function to change to config directory\n  ./regroup -h             this help\n\nInteractive commands:\n  y/N             - add or skip the current device\n  s               - sync git (pull from remotes, push to remotes)\n  d               - delete a known device (select in the panel, Enter confirms, Esc cancels)\n  q               - quit the program\n\nConfig repository structure (~/.regroup-config/git/):\n  settings.json           (optional: udp_port, wait_secs)\n  devices/\n    <hostname>.json       (each device's config: name, ssh_public_key, user, port)\n\nExit codes:\n  0  normal exit\n  1  selftest failure\n  2  configuration or environment error"
     );
 }
 
@@ -498,6 +499,131 @@ pub fn sync_git(home: &str) {
     }
 
     crate::ui::log("Git sync complete.");
+}
+
+// ============================================================
+// Device removal
+// ============================================================
+
+/// Ask a yes/no question on the terminal. Used by the CLI subcommands only;
+/// interactive mode asks through the TUI.
+pub fn confirm(question: &str) -> bool {
+    print!("{question} [y/N]: ");
+    let _ = io::stdout().flush();
+    let mut answer = String::new();
+    if io::stdin().read_line(&mut answer).is_err() {
+        return false;
+    }
+    let answer = answer.trim().to_lowercase();
+    answer == "y" || answer == "yes"
+}
+
+/// Remove the local traces of a device outside the config repository:
+/// ~/.ssh/config block, known_hosts entries (best effort: last known IP
+/// only) and its git remote. Does not touch the device file.
+///
+/// Used both when the user removes the device here, and when a git sync
+/// reveals it was removed on another machine.
+pub fn remove_local_traces(
+    home: &str,
+    ssh_config: &Path,
+    machine: &Machine,
+    last_ip: Option<&str>,
+) {
+    match remove_block(ssh_config, &machine.name) {
+        Ok(true) => {
+            crate::ui::log(&format!(
+                "  - Removed {} block from ~/.ssh/config",
+                machine.name
+            ));
+        }
+        Ok(false) => {}
+        Err(e) => warn(&format!(
+            "could not remove {} block from ~/.ssh/config: {}",
+            machine.name, e
+        )),
+    }
+    if let Some(ip) = last_ip {
+        public_key::remove_known_host(ip);
+    }
+    let config_dir = PathBuf::from(home).join(CONFIG_DIR).join(GIT_DIR);
+    // A missing remote is normal (never configured, or removal propagated
+    // from another machine): only a failing removal is reported.
+    if git::remote::git_list_remotes(&config_dir)
+        .iter()
+        .any(|r| r == &machine.name)
+        && let Err(e) = git::remote::git_remove_remote(&config_dir, &machine.name)
+    {
+        warn(&format!(
+            "could not remove git remote {}: {}",
+            machine.name, e
+        ));
+    }
+}
+
+/// Remove a device entirely: delete its device file (and commit the
+/// deletion, which propagates to other machines on git sync), then remove
+/// its local traces. Returns true when the device file was deleted.
+pub fn remove_device(
+    home: &str,
+    ssh_config: &Path,
+    machine: &Machine,
+    last_ip: Option<&str>,
+) -> bool {
+    let config_dir = PathBuf::from(home).join(CONFIG_DIR).join(GIT_DIR);
+    let device_path = config_dir
+        .join(DEVICES_DIR)
+        .join(format!("{}.json", machine.name));
+    let mut ok = true;
+    match fs::remove_file(&device_path) {
+        Ok(()) => {
+            if let Err(e) =
+                git_add_and_commit_file(&config_dir, &device_path, &format!("Remove device {}", machine.name))
+            {
+                warn(&format!(
+                    "could not commit removal of {}: {}",
+                    machine.name, e
+                ));
+            }
+        }
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+        Err(e) => {
+            warn(&format!(
+                "could not delete device file for {}: {}",
+                machine.name, e
+            ));
+            ok = false;
+        }
+    }
+    remove_local_traces(home, ssh_config, machine, last_ip);
+    ok
+}
+
+/// Delete the whole regroup configuration: the ~/.ssh/config blocks of all
+/// known devices, then ~/.regroup-config itself.
+///
+/// known_hosts entries are left alone: past IPs are not recorded anywhere
+/// (only the last known IP is, in memory, during interactive sessions) —
+/// `regroup remove` and the interactive deletion clean them up while the
+/// IP is still known.
+pub fn wipe(home: &str, ssh_config: &Path, machines: &[Machine]) {
+    for machine in machines {
+        if let Err(e) = remove_block(ssh_config, &machine.name) {
+            warn(&format!(
+                "could not remove {} block from ~/.ssh/config: {}",
+                machine.name, e
+            ));
+        }
+    }
+    let root = PathBuf::from(home).join(CONFIG_DIR);
+    if !root.exists() {
+        println!("Nothing to wipe: {} does not exist.", root.display());
+        return;
+    }
+    if let Err(e) = fs::remove_dir_all(&root) {
+        die(&format!("cannot remove {}: {}", root.display(), e));
+    }
+    println!("Deleted {} ({} device block(s) removed from ~/.ssh/config).", root.display(), machines.len());
 }
 
 /// Configure git remotes for all known machines except this device.

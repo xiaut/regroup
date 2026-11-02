@@ -15,7 +15,8 @@ use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::Duration;
 
 use crate::cli::{
-    add_device_to_config, device_name_taken, sync_git, trust_new_signing_key, unique_device_name,
+    add_device_to_config, device_name_taken, remove_device, remove_local_traces, sync_git,
+    trust_new_signing_key, unique_device_name,
 };
 use crate::config::{Machine, load_config};
 use crate::discovery::beacon::BeaconDevice;
@@ -46,7 +47,7 @@ pub fn run(ctx: &Context, udp_port: u16, beacons: &Receiver<BeaconDevice>) -> us
     let mut ui = ui::Ui::start();
     ui::log(&format!("Listening for devices on UDP port {udp_port}..."));
 
-    let mut state = InteractiveState::new();
+    let mut state = InteractiveState::new(ctx);
     loop {
         // Check for new beacons from the listener. A beacon that was fully
         // handled (filtered out, known device, rotation prompt raised) skips
@@ -69,7 +70,13 @@ pub fn run(ctx: &Context, udp_port: u16, beacons: &Receiver<BeaconDevice>) -> us
 
         // The display always reflects the state after processing.
         ui.set_question(state.current_question(ctx));
-        ui.set_devices(state.devices_view());
+        let devices = state.devices_view();
+        let selected = state
+            .delete_selection
+            .as_ref()
+            .and_then(|name| devices.iter().position(|d| d.name == *name));
+        ui.set_devices(devices);
+        ui.set_selected(selected);
         ui.draw();
     }
     state.new_count
@@ -103,12 +110,15 @@ struct InteractiveState {
     /// the ui then asks for the new name. Only reachable in interactive
     /// mode: dry run never adds devices.
     rename_state: Option<(BeaconDevice, String)>,
+    /// Device selected in delete mode (key 'd'), by name. None = not in
+    /// delete mode.
+    delete_selection: Option<String>,
     /// Devices accepted this run.
     new_count: usize,
 }
 
 impl InteractiveState {
-    fn new() -> Self {
+    fn new(ctx: &Context) -> Self {
         let mut state = Self {
             known_keys: HashSet::new(),
             key_to_machine: HashMap::new(),
@@ -120,15 +130,21 @@ impl InteractiveState {
             known_ip: HashMap::new(),
             rejected_keys: HashSet::new(),
             rename_state: None,
+            delete_selection: None,
             new_count: 0,
         };
-        state.reload();
+        state.reload(ctx);
         state
     }
 
     /// Rebuild the lookup maps from the device files on disk (e.g. after a
     /// git sync pulled new device files).
-    fn reload(&mut self) {
+    ///
+    /// Machines that disappeared from the repository were removed on
+    /// another machine: their local traces (~/.ssh/config block, git remote,
+    /// last known_hosts IP) are cleaned up so the deletion propagates.
+    fn reload(&mut self, ctx: &Context) {
+        let old = std::mem::take(&mut self.key_to_machine);
         let conf = load_config();
         self.known_keys = conf
             .machines
@@ -145,12 +161,27 @@ impl InteractiveState {
             .iter()
             .map(|m| (m.ssh_public_key.clone(), m.signing_public_key.clone()))
             .collect();
+        for (key, machine) in old {
+            if !self.key_to_machine.contains_key(&key) {
+                let last_ip = self.known_ip.get(&key).cloned();
+                remove_local_traces(ctx.home, ctx.ssh_config, &machine, last_ip.as_deref());
+                ui::log(&format!(
+                    "  - {} was removed from the configuration (synced) — local traces cleaned",
+                    machine.name
+                ));
+                self.known_ip.remove(&key);
+            }
+        }
     }
 
     /// The question to display, derived from the current state. Dry run
     /// never asks anything: pending devices are only logged.
     fn current_question(&self, ctx: &Context) -> Question {
-        if let Some((device, suggested)) = &self.rename_state {
+        if let Some(name) = &self.delete_selection {
+            Question::Delete {
+                name: name.clone(),
+            }
+        } else if let Some((device, suggested)) = &self.rename_state {
             Question::Rename {
                 name: device.name.clone(),
                 suggested: suggested.clone(),
@@ -301,6 +332,7 @@ impl InteractiveState {
                     }
                 };
                 if verified {
+                    let old_ip = self.known_ip.get(&device.ssh_public_key).cloned();
                     let _ = update_block(
                         ctx.ssh_config,
                         &machine.name,
@@ -309,6 +341,20 @@ impl InteractiveState {
                         machine.port,
                         machine.port_explicit,
                     );
+                    // Clean the known_hosts entries of the old IP so stale
+                    // addresses do not linger — unless another known device
+                    // has taken it over in the meantime.
+                    if let Some(old_ip) = old_ip
+                        && old_ip != device.ip
+                        && !self.known_ip.iter().any(|(k, ip)| {
+                            k != &device.ssh_public_key && ip == &old_ip
+                        })
+                        && public_key::remove_known_host(&old_ip) > 0
+                    {
+                        ui::log(&format!(
+                            "  ~ Cleaned old known_hosts entries for {old_ip}"
+                        ));
+                    }
                     ui::log(&format!(
                         "[~] Known device: {} at {} (IP updated, host key verified)",
                         machine.name, device.ip
@@ -362,7 +408,7 @@ impl InteractiveState {
                 } else {
                     sync_git(ctx.home);
                     // A pull may have brought new device configs: reload
-                    self.reload();
+                    self.reload(ctx);
                 }
             }
             Action::AddCurrent => self.accept_current(ctx),
@@ -405,8 +451,87 @@ impl InteractiveState {
                     ui::log(&format!("  Skipped {}.", device.name));
                 }
             }
+            Action::DeleteMode => {
+                if ctx.dry_run {
+                    ui::log("  (dry run - device removal skipped)");
+                } else {
+                    // Select the first deletable device, if any.
+                    self.move_selection(true);
+                }
+            }
+            Action::SelectPrev => self.move_selection(false),
+            Action::SelectNext => self.move_selection(true),
+            Action::DeleteConfirm => self.delete_selected(ctx),
+            Action::DeleteCancel => self.delete_selection = None,
         }
         false
+    }
+
+    /// Sorted names of the devices that can be deleted (known ones).
+    fn deletable_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self
+            .key_to_machine
+            .values()
+            .map(|m| m.name.clone())
+            .collect();
+        names.sort();
+        names.dedup();
+        names
+    }
+
+    /// Move the delete-mode selection to the next (or previous when
+    /// `forward` is false) known device. With no selection, selects the
+    /// first one.
+    fn move_selection(&mut self, forward: bool) {
+        let names = self.deletable_names();
+        if names.is_empty() {
+            self.delete_selection = None;
+            return;
+        }
+        let pos = names
+            .iter()
+            .position(|n| Some(n) == self.delete_selection.as_ref());
+        let new_pos = match pos {
+            Some(p) if forward => (p + 1).min(names.len() - 1),
+            Some(p) => p.saturating_sub(1),
+            None => 0,
+        };
+        self.delete_selection = Some(names[new_pos].clone());
+    }
+
+    /// Remove the selected device: delete its config file (committed, so
+    /// the removal propagates on git sync), its ~/.ssh/config block, its
+    /// known_hosts entries (last known IP) and its git remote, then drop
+    /// it from the in-memory maps.
+    fn delete_selected(&mut self, ctx: &Context) {
+        let Some(name) = self.delete_selection.take() else {
+            return;
+        };
+        let Some(machine) = self
+            .key_to_machine
+            .values()
+            .find(|m| m.name == name)
+            .cloned()
+        else {
+            return;
+        };
+        let key = machine.ssh_public_key.clone();
+        let last_ip = self.known_ip.get(&key).cloned();
+        if remove_device(ctx.home, ctx.ssh_config, &machine, last_ip.as_deref()) {
+            ui::log(&format!(
+                "  - Removed {} (device file, ~/.ssh/config block, git remote)",
+                machine.name
+            ));
+        } else {
+            ui::log(&format!(
+                "  ! Could not fully remove {} — see warnings",
+                machine.name
+            ));
+        }
+        self.known_keys.remove(&key);
+        self.key_to_machine.remove(&key);
+        self.pinned_signing_keys.remove(&key);
+        self.known_ip.remove(&key);
     }
 
     /// Accept the pending device at the front of the queue. A name collision

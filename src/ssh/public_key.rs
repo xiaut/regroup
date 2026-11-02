@@ -330,6 +330,57 @@ fn append_known_hosts_entries(ip: &str, port: u16, keyscan_str: &str) -> std::io
     writeln!(file, "{}", entry)
 }
 
+/// Remove ~/.ssh/known_hosts entries for `ip`, whatever the port ("ip" and
+/// "[ip]:port" patterns), including the "# Added by regroup" comment that
+/// precedes them. Best effort: returns the number of entries removed.
+///
+/// The caller must make sure no other known device still uses this IP.
+pub fn remove_known_host(ip: &str) -> usize {
+    let home_dir = match env::var("HOME") {
+        Ok(h) if !h.is_empty() => PathBuf::from(h),
+        _ => return 0,
+    };
+    let known_hosts_path = home_dir.join(".ssh").join("known_hosts");
+    let content = match fs::read_to_string(&known_hosts_path) {
+        Ok(c) => c,
+        Err(_) => return 0,
+    };
+
+    let bracketed = format!("[{ip}]:");
+    let is_target = |line: &str| {
+        line.split_whitespace()
+            .next()
+            .is_some_and(|patterns| {
+                patterns
+                    .split(',')
+                    .any(|p| p == ip || p.starts_with(&bracketed))
+            })
+    };
+
+    let mut kept: Vec<&str> = Vec::new();
+    let mut removed = 0;
+    for line in content.lines() {
+        if is_target(line) {
+            removed += 1;
+            // Drop the regroup comment that introduced this entry.
+            if kept
+                .last()
+                .is_some_and(|l| l.trim() == "# Added by regroup")
+            {
+                kept.pop();
+            }
+            continue;
+        }
+        kept.push(line);
+    }
+    if removed > 0 {
+        let mut out = kept.join("\n");
+        out.push('\n');
+        let _ = fs::write(&known_hosts_path, out);
+    }
+    removed
+}
+
 /// Verify that the host key announced in a beacon is really served by the SSH
 /// server at the announced ip:port, and pin the server's keys in
 /// ~/.ssh/known_hosts for automatic verification on later connections.
