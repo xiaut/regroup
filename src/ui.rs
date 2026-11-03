@@ -5,7 +5,8 @@
 //!   side-by-side machine panels (detected machines on the left, added
 //!   machines on the right), an activity log for general messages, and the
 //!   current question as the bottom block — the question can never be
-//!   pushed away by notifications;
+//!   pushed away by notifications; key '?' replaces the machine panels and
+//!   the activity pane with the CLI help, keeping the bottom block;
 //! - a plain line-based fallback otherwise (piped output): prompts are
 //!   printed as they change and answers are read as input lines.
 //!
@@ -29,6 +30,7 @@ use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Text};
 use ratatui::widgets::{Block, Cell, Paragraph, Row, Table};
 
+use crate::cli::usage_text;
 use crate::ssh::keys::SshPublicKey;
 
 /// Maximum number of activity messages kept for display.
@@ -180,6 +182,9 @@ pub enum Action {
     SetupCdMode,
     SetupCdConfirm,
     SetupCdCancel,
+    /// Print the CLI help (plain mode; the full-screen ui shows its help
+    /// panel instead, toggled by '?').
+    Help,
 }
 
 /// The interface used by the interactive loop.
@@ -207,6 +212,8 @@ impl Ui {
                 added: Vec::new(),
                 selected: None,
                 delete_selected: None,
+                show_help: false,
+                help_scroll: 0,
                 flashes: HashMap::new(),
             }))
         } else {
@@ -279,6 +286,11 @@ pub struct TtyUi {
     selected: Option<usize>,
     /// Row of the Added panel highlighted in delete mode.
     delete_selected: Option<usize>,
+    /// Whether the help panel is shown (key '?'): it replaces the machine
+    /// panels and the activity pane; the question block stays interactive.
+    show_help: bool,
+    /// Lines scrolled up from the bottom of the help panel; 0 follows it.
+    help_scroll: u16,
     /// Animated per-machine statuses, by SSH public key.
     flashes: HashMap<String, RowFlash>,
 }
@@ -315,6 +327,12 @@ impl TtyUi {
             self.question = question;
             self.input.clear();
             self.scroll = 0;
+            // An urgent question takes precedence over the help panel:
+            // close it so the question gets the full screen back.
+            if self.question != Question::Idle {
+                self.show_help = false;
+                self.help_scroll = 0;
+            }
         }
     }
 
@@ -416,6 +434,24 @@ impl TtyUi {
             KeyCode::Char(c) if in_delete => {
                 (c == 'd' || c == 'q').then_some(Action::DeleteCancel)
             }
+            // While the help panel is shown, the arrow keys scroll it
+            // (the machine panels and the activity pane are hidden).
+            KeyCode::Up if self.show_help => {
+                self.help_scroll = self.help_scroll.saturating_add(1);
+                None
+            }
+            KeyCode::Down if self.show_help => {
+                self.help_scroll = self.help_scroll.saturating_sub(1);
+                None
+            }
+            KeyCode::PageUp if self.show_help => {
+                self.help_scroll = self.help_scroll.saturating_add(10);
+                None
+            }
+            KeyCode::PageDown if self.show_help => {
+                self.help_scroll = self.help_scroll.saturating_sub(10);
+                None
+            }
             KeyCode::Up if selectable => Some(Action::SelectPrev),
             KeyCode::Down if selectable => Some(Action::SelectNext),
             KeyCode::Enter if selectable => Some(Action::Add),
@@ -441,6 +477,11 @@ impl TtyUi {
                 (Question::Idle, 'd') => Some(Action::DeleteMode),
                 (Question::Idle, 'w') => Some(Action::WipeMode),
                 (Question::Idle, 'c') => Some(Action::SetupCdMode),
+                (Question::Idle, '?') => {
+                    self.show_help = !self.show_help;
+                    self.help_scroll = 0;
+                    None
+                }
                 (Question::Idle, 'y') if selectable => Some(Action::Add),
                 (Question::Idle, 'n') if selectable => Some(Action::Ignore),
                 (Question::AddDevice { .. }, 'y') => Some(Action::AddCurrent),
@@ -461,6 +502,11 @@ impl TtyUi {
             KeyCode::Esc => match &self.question {
                 Question::TrustKey { .. } => Some(Action::RejectKey),
                 Question::Rename { .. } => Some(Action::SkipRename),
+                _ if self.show_help => {
+                    self.show_help = false;
+                    self.help_scroll = 0;
+                    None
+                }
                 _ if selectable => Some(Action::Ignore),
                 _ => None,
             },
@@ -490,6 +536,8 @@ impl TtyUi {
             added,
             selected,
             delete_selected,
+            show_help,
+            help_scroll,
             flashes,
             ..
         } = self;
@@ -501,30 +549,53 @@ impl TtyUi {
                 Constraint::Length(4),
             ])
             .areas(frame.area());
-            let [detected_area, _gap, added_area] = Layout::horizontal([
-                Constraint::Fill(1),
-                Constraint::Length(1),
-                Constraint::Fill(1),
-            ])
-            .areas(machines_area);
-            render_machines(
+            if *show_help {
+                // The help panel replaces the machine panels and the
+                // activity pane; the question block stays interactive.
+                let help_area = Rect {
+                    x: machines_area.x,
+                    y: machines_area.y,
+                    width: machines_area.width,
+                    height: machines_area.height + log_area.height,
+                };
+                let visible = help_area.height.saturating_sub(2) as usize;
+                let max_scroll =
+                    usage_text().lines().count().saturating_sub(visible) as u16;
+                *help_scroll = (*help_scroll).min(max_scroll);
+                render_help(frame, help_area, *help_scroll);
+            } else {
+                let [detected_area, _gap, added_area] = Layout::horizontal([
+                    Constraint::Fill(1),
+                    Constraint::Length(1),
+                    Constraint::Fill(1),
+                ])
+                .areas(machines_area);
+                render_machines(
+                    frame,
+                    detected_area,
+                    PanelTheme::new("Detected", Color::Yellow, "detected"),
+                    detected,
+                    *selected,
+                    flashes,
+                );
+                render_machines(
+                    frame,
+                    added_area,
+                    PanelTheme::new("Added", Color::Green, "known"),
+                    added,
+                    *delete_selected,
+                    flashes,
+                );
+                render_log(frame, log_area, log, *scroll);
+            }
+            cursor = render_question(
                 frame,
-                detected_area,
-                PanelTheme::new("Detected", Color::Yellow, "detected"),
-                detected,
-                *selected,
-                flashes,
+                question_area,
+                question,
+                input,
+                detected.len(),
+                *show_help,
             );
-            render_machines(
-                frame,
-                added_area,
-                PanelTheme::new("Added", Color::Green, "known"),
-                added,
-                *delete_selected,
-                flashes,
-            );
-            render_log(frame, log_area, log, *scroll);
-            cursor = render_question(frame, question_area, question, input, detected.len());
         })?;
         // Show the text cursor only while typing a name.
         if let Some(position) = cursor {
@@ -661,6 +732,29 @@ fn render_log(frame: &mut Frame, area: Rect, log: &[String], scroll: u16) {
     frame.render_widget(paragraph, area);
 }
 
+/// Help panel (key '?'): the CLI help text, replacing the machine panels
+/// and the activity pane while shown. Section headers are bold; the pane
+/// is bottom-anchored, shifted up by `scroll` lines.
+fn render_help(frame: &mut Frame, area: Rect, scroll: u16) {
+    let lines: Vec<Line> = usage_text()
+        .lines()
+        .map(|l| {
+            if l.ends_with(':') {
+                Line::styled(l.to_string(), Style::new().bold())
+            } else {
+                Line::from(l.to_string())
+            }
+        })
+        .collect();
+    let total = lines.len();
+    let visible = area.height.saturating_sub(2) as usize;
+    let skip = total.saturating_sub(visible + scroll as usize).min(total);
+    let paragraph = Paragraph::new(Text::from(lines))
+        .block(Block::bordered().title("Help"))
+        .scroll((skip as u16, 0));
+    frame.render_widget(paragraph, area);
+}
+
 /// Color of a log line, derived from its content.
 fn log_style(msg: &str) -> Style {
     if msg.contains("SECURITY") || msg.contains("ERROR") {
@@ -679,15 +773,29 @@ fn log_style(msg: &str) -> Style {
 }
 
 /// Question block, always the bottom block of the screen. Returns the text
-/// cursor position when the user is typing a name.
+/// cursor position when the user is typing a name. While the help panel is
+/// shown (`help`), the block describes the help panel instead.
 fn render_question(
     frame: &mut Frame,
     area: Rect,
     question: &Question,
     input: &str,
     pending: usize,
+    help: bool,
 ) -> Option<Position> {
-    let (title, border, question_line, hint_line) = match question {
+    let (title, border, question_line, hint_line) = if help
+        && matches!(question, Question::Idle)
+    {
+        (
+            "Help",
+            Color::Cyan,
+            "Command-line and interactive help".to_string(),
+            Line::from(
+                "[Up/Dn/PgUp/PgDn] scroll help   [?] close   [s] sync git   [q] quit",
+            ),
+        )
+    } else {
+        match question {
         Question::Idle => {
             if pending > 0 {
                 (
@@ -695,7 +803,7 @@ fn render_question(
                     Color::Yellow,
                     format!("{pending} machine(s) detected — add them to your configuration"),
                     Line::from(
-                        "[Up/Dn] select   [Enter/y] add   [n] ignore   [s] sync git   [d] delete   [w] wipe   [c] setup-cd   [q] quit",
+                        "[Up/Dn] select   [Enter/y] add   [n] ignore   [s] sync git   [d] delete   [w] wipe   [c] setup-cd   [?] help   [q] quit",
                     ),
                 )
             } else {
@@ -703,7 +811,7 @@ fn render_question(
                     "Status",
                     Color::Blue,
                     "Waiting for devices…".to_string(),
-                    Line::from("[s] sync git   [d] delete   [w] wipe   [c] setup-cd   [PgUp/PgDn] scroll activity   [q] quit"),
+                    Line::from("[s] sync git   [d] delete   [w] wipe   [c] setup-cd   [?] help   [PgUp/PgDn] scroll activity   [q] quit"),
                 )
             }
         }
@@ -749,6 +857,7 @@ fn render_question(
             ),
             Line::from("[Enter/y] confirm   [Esc/c/q] cancel"),
         ),
+    }
     };
     let text = Text::from(vec![
         Line::styled(question_line, Style::new().bold()),
@@ -813,7 +922,7 @@ impl PlainUi {
     /// Prompt text for the current question.
     fn prompt(&self) -> String {
         match &self.question {
-            Question::Idle => "[q=quit, s=sync git, d=delete, w=wipe, c=setup-cd]:".to_string(),
+            Question::Idle => "[q=quit, s=sync git, d=delete, w=wipe, c=setup-cd, h=help]:".to_string(),
             Question::AddDevice { name, ip } => {
                 format!("Add {name} ({ip}) to config? [y/N/q/s]:")
             }
@@ -842,6 +951,7 @@ impl PlainUi {
             (Question::Idle, "d") => Some(Action::DeleteMode),
             (Question::Idle, "w" | "wipe") => Some(Action::WipeMode),
             (Question::Idle, "c" | "cd") => Some(Action::SetupCdMode),
+            (Question::Idle, "h" | "help" | "?") => Some(Action::Help),
             (Question::Idle, _) => None,
             (Question::AddDevice { .. }, "y" | "yes") => Some(Action::AddCurrent),
             (Question::AddDevice { .. }, "s") => Some(Action::Sync),

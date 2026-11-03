@@ -18,7 +18,8 @@ use std::time::Duration;
 
 use crate::cli::{
     add_device_to_config, device_name_taken, remove_device, remove_local_traces, setup_cd,
-    shell_rc_file, sync_git, trust_new_signing_key, unique_device_name, wipe as wipe_config,
+    shell_rc_file, sync_git, trust_new_signing_key, unique_device_name, usage,
+    wipe as wipe_config,
 };
 use crate::config::{Machine, load_config};
 use crate::discovery::beacon::BeaconDevice;
@@ -633,6 +634,9 @@ impl InteractiveState {
                     Err(e) => ui::log(&format!("  ! could not install 'regroup-cd': {e}")),
                 }
             }
+            // Plain mode only: the full-screen ui shows its help panel
+            // instead, without going through an action.
+            Action::Help => usage(),
         }
         false
     }

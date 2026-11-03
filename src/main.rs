@@ -26,6 +26,7 @@
 //   s               - sync git (pull from remotes, push to remotes)
 //   d               - delete a known device (panel selection, Enter confirms)
 //   w               - wipe the whole configuration (Enter confirms)
+//   ?               - show/hide the help panel (full-screen mode)
 //   q               - quit the program
 //
 // Exit codes: 0 = normal exit; 1 = selftest failure; 2 = configuration or environment error.
