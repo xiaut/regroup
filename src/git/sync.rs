@@ -63,8 +63,9 @@ pub fn git_push_remote(repo_path: &Path, remote_name: &str) -> io::Result<()> {
     Ok(())
 }
 
-/// Pull from all remotes
-pub fn git_pull_all(repo_path: &Path) -> Vec<String> {
+/// Pull from all remotes. In verbose mode, each successful pull is logged
+/// through the ui (activity pane in interactive mode).
+pub fn git_pull_all(repo_path: &Path, verbose: bool) -> Vec<String> {
     let mut errors = Vec::new();
 
     if !super::repo::is_git_repo(repo_path) {
@@ -73,16 +74,22 @@ pub fn git_pull_all(repo_path: &Path) -> Vec<String> {
 
     let remotes = remote::git_list_remotes(repo_path);
     for r in &remotes {
-        if let Err(e) = git_pull_remote(repo_path, r) {
-            errors.push(format!("pull from {}: {}", r, e));
+        match git_pull_remote(repo_path, r) {
+            Ok(()) => {
+                if verbose {
+                    crate::ui::log(&format!("  . pulled from {r}"));
+                }
+            }
+            Err(e) => errors.push(format!("pull from {}: {}", r, e)),
         }
     }
 
     errors
 }
 
-/// Push to all remotes
-pub fn git_push_all(repo_path: &Path) -> Vec<String> {
+/// Push to all remotes. In verbose mode, each successful push is logged
+/// through the ui (activity pane in interactive mode).
+pub fn git_push_all(repo_path: &Path, verbose: bool) -> Vec<String> {
     let mut errors = Vec::new();
 
     if !super::repo::is_git_repo(repo_path) {
@@ -91,8 +98,13 @@ pub fn git_push_all(repo_path: &Path) -> Vec<String> {
 
     let remotes = remote::git_list_remotes(repo_path);
     for r in &remotes {
-        if let Err(e) = git_push_remote(repo_path, r) {
-            errors.push(format!("push to {}: {}", r, e));
+        match git_push_remote(repo_path, r) {
+            Ok(()) => {
+                if verbose {
+                    crate::ui::log(&format!("  . pushed to {r}"));
+                }
+            }
+            Err(e) => errors.push(format!("push to {}: {}", r, e)),
         }
     }
 
@@ -100,14 +112,14 @@ pub fn git_push_all(repo_path: &Path) -> Vec<String> {
 }
 
 /// Sync with all remotes (pull then push)
-pub fn sync_with_remotes(repo_path: &Path) -> Vec<String> {
+pub fn sync_with_remotes(repo_path: &Path, verbose: bool) -> Vec<String> {
     let mut errors = Vec::new();
 
     // Pull from all remotes first
-    errors.extend(git_pull_all(repo_path));
+    errors.extend(git_pull_all(repo_path, verbose));
 
     // Then push to all remotes
-    errors.extend(git_push_all(repo_path));
+    errors.extend(git_push_all(repo_path, verbose));
 
     errors
 }

@@ -17,7 +17,7 @@
 //                 ./regroup test           (dry run: nothing is modified)
 //                 ./regroup remove <name>  (remove a device)
 //                 ./regroup wipe [--yes]   (delete the whole configuration)
-//                 ./regroup -v             (verbose)
+//                 ./regroup -v             (verbose: identity + git sync details in the activity log)
 //                 ./regroup selftest       (external tools + ssh-keygen fingerprint checks)
 //                 ./regroup -h             (this help)
 //
@@ -235,23 +235,6 @@ fn main() {
         }
     };
 
-    if verbose {
-        if !local_public_key.is_empty() {
-            println!(
-                "  . this machine: {} / {} (SSH key: {})",
-                local_name,
-                local_ip.as_deref().unwrap_or("unknown IP"),
-                &local_public_key.as_str()[..16.min(local_public_key.as_str().len())]
-            );
-        } else {
-            println!(
-                "  . this machine: {} / {} (NO SSH SERVER - not announcing)",
-                local_name,
-                local_ip.as_deref().unwrap_or("unknown IP")
-            );
-        }
-    }
-
     // --- Continuous interactive mode ---
 
     // Create channel for beacon notifications
@@ -320,6 +303,9 @@ fn main() {
             ssh_config: &ssh_config,
             dry_run,
             local_public_key: &local_public_key,
+            verbose,
+            local_name: &local_name,
+            local_ip: local_ip.as_deref(),
         },
         conf.udp_port,
         &rx,

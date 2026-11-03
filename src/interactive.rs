@@ -39,6 +39,12 @@ pub struct Context<'a> {
     pub dry_run: bool,
     /// This machine's SSH server public key: its unique identifier.
     pub local_public_key: &'a SshPublicKey,
+    /// Verbose mode (-v): extra information in the activity log.
+    pub verbose: bool,
+    /// This machine's hostname, for the verbose identity line.
+    pub local_name: &'a str,
+    /// This machine's IP, for the verbose identity line.
+    pub local_ip: Option<&'a str>,
 }
 
 /// Run the interactive loop until the user quits or the listener thread dies.
@@ -49,6 +55,26 @@ pub struct Context<'a> {
 pub fn run(ctx: &Context, udp_port: u16, beacons: &Receiver<BeaconDevice>) -> usize {
     let mut ui = ui::Ui::start();
     ui::log(&format!("Listening for devices on UDP port {udp_port}..."));
+    // Verbose identity line: through ui::log so the full-screen ui shows it
+    // in the activity pane instead of losing it to the alternate screen.
+    if ctx.verbose {
+        let who = format!(
+            "{} / {}",
+            ctx.local_name,
+            ctx.local_ip.unwrap_or("unknown IP")
+        );
+        if ctx.local_public_key.is_empty() {
+            ui::log(&format!(
+                "  . this machine: {who} (NO SSH SERVER - not announcing)"
+            ));
+        } else {
+            let key = ctx.local_public_key.as_str();
+            ui::log(&format!(
+                "  . this machine: {who} (SSH key: {})",
+                &key[..16.min(key.len())]
+            ));
+        }
+    }
 
     let mut state = InteractiveState::new(ctx);
     loop {
@@ -502,7 +528,7 @@ impl InteractiveState {
                 if ctx.dry_run {
                     ui::log("  (dry run - git sync skipped)");
                 } else {
-                    sync_git(ctx.home);
+                    sync_git(ctx.home, ctx.verbose);
                     // A pull may have brought new device configs: reload
                     self.reload(ctx);
                 }
