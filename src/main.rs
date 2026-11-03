@@ -81,7 +81,20 @@ fn main() {
         } else if a == "selftest" {
             selftest = true;
         } else if a == "setup-cd" {
-            setup_cd();
+            let home = match env::var("HOME") {
+                Ok(h) => h,
+                Err(_) => die("HOME variable not set"),
+            };
+            match setup_cd(&home) {
+                Ok(rc) => {
+                    let file = rc.file_name().unwrap_or_default().to_string_lossy();
+                    println!("✓ 'regroup-cd' function installed in ~/{file}");
+                    println!("Run 'source ~/{file}' or open a new terminal to start using it.");
+                    println!("Use: regroup-cd");
+                    std::process::exit(0);
+                }
+                Err(e) => die(&e),
+            }
         } else if a == "remove" {
             remove_name = match args.get(i + 1) {
                 Some(name) => {

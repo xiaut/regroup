@@ -131,7 +131,7 @@ pub fn run_selftest() -> ! {
 /// Print usage information
 pub fn usage() {
     println!(
-        "regroup — find machines by their SSH host key and update ~/.ssh/config.\nDevices announce themselves via signed UDP beacons; regroup listens for them\ncontinuously and prompts for each new device.\n\nConfiguration is stored in ~/.regroup-config/git/ (a git repository) where each\ndevice has its own JSON file in the devices/ directory. Git remotes can be\nconfigured for all other devices to enable decentralized sync (press 's' in\ninteractive mode to pull from and push to them).\n\nUsage:\n  ./regroup                continuous interactive mode, update ~/.ssh/config\n  ./regroup test           dry run: nothing is modified\n  ./regroup remove <name>  remove a device (device file, ~/.ssh/config block, git remote)\n  ./regroup wipe [--yes]   delete the entire regroup configuration\n  ./regroup -v             verbose\n  ./regroup selftest       built-in checks (external tools, ssh-keygen fingerprint)\n  ./regroup setup-cd       install 'regroup-cd' shell function to change to config directory\n  ./regroup -h             this help\n\nInteractive commands (full-screen mode):\n  Up/Dn           - select a machine in the Detected panel\n  Enter/y         - add the selected machine (it moves to the Added panel)\n  n               - ignore the selected machine (its beacons are ignored this run)\n  s               - sync git (pull from remotes, push to remotes)\n  d               - delete a known device (select in the Added panel, Enter confirms, Esc cancels)\n  w               - wipe the whole configuration (Enter confirms, Esc cancels)\n  PgUp/PgDn       - scroll the activity log\n  q               - quit the program\n\nConfig repository structure (~/.regroup-config/git/):\n  settings.json           (optional: udp_port, wait_secs)\n  devices/\n    <hostname>.json       (each device's config: name, ssh_public_key, user, port)\n\nExit codes:\n  0  normal exit\n  1  selftest failure\n  2  configuration or environment error"
+        "regroup — find machines by their SSH host key and update ~/.ssh/config.\nDevices announce themselves via signed UDP beacons; regroup listens for them\ncontinuously and prompts for each new device.\n\nConfiguration is stored in ~/.regroup-config/git/ (a git repository) where each\ndevice has its own JSON file in the devices/ directory. Git remotes can be\nconfigured for all other devices to enable decentralized sync (press 's' in\ninteractive mode to pull from and push to them).\n\nUsage:\n  ./regroup                continuous interactive mode, update ~/.ssh/config\n  ./regroup test           dry run: nothing is modified\n  ./regroup remove <name>  remove a device (device file, ~/.ssh/config block, git remote)\n  ./regroup wipe [--yes]   delete the entire regroup configuration\n  ./regroup -v             verbose\n  ./regroup selftest       built-in checks (external tools, ssh-keygen fingerprint)\n  ./regroup setup-cd       install 'regroup-cd' shell function to change to config directory\n  ./regroup -h             this help\n\nInteractive commands (full-screen mode):\n  Up/Dn           - select a machine in the Detected panel\n  Enter/y         - add the selected machine (it moves to the Added panel)\n  n               - ignore the selected machine (its beacons are ignored this run)\n  s               - sync git (pull from remotes, push to remotes)\n  d               - delete a known device (select in the Added panel, Enter confirms, Esc cancels)\n  w               - wipe the whole configuration (Enter confirms, Esc cancels)\n  c               - install the 'regroup-cd' shell function (Enter confirms, Esc cancels)\n  PgUp/PgDn       - scroll the activity log\n  q               - quit the program\n\nConfig repository structure (~/.regroup-config/git/):\n  settings.json           (optional: udp_port, wait_secs)\n  devices/\n    <hostname>.json       (each device's config: name, ssh_public_key, user, port)\n\nExit codes:\n  0  normal exit\n  1  selftest failure\n  2  configuration or environment error"
     );
 }
 
@@ -139,23 +139,26 @@ pub fn usage() {
 // Setup CD command
 // ============================================================
 
-/// Install the regroup-cd shell function in the user's shell config
-pub fn setup_cd() -> ! {
-    let home = match env::var("HOME") {
-        Ok(h) => h,
-        Err(_) => die("HOME variable not set"),
-    };
-
-    let config_dir = PathBuf::from(&home).join(CONFIG_DIR);
-    let function_def = format!("regroup-cd() {{ cd {}; }}", config_dir.to_string_lossy());
-
+/// The shell config file the 'regroup-cd' function is installed into:
+/// ~/.zshrc for zsh, ~/.bashrc otherwise.
+pub fn shell_rc_file(home: &str) -> PathBuf {
     // Detect shell from SHELL environment variable
     let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
-    let config_file = if shell.contains("zsh") {
-        PathBuf::from(&home).join(".zshrc")
+    if shell.contains("zsh") {
+        PathBuf::from(home).join(".zshrc")
     } else {
-        PathBuf::from(&home).join(".bashrc")
-    };
+        PathBuf::from(home).join(".bashrc")
+    }
+}
+
+/// Install (or refresh) the regroup-cd shell function in the user's shell
+/// config. An existing definition is replaced. Returns the shell config
+/// file that was written.
+pub fn setup_cd(home: &str) -> Result<PathBuf, String> {
+    let config_dir = PathBuf::from(home).join(CONFIG_DIR);
+    let function_def = format!("regroup-cd() {{ cd {}; }}", config_dir.to_string_lossy());
+
+    let config_file = shell_rc_file(home);
 
     // Read current content
     let current_content = fs::read_to_string(&config_file).unwrap_or_default();
@@ -190,35 +193,18 @@ pub fn setup_cd() -> ! {
     };
 
     // Write to config file
-    match fs::write(&config_file, final_content) {
-        Ok(_) => {
-            println!(
-                "✓ 'regroup-cd' function installed in ~/{}",
+    fs::write(&config_file, final_content)
+        .map(|_| config_file.clone())
+        .map_err(|e| {
+            format!(
+                "cannot write to ~/{}: {}",
                 config_file
                     .file_name()
                     .unwrap_or_default()
-                    .to_string_lossy()
-            );
-            println!(
-                "Run 'source ~/{}' or open a new terminal to start using it.",
-                config_file
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-            );
-            println!("Use: regroup-cd");
-        }
-        Err(e) => die(&format!(
-            "Cannot write to ~/{}: {}",
-            config_file
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy(),
-            e
-        )),
-    }
-
-    std::process::exit(0);
+                    .to_string_lossy(),
+                e
+            )
+        })
 }
 
 // ============================================================

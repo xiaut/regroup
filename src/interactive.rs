@@ -17,8 +17,8 @@ use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::Duration;
 
 use crate::cli::{
-    add_device_to_config, device_name_taken, remove_device, remove_local_traces, sync_git,
-    trust_new_signing_key, unique_device_name, wipe as wipe_config,
+    add_device_to_config, device_name_taken, remove_device, remove_local_traces, setup_cd,
+    shell_rc_file, sync_git, trust_new_signing_key, unique_device_name, wipe as wipe_config,
 };
 use crate::config::{Machine, load_config};
 use crate::discovery::beacon::BeaconDevice;
@@ -128,6 +128,9 @@ struct InteractiveState {
     /// Wipe confirmation is pending (key 'w'): the ui asks for a final
     /// confirm before the whole configuration is deleted.
     wipe_pending: bool,
+    /// Setup-cd confirmation is pending (key 'c'): the ui asks for a final
+    /// confirm before the 'regroup-cd' shell function is installed.
+    setup_cd_pending: bool,
     /// Devices accepted this run.
     new_count: usize,
 }
@@ -148,6 +151,7 @@ impl InteractiveState {
             rename_state: None,
             delete_selection: None,
             wipe_pending: false,
+            setup_cd_pending: false,
             new_count: 0,
         };
         state.reload(ctx);
@@ -199,6 +203,14 @@ impl InteractiveState {
         if self.wipe_pending {
             Question::Wipe {
                 count: self.key_to_machine.len(),
+            }
+        } else if self.setup_cd_pending {
+            Question::SetupCd {
+                file: shell_rc_file(ctx.home)
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned(),
             }
         } else if let Some(name) = &self.delete_selection {
             Question::Delete {
@@ -599,6 +611,27 @@ impl InteractiveState {
                 // git repository) so devices can be added again right away.
                 load_config();
                 ui::log("  - Configuration wiped — continuing with an empty configuration.");
+            }
+            Action::SetupCdMode => {
+                if ctx.dry_run {
+                    ui::log("  (dry run - setup-cd skipped)");
+                } else {
+                    self.setup_cd_pending = true;
+                }
+            }
+            Action::SetupCdCancel => self.setup_cd_pending = false,
+            Action::SetupCdConfirm => {
+                self.setup_cd_pending = false;
+                match setup_cd(ctx.home) {
+                    Ok(rc) => {
+                        let file = rc.file_name().unwrap_or_default().to_string_lossy();
+                        ui::log(&format!(
+                            "  + 'regroup-cd' installed in ~/{file} — run 'source ~/{file}' \
+                             or open a new terminal, then use: regroup-cd"
+                        ));
+                    }
+                    Err(e) => ui::log(&format!("  ! could not install 'regroup-cd': {e}")),
+                }
             }
         }
         false

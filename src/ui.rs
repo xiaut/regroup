@@ -144,6 +144,9 @@ pub enum Question {
     /// Wipe the whole configuration (key 'w'), with the number of device
     /// blocks that would be removed from ~/.ssh/config.
     Wipe { count: usize },
+    /// Install the 'regroup-cd' shell function (key 'c') into `file`
+    /// (~/.zshrc or ~/.bashrc), replacing any existing definition.
+    SetupCd { file: String },
 }
 
 /// A user decision, translated by the ui from key presses (or, in plain
@@ -173,6 +176,10 @@ pub enum Action {
     WipeMode,
     WipeConfirm,
     WipeCancel,
+    /// Enter setup-cd confirmation (key 'c').
+    SetupCdMode,
+    SetupCdConfirm,
+    SetupCdCancel,
 }
 
 /// The interface used by the interactive loop.
@@ -381,6 +388,7 @@ impl TtyUi {
         }
         let in_delete = matches!(self.question, Question::Delete { .. });
         let in_wipe = matches!(self.question, Question::Wipe { .. });
+        let in_setup = matches!(self.question, Question::SetupCd { .. });
         let typing = matches!(self.question, Question::Rename { .. });
         // Machines can be selected (and added) only when the Detected
         // panel has content and no other question has the keyboard.
@@ -392,6 +400,13 @@ impl TtyUi {
             // In wipe mode, any other command key cancels.
             KeyCode::Char(c) if in_wipe => {
                 (c == 'w' || c == 'q').then_some(Action::WipeCancel)
+            }
+            KeyCode::Enter if in_setup => Some(Action::SetupCdConfirm),
+            KeyCode::Esc if in_setup => Some(Action::SetupCdCancel),
+            KeyCode::Char('y') if in_setup => Some(Action::SetupCdConfirm),
+            // In setup-cd mode, any other command key cancels.
+            KeyCode::Char(c) if in_setup => {
+                (c == 'c' || c == 'q').then_some(Action::SetupCdCancel)
             }
             KeyCode::Up if in_delete => Some(Action::SelectPrev),
             KeyCode::Down if in_delete => Some(Action::SelectNext),
@@ -425,6 +440,7 @@ impl TtyUi {
                 (Question::Idle, 's') => Some(Action::Sync),
                 (Question::Idle, 'd') => Some(Action::DeleteMode),
                 (Question::Idle, 'w') => Some(Action::WipeMode),
+                (Question::Idle, 'c') => Some(Action::SetupCdMode),
                 (Question::Idle, 'y') if selectable => Some(Action::Add),
                 (Question::Idle, 'n') if selectable => Some(Action::Ignore),
                 (Question::AddDevice { .. }, 'y') => Some(Action::AddCurrent),
@@ -432,6 +448,7 @@ impl TtyUi {
                 (Question::AddDevice { .. }, 's') => Some(Action::Sync),
                 (Question::AddDevice { .. }, 'd') => Some(Action::DeleteMode),
                 (Question::AddDevice { .. }, 'w') => Some(Action::WipeMode),
+                (Question::AddDevice { .. }, 'c') => Some(Action::SetupCdMode),
                 (Question::AddDevice { .. }, 'q') => Some(Action::Quit),
                 (Question::TrustKey { .. }, 'y') => Some(Action::TrustKey),
                 (Question::TrustKey { .. }, 'n') => Some(Action::RejectKey),
@@ -678,7 +695,7 @@ fn render_question(
                     Color::Yellow,
                     format!("{pending} machine(s) detected — add them to your configuration"),
                     Line::from(
-                        "[Up/Dn] select   [Enter/y] add   [n] ignore   [s] sync git   [d] delete   [w] wipe   [q] quit",
+                        "[Up/Dn] select   [Enter/y] add   [n] ignore   [s] sync git   [d] delete   [w] wipe   [c] setup-cd   [q] quit",
                     ),
                 )
             } else {
@@ -686,7 +703,7 @@ fn render_question(
                     "Status",
                     Color::Blue,
                     "Waiting for devices…".to_string(),
-                    Line::from("[s] sync git   [d] delete   [w] wipe   [PgUp/PgDn] scroll activity   [q] quit"),
+                    Line::from("[s] sync git   [d] delete   [w] wipe   [c] setup-cd   [PgUp/PgDn] scroll activity   [q] quit"),
                 )
             }
         }
@@ -723,6 +740,14 @@ fn render_question(
                 "Delete the ENTIRE configuration ({count} device block(s) + ~/.regroup-config)?"
             ),
             Line::from("[Enter/y] confirm   [Esc/w/q] cancel"),
+        ),
+        Question::SetupCd { file } => (
+            "Install regroup-cd",
+            Color::Yellow,
+            format!(
+                "Install the 'regroup-cd' shell function (cd to ~/.regroup-config) in ~/{file}?"
+            ),
+            Line::from("[Enter/y] confirm   [Esc/c/q] cancel"),
         ),
     };
     let text = Text::from(vec![
@@ -788,7 +813,7 @@ impl PlainUi {
     /// Prompt text for the current question.
     fn prompt(&self) -> String {
         match &self.question {
-            Question::Idle => "[q=quit, s=sync git, d=delete, w=wipe]:".to_string(),
+            Question::Idle => "[q=quit, s=sync git, d=delete, w=wipe, c=setup-cd]:".to_string(),
             Question::AddDevice { name, ip } => {
                 format!("Add {name} ({ip}) to config? [y/N/q/s]:")
             }
@@ -802,6 +827,9 @@ impl PlainUi {
             Question::Wipe { count } => {
                 format!("Wipe the ENTIRE configuration ({count} device block(s))? [y/N]:")
             }
+            Question::SetupCd { file } => {
+                format!("Install 'regroup-cd' in ~/{file}? [y/N]:")
+            }
         }
     }
 
@@ -813,11 +841,13 @@ impl PlainUi {
             (Question::Idle, "s" | "sync") => Some(Action::Sync),
             (Question::Idle, "d") => Some(Action::DeleteMode),
             (Question::Idle, "w" | "wipe") => Some(Action::WipeMode),
+            (Question::Idle, "c" | "cd") => Some(Action::SetupCdMode),
             (Question::Idle, _) => None,
             (Question::AddDevice { .. }, "y" | "yes") => Some(Action::AddCurrent),
             (Question::AddDevice { .. }, "s") => Some(Action::Sync),
             (Question::AddDevice { .. }, "d") => Some(Action::DeleteMode),
             (Question::AddDevice { .. }, "w") => Some(Action::WipeMode),
+            (Question::AddDevice { .. }, "c") => Some(Action::SetupCdMode),
             (Question::AddDevice { .. }, "q") => Some(Action::Quit),
             (Question::AddDevice { .. }, _) => Some(Action::SkipCurrent),
             (Question::TrustKey { .. }, "y" | "yes") => Some(Action::TrustKey),
@@ -829,6 +859,8 @@ impl PlainUi {
             (Question::Delete { .. }, _) => Some(Action::DeleteCancel),
             (Question::Wipe { .. }, "y" | "yes") => Some(Action::WipeConfirm),
             (Question::Wipe { .. }, _) => Some(Action::WipeCancel),
+            (Question::SetupCd { .. }, "y" | "yes") => Some(Action::SetupCdConfirm),
+            (Question::SetupCd { .. }, _) => Some(Action::SetupCdCancel),
         }
     }
 }
