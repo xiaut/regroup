@@ -318,6 +318,11 @@ impl InteractiveState {
             return true;
         }
 
+        // Every announcement from another machine pulses its row, so the
+        // user sees the app receiving — including silent beacons from known
+        // machines with an unchanged IP.
+        ui::pulse_device(&device.ssh_public_key);
+
         // Signing key pinning: a beacon from a known machine must be
         // signed with the key pinned when it was accepted.
         if let Some(pinned) = self.pinned_signing_keys.get(&device.ssh_public_key)

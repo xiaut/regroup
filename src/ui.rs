@@ -27,7 +27,7 @@ use ratatui::DefaultTerminal;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Position, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
-use ratatui::text::{Line, Text};
+use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Cell, Paragraph, Row, Table};
 
 use crate::cli::usage_text;
@@ -42,6 +42,10 @@ const FLASH_MS: u64 = 2500;
 const SECURITY_FLASH_MS: u64 = 5000;
 /// Half-period of the blink of warning and security flashes.
 const BLINK_MS: u64 = 250;
+/// How long the pressed key stays highlighted in the hint line.
+const KEY_FLASH_MS: u64 = 700;
+/// How long a machine's row animates after a beacon is received from it.
+const PULSE_MS: u64 = 900;
 
 /// Sender side of the log channel; unset until [`Ui::start`] creates it.
 static LOG_TX: OnceLock<mpsc::Sender<UiEvent>> = OnceLock::new();
@@ -61,6 +65,12 @@ pub enum UiEvent {
         /// Long form for plain mode, and for security messages mirrored
         /// into the activity pane.
         detail: Option<String>,
+    },
+    /// Beacon received from a machine: animate its row even when the
+    /// beacon changes nothing (known machine, same IP). No text output.
+    Pulse {
+        /// SSH public key: identifies the machine's row.
+        key: String,
     },
 }
 
@@ -112,6 +122,17 @@ pub fn log_device(
             Some(detail) => println!("{detail}"),
             None => println!("{name}: {msg}"),
         },
+    }
+}
+
+/// Pulse a machine's row: the row lights up and fades out for a short
+/// while, showing the user that a beacon was received from it (even a
+/// silent one: known machine, unchanged IP). Full-screen ui only.
+pub fn pulse_device(key: &SshPublicKey) {
+    if let Some(tx) = LOG_TX.get() {
+        let _ = tx.send(UiEvent::Pulse {
+            key: key.as_str().to_string(),
+        });
     }
 }
 
@@ -218,6 +239,8 @@ impl Ui {
                 help_scroll: 0,
                 verbose: false,
                 flashes: HashMap::new(),
+                pulses: HashMap::new(),
+                key_flash: None,
             }))
         } else {
             Ui::Plain(PlainUi::new())
@@ -308,6 +331,10 @@ pub struct TtyUi {
     verbose: bool,
     /// Animated per-machine statuses, by SSH public key.
     flashes: HashMap<String, RowFlash>,
+    /// Rows currently pulsing after a received beacon, by SSH public key.
+    pulses: HashMap<String, Instant>,
+    /// Last key press, briefly highlighted in the hint line.
+    key_flash: Option<KeyFlash>,
 }
 
 /// A machine's animated status, shown in the last column of its row.
@@ -315,6 +342,27 @@ struct RowFlash {
     level: Level,
     msg: String,
     start: Instant,
+}
+
+/// A key press, identified by how it appears in the hint line's `[...]`
+/// tokens (`s`, `Enter`, `Dn`, ...).
+struct KeyFlash {
+    key: String,
+    start: Instant,
+}
+
+/// What the question block needs to render, besides the question itself.
+struct QuestionCtx<'a> {
+    /// Text typed for the rename question.
+    input: &'a str,
+    /// Machines waiting for a decision (drives the Idle hints).
+    pending: usize,
+    /// Whether the help panel is shown.
+    help: bool,
+    /// Verbose mode: mentioned in the hints.
+    verbose: bool,
+    /// Last key press, highlighted in the hint line while recent.
+    key_flash: Option<&'a KeyFlash>,
 }
 
 impl Drop for TtyUi {
@@ -331,6 +379,7 @@ impl Drop for TtyUi {
                     detail,
                     ..
                 } => println!("{}", detail.unwrap_or(format!("{name}: {msg}"))),
+                UiEvent::Pulse { .. } => {}
             }
         }
     }
@@ -385,14 +434,23 @@ impl TtyUi {
                         },
                     );
                 }
+                UiEvent::Pulse { key } => {
+                    self.pulses.insert(key, Instant::now());
+                }
             }
         }
         let excess = self.log.len().saturating_sub(LOG_CAP);
         if excess > 0 {
             self.log.drain(..excess);
         }
-        // Keep only recent flashes of machines that are still displayed.
+        // Keep only recent pulses of machines that are still displayed.
         let now = Instant::now();
+        self.pulses.retain(|key, t| {
+            (self.detected.iter().any(|d| d.key == *key)
+                || self.added.iter().any(|d| d.key == *key))
+                && now.duration_since(*t) < Duration::from_millis(PULSE_MS)
+        });
+        // Keep only recent flashes of machines that are still displayed.
         self.flashes.retain(|key, f| {
             (self.detected.iter().any(|d| d.key == *key)
                 || self.added.iter().any(|d| d.key == *key))
@@ -413,7 +471,14 @@ impl TtyUi {
     /// Translate one key press into an action. Scroll keys are handled here
     /// and do not produce actions. Up/Down select a machine in the active
     /// panel (Detected, or Added in delete mode) instead of scrolling.
+    /// Every press is recorded so the hint line can highlight the key.
     fn key_action(&mut self, key: KeyEvent) -> Option<Action> {
+        if let Some(label) = key_label(key.code) {
+            self.key_flash = Some(KeyFlash {
+                key: label,
+                start: Instant::now(),
+            });
+        }
         if key.modifiers.contains(KeyModifiers::CONTROL)
             && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('d'))
         {
@@ -557,6 +622,8 @@ impl TtyUi {
             help_scroll,
             verbose,
             flashes,
+            pulses,
+            key_flash,
             ..
         } = self;
         let mut cursor = None;
@@ -595,6 +662,7 @@ impl TtyUi {
                     detected,
                     *selected,
                     flashes,
+                    pulses,
                 );
                 render_machines(
                     frame,
@@ -603,6 +671,7 @@ impl TtyUi {
                     added,
                     *delete_selected,
                     flashes,
+                    pulses,
                 );
                 render_log(frame, log_area, log, *scroll, *verbose);
             }
@@ -610,10 +679,13 @@ impl TtyUi {
                 frame,
                 question_area,
                 question,
-                input,
-                detected.len(),
-                *show_help,
-                *verbose,
+                &QuestionCtx {
+                    input,
+                    pending: detected.len(),
+                    help: *show_help,
+                    verbose: *verbose,
+                    key_flash: key_flash.as_ref(),
+                },
             );
         })?;
         // Show the text cursor only while typing a name.
@@ -647,7 +719,8 @@ impl PanelTheme {
 
 /// A machine panel: one row per machine, with the animated per-machine
 /// status in the last column. `selected` highlights a row (selection in
-/// the Detected panel, delete mode in the Added panel).
+/// the Detected panel, delete mode in the Added panel). A recent beacon
+/// pulses the row: bright background fading back to the base color.
 fn render_machines(
     frame: &mut Frame,
     area: Rect,
@@ -655,16 +728,26 @@ fn render_machines(
     devices: &[Device],
     selected: Option<usize>,
     flashes: &HashMap<String, RowFlash>,
+    pulses: &HashMap<String, Instant>,
 ) {
     let now = Instant::now();
+    let pulse_duration = Duration::from_millis(PULSE_MS);
     let rows = devices.iter().enumerate().map(|(i, d)| {
         let flash = flashes
             .get(&d.key)
             .filter(|f| now.duration_since(f.start) < flash_duration(f.level));
-        let status = flash
-            .map(|f| f.msg.clone())
-            .unwrap_or_else(|| theme.idle_status.to_string());
-        let style = row_style(theme.border, selected == Some(i), flash, now);
+        let pulse = pulses
+            .get(&d.key)
+            .map(|t| now.duration_since(*t))
+            .filter(|e| *e < pulse_duration);
+        let status = if let Some(f) = flash {
+            f.msg.clone()
+        } else if pulse.is_some() {
+            "beacon received".to_string()
+        } else {
+            theme.idle_status.to_string()
+        };
+        let style = row_style(theme.border, selected == Some(i), flash, pulse, now);
         Row::new([
             Cell::from(d.name.clone()),
             Cell::from(d.ip.clone().unwrap_or_else(|| "-".to_string())),
@@ -692,15 +775,43 @@ fn render_machines(
 }
 
 /// Style of a machine row: the panel's base color, overridden by the
-/// selection or by the row's animated status.
-fn row_style(base: Color, selected: bool, flash: Option<&RowFlash>, now: Instant) -> Style {
+/// selection, an urgent blink (warning, security), a beacon pulse, or the
+/// row's animated status, in that order of precedence.
+fn row_style(
+    base: Color,
+    selected: bool,
+    flash: Option<&RowFlash>,
+    pulse: Option<Duration>,
+    now: Instant,
+) -> Style {
     if selected {
         return Style::new().add_modifier(Modifier::REVERSED);
     }
-    let Some(f) = flash else {
-        return Style::new().fg(base);
-    };
-    let on = blink(now.duration_since(f.start));
+    // Urgent statuses keep their blink so they can never be masked.
+    if let Some(f) = flash.filter(|f| matches!(f.level, Level::Warning | Level::Security)) {
+        return flash_style(f, blink(now.duration_since(f.start)));
+    }
+    // Beacon received: the row lights up, then fades back to its base
+    // color through three phases, so the user sees the app receiving.
+    if let Some(elapsed) = pulse {
+        let third = Duration::from_millis(PULSE_MS / 3);
+        if elapsed < third {
+            return Style::new().fg(Color::Black).bg(Color::Cyan);
+        }
+        if elapsed < third * 2 {
+            return Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+        }
+        return Style::new().fg(base).add_modifier(Modifier::BOLD);
+    }
+    match flash {
+        Some(f) => flash_style(f, blink(now.duration_since(f.start))),
+        None => Style::new().fg(base),
+    }
+}
+
+/// Style of a row's animated status, by level (`on` is the visible phase
+/// of the blinking levels).
+fn flash_style(f: &RowFlash, on: bool) -> Style {
     match f.level {
         Level::Info => Style::new().fg(Color::Cyan),
         Level::Success => Style::new().fg(Color::Black).bg(Color::Green),
@@ -732,6 +843,68 @@ fn flash_duration(level: Level) -> Duration {
 /// Alternating on/off phase of a blinking row status.
 fn blink(elapsed: Duration) -> bool {
     elapsed.as_millis() / BLINK_MS as u128 % 2 == 0
+}
+
+/// How a pressed key appears in the hint line's `[...]` tokens (`s`,
+/// `Enter`, `Dn`, ...), or `None` when it appears in none of them.
+fn key_label(code: KeyCode) -> Option<String> {
+    match code {
+        KeyCode::Char(c) => Some(c.to_string()),
+        KeyCode::Enter => Some("Enter".to_string()),
+        KeyCode::Esc => Some("Esc".to_string()),
+        KeyCode::Up => Some("Up".to_string()),
+        KeyCode::Down => Some("Dn".to_string()),
+        KeyCode::PageUp => Some("PgUp".to_string()),
+        KeyCode::PageDown => Some("PgDn".to_string()),
+        _ => None,
+    }
+}
+
+/// A hint line with its `[key]` tokens split into spans; the token holding
+/// the last pressed key is highlighted for a short moment (bright first,
+/// then bold only), so the user sees the app react to the key press.
+fn hint_spans(text: &str, key_flash: Option<&KeyFlash>) -> Line<'static> {
+    let Some(flash) = key_flash else {
+        return Line::from(text.to_string());
+    };
+    let elapsed = Instant::now().duration_since(flash.start);
+    if elapsed >= Duration::from_millis(KEY_FLASH_MS) {
+        return Line::from(text.to_string());
+    }
+    let lit = || -> Style {
+        // Lit only while recent, then a fading tail so the effect decays
+        // instead of switching off in one frame.
+        if elapsed < Duration::from_millis(KEY_FLASH_MS / 2) {
+            Style::new()
+                .fg(Color::Black)
+                .bg(Color::White)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::new().add_modifier(Modifier::BOLD)
+        }
+    };
+    let mut spans: Vec<Span> = Vec::new();
+    let mut rest = text;
+    while let Some(start) = rest.find('[') {
+        let Some(end) = rest[start..].find(']') else {
+            break;
+        };
+        let end = start + end;
+        if start > 0 {
+            spans.push(Span::from(rest[..start].to_string()));
+        }
+        let token = &rest[start..=end];
+        let inner = &rest[start + 1..end];
+        let style = if inner.split('/').any(|k| k == flash.key) {
+            lit()
+        } else {
+            Style::new()
+        };
+        spans.push(Span::styled(token.to_string(), style));
+        rest = &rest[end + 1..];
+    }
+    spans.push(Span::from(rest.to_string()));
+    Line::from(spans)
 }
 
 /// Activity pane: bottom-anchored log, shifted up by `scroll` lines. While
@@ -800,44 +973,48 @@ fn render_question(
     frame: &mut Frame,
     area: Rect,
     question: &Question,
-    input: &str,
-    pending: usize,
-    help: bool,
-    verbose: bool,
+    ctx: &QuestionCtx,
 ) -> Option<Position> {
     // The status hints mention the verbose key with its current state.
-    let verbose_hint = format!("[v] verbose: {}", if verbose { "on" } else { "off" });
-    let (title, border, question_line, hint_line) = if help
+    let verbose_hint = format!("[v] verbose: {}", if ctx.verbose { "on" } else { "off" });
+    let (title, border, question_line, hint_line) = if ctx.help
         && matches!(question, Question::Idle)
     {
         (
             "Help",
             Color::Cyan,
             "Command-line and interactive help".to_string(),
-            Line::from(
+            hint_spans(
                 "[Up/Dn/PgUp/PgDn] scroll help   [?] close   [s] sync git   [q] quit",
+                ctx.key_flash,
             ),
         )
     } else {
         match question {
         Question::Idle => {
-            if pending > 0 {
+            if ctx.pending > 0 {
                 (
                     "Status",
                     Color::Yellow,
-                    format!("{pending} machine(s) detected — add them to your configuration"),
-                    Line::from(format!(
-                        "[Up/Dn] select   [Enter/y] add   [n] ignore   [s] sync git   [d] delete   [w] wipe   [c] setup-cd   {verbose_hint}   [?] help   [q] quit"
-                    )),
+                    format!("{} machine(s) detected — add them to your configuration", ctx.pending),
+                    hint_spans(
+                        &format!(
+                            "[Up/Dn] select   [Enter/y] add   [n] ignore   [s] sync git   [d] delete   [w] wipe   [c] setup-cd   {verbose_hint}   [?] help   [q] quit"
+                        ),
+                        ctx.key_flash,
+                    ),
                 )
             } else {
                 (
                     "Status",
                     Color::Blue,
                     "Waiting for devices…".to_string(),
-                    Line::from(format!(
-                        "[s] sync git   [d] delete   [w] wipe   [c] setup-cd   {verbose_hint}   [?] help   [PgUp/PgDn] scroll activity   [q] quit"
-                    )),
+                    hint_spans(
+                        &format!(
+                            "[s] sync git   [d] delete   [w] wipe   [c] setup-cd   {verbose_hint}   [?] help   [PgUp/PgDn] scroll activity   [q] quit"
+                        ),
+                        ctx.key_flash,
+                    ),
                 )
             }
         }
@@ -845,9 +1022,10 @@ fn render_question(
             "New device",
             Color::Yellow,
             format!("Add {name} ({ip}) to config?"),
-            Line::from(format!(
-                "[y] add   [n] skip   [s] sync git   {verbose_hint}   [q] quit"
-            )),
+            hint_spans(
+                &format!("[y] add   [n] skip   [s] sync git   {verbose_hint}   [q] quit"),
+                ctx.key_flash,
+            ),
         ),
         Question::TrustKey { name } => (
             "Signing key changed",
@@ -855,19 +1033,19 @@ fn render_question(
             format!(
                 "Trust the new signing key for {name}? (expected after a reinstall — otherwise it may be spoofing)"
             ),
-            Line::from("[y] trust   [n] reject"),
+            hint_spans("[y] trust   [n] reject", ctx.key_flash),
         ),
         Question::Rename { name, suggested } => (
             "Name already used",
             Color::Cyan,
             format!("New name for {name} ([Enter] = {suggested}, [Esc] = skip)"),
-            Line::from(format!("> {input}")),
+            Line::from(format!("> {}", ctx.input)),
         ),
         Question::Delete { name } => (
             "Delete device",
             Color::Red,
             format!("Delete {name} from configuration?"),
-            Line::from("[Up/Dn] select   [Enter] confirm   [Esc] cancel"),
+            hint_spans("[Up/Dn] select   [Enter] confirm   [Esc] cancel", ctx.key_flash),
         ),
         Question::Wipe { count } => (
             "Wipe configuration",
@@ -875,7 +1053,7 @@ fn render_question(
             format!(
                 "Delete the ENTIRE configuration ({count} device block(s) + ~/.regroup-config)?"
             ),
-            Line::from("[Enter/y] confirm   [Esc/w/q] cancel"),
+            hint_spans("[Enter/y] confirm   [Esc/w/q] cancel", ctx.key_flash),
         ),
         Question::SetupCd { file } => (
             "Install regroup-cd",
@@ -883,7 +1061,7 @@ fn render_question(
             format!(
                 "Install the 'regroup-cd' shell function (cd to ~/.regroup-config) in ~/{file}?"
             ),
-            Line::from("[Enter/y] confirm   [Esc/c/q] cancel"),
+            hint_spans("[Enter/y] confirm   [Esc/c/q] cancel", ctx.key_flash),
         ),
     }
     };
@@ -901,7 +1079,7 @@ fn render_question(
     );
     if matches!(question, Question::Rename { .. }) {
         // Second line inside the block: "> " prefix plus the typed name.
-        let x = area.x + 1 + 2 + input.chars().count() as u16;
+        let x = area.x + 1 + 2 + ctx.input.chars().count() as u16;
         let y = area.y + 2;
         Some(Position::new(x, y))
     } else {
