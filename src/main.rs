@@ -17,7 +17,7 @@
 //                 ./regroup test           (dry run: nothing is modified)
 //                 ./regroup remove <name>  (remove a device)
 //                 ./regroup wipe [--yes]   (delete the whole configuration)
-//                 ./regroup -v             (verbose: identity + git sync details in the activity log)
+//                 ./regroup -v             (verbose: toggle at runtime with 'v' in interactive mode)
 //                 ./regroup selftest       (external tools + ssh-keygen fingerprint checks)
 //                 ./regroup -h             (this help)
 //
@@ -26,6 +26,7 @@
 //   s               - sync git (pull from remotes, push to remotes)
 //   d               - delete a known device (panel selection, Enter confirms)
 //   w               - wipe the whole configuration (Enter confirms)
+//   v               - toggle verbose mode (identity + git sync details in the activity log)
 //   ?               - show/hide the help panel (full-screen mode)
 //   q               - quit the program
 //

@@ -39,7 +39,8 @@ pub struct Context<'a> {
     pub dry_run: bool,
     /// This machine's SSH server public key: its unique identifier.
     pub local_public_key: &'a SshPublicKey,
-    /// Verbose mode (-v): extra information in the activity log.
+    /// Initial verbose state (-v): extra information in the activity log;
+    /// the user can toggle it at runtime with 'v'.
     pub verbose: bool,
     /// This machine's hostname, for the verbose identity line.
     pub local_name: &'a str,
@@ -54,10 +55,11 @@ pub struct Context<'a> {
 /// of devices accepted this run.
 pub fn run(ctx: &Context, udp_port: u16, beacons: &Receiver<BeaconDevice>) -> usize {
     let mut ui = ui::Ui::start();
+    let mut state = InteractiveState::new(ctx);
     ui::log(&format!("Listening for devices on UDP port {udp_port}..."));
     // Verbose identity line: through ui::log so the full-screen ui shows it
     // in the activity pane instead of losing it to the alternate screen.
-    if ctx.verbose {
+    if state.verbose {
         let who = format!(
             "{} / {}",
             ctx.local_name,
@@ -76,7 +78,6 @@ pub fn run(ctx: &Context, udp_port: u16, beacons: &Receiver<BeaconDevice>) -> us
         }
     }
 
-    let mut state = InteractiveState::new(ctx);
     loop {
         // Check for new beacons from the listener. A beacon that was fully
         // handled (filtered out, known device, rotation prompt raised) skips
@@ -113,6 +114,7 @@ pub fn run(ctx: &Context, udp_port: u16, beacons: &Receiver<BeaconDevice>) -> us
         ui.set_devices(detected, added);
         ui.set_selected(selected);
         ui.set_delete_selected(delete_selected);
+        ui.set_verbose(state.verbose);
         ui.draw();
     }
     state.new_count
@@ -158,6 +160,9 @@ struct InteractiveState {
     /// Setup-cd confirmation is pending (key 'c'): the ui asks for a final
     /// confirm before the 'regroup-cd' shell function is installed.
     setup_cd_pending: bool,
+    /// Verbose mode: extra information in the activity log. Initialized
+    /// from the -v flag, toggled at runtime with 'v'.
+    verbose: bool,
     /// Devices accepted this run.
     new_count: usize,
 }
@@ -179,6 +184,7 @@ impl InteractiveState {
             delete_selection: None,
             wipe_pending: false,
             setup_cd_pending: false,
+            verbose: ctx.verbose,
             new_count: 0,
         };
         state.reload(ctx);
@@ -528,7 +534,7 @@ impl InteractiveState {
                 if ctx.dry_run {
                     ui::log("  (dry run - git sync skipped)");
                 } else {
-                    sync_git(ctx.home, ctx.verbose);
+                    sync_git(ctx.home, self.verbose);
                     // A pull may have brought new device configs: reload
                     self.reload(ctx);
                 }
@@ -647,6 +653,14 @@ impl InteractiveState {
                 }
             }
             Action::SetupCdCancel => self.setup_cd_pending = false,
+            Action::ToggleVerbose => {
+                self.verbose = !self.verbose;
+                ui::log(if self.verbose {
+                    "  . Verbose mode on — identity and git sync details in the activity log"
+                } else {
+                    "  . Verbose mode off"
+                });
+            }
             Action::SetupCdConfirm => {
                 self.setup_cd_pending = false;
                 match setup_cd(ctx.home) {

@@ -182,6 +182,8 @@ pub enum Action {
     SetupCdMode,
     SetupCdConfirm,
     SetupCdCancel,
+    /// Toggle verbose mode on/off (key 'v').
+    ToggleVerbose,
     /// Print the CLI help (plain mode; the full-screen ui shows its help
     /// panel instead, toggled by '?').
     Help,
@@ -214,6 +216,7 @@ impl Ui {
                 delete_selected: None,
                 show_help: false,
                 help_scroll: 0,
+                verbose: false,
                 flashes: HashMap::new(),
             }))
         } else {
@@ -249,6 +252,15 @@ impl Ui {
     pub fn set_delete_selected(&mut self, selected: Option<usize>) {
         if let Ui::Tty(ui) = self {
             ui.delete_selected = selected;
+        }
+    }
+
+    /// Show the current verbose state: the activity pane title and the
+    /// status hints mention it (ignored in plain mode, where toggling is
+    /// reported through the log).
+    pub fn set_verbose(&mut self, verbose: bool) {
+        if let Ui::Tty(ui) = self {
+            ui.verbose = verbose;
         }
     }
 
@@ -291,6 +303,9 @@ pub struct TtyUi {
     show_help: bool,
     /// Lines scrolled up from the bottom of the help panel; 0 follows it.
     help_scroll: u16,
+    /// Verbose mode: reported in the activity pane title and the status
+    /// hints. The interactive loop keeps it in sync with its own state.
+    verbose: bool,
     /// Animated per-machine statuses, by SSH public key.
     flashes: HashMap<String, RowFlash>,
 }
@@ -477,6 +492,7 @@ impl TtyUi {
                 (Question::Idle, 'd') => Some(Action::DeleteMode),
                 (Question::Idle, 'w') => Some(Action::WipeMode),
                 (Question::Idle, 'c') => Some(Action::SetupCdMode),
+                (Question::Idle, 'v') => Some(Action::ToggleVerbose),
                 (Question::Idle, '?') => {
                     self.show_help = !self.show_help;
                     self.help_scroll = 0;
@@ -490,6 +506,7 @@ impl TtyUi {
                 (Question::AddDevice { .. }, 'd') => Some(Action::DeleteMode),
                 (Question::AddDevice { .. }, 'w') => Some(Action::WipeMode),
                 (Question::AddDevice { .. }, 'c') => Some(Action::SetupCdMode),
+                (Question::AddDevice { .. }, 'v') => Some(Action::ToggleVerbose),
                 (Question::AddDevice { .. }, 'q') => Some(Action::Quit),
                 (Question::TrustKey { .. }, 'y') => Some(Action::TrustKey),
                 (Question::TrustKey { .. }, 'n') => Some(Action::RejectKey),
@@ -538,6 +555,7 @@ impl TtyUi {
             delete_selected,
             show_help,
             help_scroll,
+            verbose,
             flashes,
             ..
         } = self;
@@ -586,7 +604,7 @@ impl TtyUi {
                     *delete_selected,
                     flashes,
                 );
-                render_log(frame, log_area, log, *scroll);
+                render_log(frame, log_area, log, *scroll, *verbose);
             }
             cursor = render_question(
                 frame,
@@ -595,6 +613,7 @@ impl TtyUi {
                 input,
                 detected.len(),
                 *show_help,
+                *verbose,
             );
         })?;
         // Show the text cursor only while typing a name.
@@ -715,8 +734,9 @@ fn blink(elapsed: Duration) -> bool {
     elapsed.as_millis() / BLINK_MS as u128 % 2 == 0
 }
 
-/// Activity pane: bottom-anchored log, shifted up by `scroll` lines.
-fn render_log(frame: &mut Frame, area: Rect, log: &[String], scroll: u16) {
+/// Activity pane: bottom-anchored log, shifted up by `scroll` lines. While
+/// verbose mode is on, the pane's title says so.
+fn render_log(frame: &mut Frame, area: Rect, log: &[String], scroll: u16, verbose: bool) {
     let visible = area.height.saturating_sub(2) as usize;
     let skip = log
         .len()
@@ -726,8 +746,9 @@ fn render_log(frame: &mut Frame, area: Rect, log: &[String], scroll: u16) {
         .iter()
         .map(|msg| Line::styled(msg.clone(), log_style(msg)))
         .collect();
+    let title = if verbose { "Activity — verbose" } else { "Activity" };
     let paragraph = Paragraph::new(Text::from(lines))
-        .block(Block::bordered().title("Activity"))
+        .block(Block::bordered().title(title))
         .scroll((skip as u16, 0));
     frame.render_widget(paragraph, area);
 }
@@ -782,7 +803,10 @@ fn render_question(
     input: &str,
     pending: usize,
     help: bool,
+    verbose: bool,
 ) -> Option<Position> {
+    // The status hints mention the verbose key with its current state.
+    let verbose_hint = format!("[v] verbose: {}", if verbose { "on" } else { "off" });
     let (title, border, question_line, hint_line) = if help
         && matches!(question, Question::Idle)
     {
@@ -802,16 +826,18 @@ fn render_question(
                     "Status",
                     Color::Yellow,
                     format!("{pending} machine(s) detected — add them to your configuration"),
-                    Line::from(
-                        "[Up/Dn] select   [Enter/y] add   [n] ignore   [s] sync git   [d] delete   [w] wipe   [c] setup-cd   [?] help   [q] quit",
-                    ),
+                    Line::from(format!(
+                        "[Up/Dn] select   [Enter/y] add   [n] ignore   [s] sync git   [d] delete   [w] wipe   [c] setup-cd   {verbose_hint}   [?] help   [q] quit"
+                    )),
                 )
             } else {
                 (
                     "Status",
                     Color::Blue,
                     "Waiting for devices…".to_string(),
-                    Line::from("[s] sync git   [d] delete   [w] wipe   [c] setup-cd   [?] help   [PgUp/PgDn] scroll activity   [q] quit"),
+                    Line::from(format!(
+                        "[s] sync git   [d] delete   [w] wipe   [c] setup-cd   {verbose_hint}   [?] help   [PgUp/PgDn] scroll activity   [q] quit"
+                    )),
                 )
             }
         }
@@ -819,7 +845,9 @@ fn render_question(
             "New device",
             Color::Yellow,
             format!("Add {name} ({ip}) to config?"),
-            Line::from("[y] add   [n] skip   [s] sync git   [q] quit"),
+            Line::from(format!(
+                "[y] add   [n] skip   [s] sync git   {verbose_hint}   [q] quit"
+            )),
         ),
         Question::TrustKey { name } => (
             "Signing key changed",
@@ -922,7 +950,7 @@ impl PlainUi {
     /// Prompt text for the current question.
     fn prompt(&self) -> String {
         match &self.question {
-            Question::Idle => "[q=quit, s=sync git, d=delete, w=wipe, c=setup-cd, h=help]:".to_string(),
+            Question::Idle => "[q=quit, s=sync git, d=delete, w=wipe, c=setup-cd, v=verbose, h=help]:".to_string(),
             Question::AddDevice { name, ip } => {
                 format!("Add {name} ({ip}) to config? [y/N/q/s]:")
             }
@@ -951,6 +979,7 @@ impl PlainUi {
             (Question::Idle, "d") => Some(Action::DeleteMode),
             (Question::Idle, "w" | "wipe") => Some(Action::WipeMode),
             (Question::Idle, "c" | "cd") => Some(Action::SetupCdMode),
+            (Question::Idle, "v" | "verbose") => Some(Action::ToggleVerbose),
             (Question::Idle, "h" | "help" | "?") => Some(Action::Help),
             (Question::Idle, _) => None,
             (Question::AddDevice { .. }, "y" | "yes") => Some(Action::AddCurrent),
