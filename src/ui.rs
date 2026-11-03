@@ -141,6 +141,9 @@ pub enum Question {
     TrustKey { name: String },
     Rename { name: String, suggested: String },
     Delete { name: String },
+    /// Wipe the whole configuration (key 'w'), with the number of device
+    /// blocks that would be removed from ~/.ssh/config.
+    Wipe { count: usize },
 }
 
 /// A user decision, translated by the ui from key presses (or, in plain
@@ -166,6 +169,10 @@ pub enum Action {
     SelectNext,
     DeleteConfirm,
     DeleteCancel,
+    /// Enter wipe confirmation (key 'w').
+    WipeMode,
+    WipeConfirm,
+    WipeCancel,
 }
 
 /// The interface used by the interactive loop.
@@ -373,11 +380,19 @@ impl TtyUi {
             return Some(Action::Quit);
         }
         let in_delete = matches!(self.question, Question::Delete { .. });
+        let in_wipe = matches!(self.question, Question::Wipe { .. });
         let typing = matches!(self.question, Question::Rename { .. });
         // Machines can be selected (and added) only when the Detected
         // panel has content and no other question has the keyboard.
         let selectable = self.question == Question::Idle && !self.detected.is_empty();
         match key.code {
+            KeyCode::Enter if in_wipe => Some(Action::WipeConfirm),
+            KeyCode::Esc if in_wipe => Some(Action::WipeCancel),
+            KeyCode::Char('y') if in_wipe => Some(Action::WipeConfirm),
+            // In wipe mode, any other command key cancels.
+            KeyCode::Char(c) if in_wipe => {
+                (c == 'w' || c == 'q').then_some(Action::WipeCancel)
+            }
             KeyCode::Up if in_delete => Some(Action::SelectPrev),
             KeyCode::Down if in_delete => Some(Action::SelectNext),
             KeyCode::Enter if in_delete => Some(Action::DeleteConfirm),
@@ -409,12 +424,14 @@ impl TtyUi {
                 (Question::Idle, 'q') => Some(Action::Quit),
                 (Question::Idle, 's') => Some(Action::Sync),
                 (Question::Idle, 'd') => Some(Action::DeleteMode),
+                (Question::Idle, 'w') => Some(Action::WipeMode),
                 (Question::Idle, 'y') if selectable => Some(Action::Add),
                 (Question::Idle, 'n') if selectable => Some(Action::Ignore),
                 (Question::AddDevice { .. }, 'y') => Some(Action::AddCurrent),
                 (Question::AddDevice { .. }, 'n') => Some(Action::SkipCurrent),
                 (Question::AddDevice { .. }, 's') => Some(Action::Sync),
                 (Question::AddDevice { .. }, 'd') => Some(Action::DeleteMode),
+                (Question::AddDevice { .. }, 'w') => Some(Action::WipeMode),
                 (Question::AddDevice { .. }, 'q') => Some(Action::Quit),
                 (Question::TrustKey { .. }, 'y') => Some(Action::TrustKey),
                 (Question::TrustKey { .. }, 'n') => Some(Action::RejectKey),
@@ -661,7 +678,7 @@ fn render_question(
                     Color::Yellow,
                     format!("{pending} machine(s) detected — add them to your configuration"),
                     Line::from(
-                        "[Up/Dn] select   [Enter/y] add   [n] ignore   [s] sync git   [d] delete   [q] quit",
+                        "[Up/Dn] select   [Enter/y] add   [n] ignore   [s] sync git   [d] delete   [w] wipe   [q] quit",
                     ),
                 )
             } else {
@@ -669,7 +686,7 @@ fn render_question(
                     "Status",
                     Color::Blue,
                     "Waiting for devices…".to_string(),
-                    Line::from("[s] sync git   [d] delete   [PgUp/PgDn] scroll activity   [q] quit"),
+                    Line::from("[s] sync git   [d] delete   [w] wipe   [PgUp/PgDn] scroll activity   [q] quit"),
                 )
             }
         }
@@ -698,6 +715,14 @@ fn render_question(
             Color::Red,
             format!("Delete {name} from configuration?"),
             Line::from("[Up/Dn] select   [Enter] confirm   [Esc] cancel"),
+        ),
+        Question::Wipe { count } => (
+            "Wipe configuration",
+            Color::Red,
+            format!(
+                "Delete the ENTIRE configuration ({count} device block(s) + ~/.regroup-config)?"
+            ),
+            Line::from("[Enter/y] confirm   [Esc/w/q] cancel"),
         ),
     };
     let text = Text::from(vec![
@@ -763,7 +788,7 @@ impl PlainUi {
     /// Prompt text for the current question.
     fn prompt(&self) -> String {
         match &self.question {
-            Question::Idle => "[q=quit, s=sync git]:".to_string(),
+            Question::Idle => "[q=quit, s=sync git, d=delete, w=wipe]:".to_string(),
             Question::AddDevice { name, ip } => {
                 format!("Add {name} ({ip}) to config? [y/N/q/s]:")
             }
@@ -774,6 +799,9 @@ impl PlainUi {
                 format!("New name for {name} (empty = {suggested}):")
             }
             Question::Delete { name } => format!("Delete {name}? [y/N]:"),
+            Question::Wipe { count } => {
+                format!("Wipe the ENTIRE configuration ({count} device block(s))? [y/N]:")
+            }
         }
     }
 
@@ -784,10 +812,12 @@ impl PlainUi {
             (Question::Idle, "q" | "quit") => Some(Action::Quit),
             (Question::Idle, "s" | "sync") => Some(Action::Sync),
             (Question::Idle, "d") => Some(Action::DeleteMode),
+            (Question::Idle, "w" | "wipe") => Some(Action::WipeMode),
             (Question::Idle, _) => None,
             (Question::AddDevice { .. }, "y" | "yes") => Some(Action::AddCurrent),
             (Question::AddDevice { .. }, "s") => Some(Action::Sync),
             (Question::AddDevice { .. }, "d") => Some(Action::DeleteMode),
+            (Question::AddDevice { .. }, "w") => Some(Action::WipeMode),
             (Question::AddDevice { .. }, "q") => Some(Action::Quit),
             (Question::AddDevice { .. }, _) => Some(Action::SkipCurrent),
             (Question::TrustKey { .. }, "y" | "yes") => Some(Action::TrustKey),
@@ -797,6 +827,8 @@ impl PlainUi {
             (Question::Rename { .. }, name) => Some(Action::Rename(name.to_string())),
             (Question::Delete { .. }, "y" | "yes") => Some(Action::DeleteConfirm),
             (Question::Delete { .. }, _) => Some(Action::DeleteCancel),
+            (Question::Wipe { .. }, "y" | "yes") => Some(Action::WipeConfirm),
+            (Question::Wipe { .. }, _) => Some(Action::WipeCancel),
         }
     }
 }

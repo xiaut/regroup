@@ -18,7 +18,7 @@ use std::time::Duration;
 
 use crate::cli::{
     add_device_to_config, device_name_taken, remove_device, remove_local_traces, sync_git,
-    trust_new_signing_key, unique_device_name,
+    trust_new_signing_key, unique_device_name, wipe as wipe_config,
 };
 use crate::config::{Machine, load_config};
 use crate::discovery::beacon::BeaconDevice;
@@ -125,6 +125,9 @@ struct InteractiveState {
     /// Device selected in delete mode (key 'd'), by name. None = not in
     /// delete mode.
     delete_selection: Option<String>,
+    /// Wipe confirmation is pending (key 'w'): the ui asks for a final
+    /// confirm before the whole configuration is deleted.
+    wipe_pending: bool,
     /// Devices accepted this run.
     new_count: usize,
 }
@@ -144,6 +147,7 @@ impl InteractiveState {
             rejected_keys: HashSet::new(),
             rename_state: None,
             delete_selection: None,
+            wipe_pending: false,
             new_count: 0,
         };
         state.reload(ctx);
@@ -192,7 +196,11 @@ impl InteractiveState {
     /// the pending queue is asked one device at a time; the full-screen ui
     /// adds machines from the Detected panel instead.
     fn current_question(&self, ctx: &Context, plain: bool) -> Question {
-        if let Some(name) = &self.delete_selection {
+        if self.wipe_pending {
+            Question::Wipe {
+                count: self.key_to_machine.len(),
+            }
+        } else if let Some(name) = &self.delete_selection {
             Question::Delete {
                 name: name.clone(),
             }
@@ -565,6 +573,33 @@ impl InteractiveState {
             }
             Action::DeleteConfirm => self.delete_selected(ctx),
             Action::DeleteCancel => self.delete_selection = None,
+            Action::WipeMode => {
+                if ctx.dry_run {
+                    ui::log("  (dry run - wipe skipped)");
+                } else {
+                    self.wipe_pending = true;
+                }
+            }
+            Action::WipeCancel => self.wipe_pending = false,
+            Action::WipeConfirm => {
+                self.wipe_pending = false;
+                let machines: Vec<Machine> = self.key_to_machine.values().cloned().collect();
+                wipe_config(ctx.home, ctx.ssh_config, &machines);
+                // Drop the wiped machines from memory, removing their
+                // known_hosts entries (last known IP) on the way — wipe
+                // itself leaves known_hosts alone (see its doc comment).
+                for (key, _) in std::mem::take(&mut self.key_to_machine) {
+                    if let Some(ip) = self.known_ip.remove(&key) {
+                        public_key::remove_known_host(&ip);
+                    }
+                    self.known_keys.remove(&key);
+                    self.pinned_signing_keys.remove(&key);
+                }
+                // Recreate the empty configuration skeleton (config dir,
+                // git repository) so devices can be added again right away.
+                load_config();
+                ui::log("  - Configuration wiped — continuing with an empty configuration.");
+            }
         }
         false
     }

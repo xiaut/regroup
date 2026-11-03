@@ -131,7 +131,7 @@ pub fn run_selftest() -> ! {
 /// Print usage information
 pub fn usage() {
     println!(
-        "regroup — find machines by their SSH host key and update ~/.ssh/config.\nDevices announce themselves via signed UDP beacons; regroup listens for them\ncontinuously and prompts for each new device.\n\nConfiguration is stored in ~/.regroup-config/git/ (a git repository) where each\ndevice has its own JSON file in the devices/ directory. Git remotes can be\nconfigured for all other devices to enable decentralized sync (press 's' in\ninteractive mode to pull from and push to them).\n\nUsage:\n  ./regroup                continuous interactive mode, update ~/.ssh/config\n  ./regroup test           dry run: nothing is modified\n  ./regroup remove <name>  remove a device (device file, ~/.ssh/config block, git remote)\n  ./regroup wipe [--yes]   delete the entire regroup configuration\n  ./regroup -v             verbose\n  ./regroup selftest       built-in checks (external tools, ssh-keygen fingerprint)\n  ./regroup setup-cd       install 'regroup-cd' shell function to change to config directory\n  ./regroup -h             this help\n\nInteractive commands (full-screen mode):\n  Up/Dn           - select a machine in the Detected panel\n  Enter/y         - add the selected machine (it moves to the Added panel)\n  n               - ignore the selected machine (its beacons are ignored this run)\n  s               - sync git (pull from remotes, push to remotes)\n  d               - delete a known device (select in the Added panel, Enter confirms, Esc cancels)\n  PgUp/PgDn       - scroll the activity log\n  q               - quit the program\n\nConfig repository structure (~/.regroup-config/git/):\n  settings.json           (optional: udp_port, wait_secs)\n  devices/\n    <hostname>.json       (each device's config: name, ssh_public_key, user, port)\n\nExit codes:\n  0  normal exit\n  1  selftest failure\n  2  configuration or environment error"
+        "regroup — find machines by their SSH host key and update ~/.ssh/config.\nDevices announce themselves via signed UDP beacons; regroup listens for them\ncontinuously and prompts for each new device.\n\nConfiguration is stored in ~/.regroup-config/git/ (a git repository) where each\ndevice has its own JSON file in the devices/ directory. Git remotes can be\nconfigured for all other devices to enable decentralized sync (press 's' in\ninteractive mode to pull from and push to them).\n\nUsage:\n  ./regroup                continuous interactive mode, update ~/.ssh/config\n  ./regroup test           dry run: nothing is modified\n  ./regroup remove <name>  remove a device (device file, ~/.ssh/config block, git remote)\n  ./regroup wipe [--yes]   delete the entire regroup configuration\n  ./regroup -v             verbose\n  ./regroup selftest       built-in checks (external tools, ssh-keygen fingerprint)\n  ./regroup setup-cd       install 'regroup-cd' shell function to change to config directory\n  ./regroup -h             this help\n\nInteractive commands (full-screen mode):\n  Up/Dn           - select a machine in the Detected panel\n  Enter/y         - add the selected machine (it moves to the Added panel)\n  n               - ignore the selected machine (its beacons are ignored this run)\n  s               - sync git (pull from remotes, push to remotes)\n  d               - delete a known device (select in the Added panel, Enter confirms, Esc cancels)\n  w               - wipe the whole configuration (Enter confirms, Esc cancels)\n  PgUp/PgDn       - scroll the activity log\n  q               - quit the program\n\nConfig repository structure (~/.regroup-config/git/):\n  settings.json           (optional: udp_port, wait_secs)\n  devices/\n    <hostname>.json       (each device's config: name, ssh_public_key, user, port)\n\nExit codes:\n  0  normal exit\n  1  selftest failure\n  2  configuration or environment error"
     );
 }
 
@@ -617,13 +617,17 @@ pub fn wipe(home: &str, ssh_config: &Path, machines: &[Machine]) {
     }
     let root = PathBuf::from(home).join(CONFIG_DIR);
     if !root.exists() {
-        println!("Nothing to wipe: {} does not exist.", root.display());
+        crate::ui::log(&format!("Nothing to wipe: {} does not exist.", root.display()));
         return;
     }
     if let Err(e) = fs::remove_dir_all(&root) {
         die(&format!("cannot remove {}: {}", root.display(), e));
     }
-    println!("Deleted {} ({} device block(s) removed from ~/.ssh/config).", root.display(), machines.len());
+    crate::ui::log(&format!(
+        "Deleted {} ({} device block(s) removed from ~/.ssh/config).",
+        root.display(),
+        machines.len()
+    ));
 }
 
 /// Configure git remotes for all known machines except this device.
