@@ -111,7 +111,7 @@ pub fn remove_key_action(
     config_dir: &Path,
     local_machine: &str,
     current_user: &str,
-    _from_machine: &str,
+    _from_user: &str,
     to_machine: &str,
     to_user: &str,
     connection_id: &str,
