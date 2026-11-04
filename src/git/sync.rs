@@ -161,18 +161,3 @@ pub fn git_add_and_commit_file(
 
     Ok(())
 }
-
-/// Whether a path is tracked in the repository's index. False when the
-/// path is not a git repository at all.
-pub fn git_is_tracked(repo_path: &Path, file_path: &Path) -> bool {
-    if !super::repo::is_git_repo(repo_path) {
-        return false;
-    }
-    quiet(Command::new("git"))
-        .current_dir(repo_path)
-        .arg("ls-files")
-        .arg("--error-unmatch")
-        .arg(file_path)
-        .output()
-        .is_ok_and(|o| o.status.success())
-}
