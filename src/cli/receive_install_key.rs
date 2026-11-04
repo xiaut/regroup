@@ -98,6 +98,19 @@ pub fn handle_receive_install_key() -> Result<(), String> {
     
     let config_dir = get_config_dir();
     
+    // Check if a connection file already exists for this incoming connection
+    // Filename format for incoming: "from_user@from_machine->to_user.json"
+    let connections_dir = config_dir.join("devices").join(&to_machine).join("connections");
+    let incoming_filename = format!("{}@{}{}{}", args.source_user, args.source_machine, "->", to_user);
+    let incoming_connection_path = connections_dir.join(format!("{}.json", incoming_filename));
+    
+    if incoming_connection_path.exists() {
+        return Err(format!(
+            "Une connexion existe déjà pour {}. Utilisez la suppression pour recommencer.",
+            args.connection_id
+        ));
+    }
+    
     // Create the connection object
     let connection = Connection::new(
         &args.source_user,

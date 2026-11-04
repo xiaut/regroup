@@ -21,6 +21,8 @@
 //                 ./regroup wipe [--yes]   (delete the whole configuration)
 //                 ./regroup -v             (verbose: toggle at runtime with 'v' in interactive mode)
 //                 ./regroup selftest       (external tools + ssh-keygen fingerprint checks)
+//                 ./regroup receive-install-key (internal: install SSH key on target machine)
+//                 ./regroup receive-remove-key  (internal: remove SSH key from target machine)
 //                 ./regroup -h             (this help)
 //
 // Interactive commands:
@@ -28,6 +30,8 @@
 //   s               - sync git (pull from remotes, push to remotes)
 //   d               - delete a known device (panel selection, Enter confirms)
 //   w               - wipe the whole configuration (Enter confirms)
+//   i               - install SSH key to a machine (first known machine)
+//   r               - remove SSH key from a machine (first outgoing connection)
 //   v               - toggle verbose mode (identity + git sync details in the activity log)
 //   ?               - show/hide the help panel (full-screen mode)
 //   q               - quit the program

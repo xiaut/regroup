@@ -98,7 +98,10 @@ pub fn install_authorized_key(public_key: &str, connection_id: &str) -> Result<(
         .map_err(|e| format!("Cannot read authorized_keys: {}", e))?;
     
     if content.lines().any(|l| l.trim() == line) {
-        return Ok(()); // Already installed
+        return Err(format!(
+            "Clé déjà installée dans authorized_keys pour la connexion {}",
+            connection_id
+        ));
     }
     
     // Append the new key

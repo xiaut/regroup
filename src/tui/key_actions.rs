@@ -37,9 +37,34 @@ pub fn install_key_action(
     to_machine: &str,
     to_user: &str,
 ) -> Result<KeyActionResult, String> {
+    let connection_id = build_connection_id(current_user, to_user, to_machine);
+    
+    // Check if a connection already exists for this pair
+    let connections_dir = config_dir.join("devices").join(local_machine).join("connections");
+    let connection_file_name = format!("{}->{}@{}.json", current_user, to_user, to_machine);
+    let connection_path = connections_dir.join(connection_file_name);
+    
+    if connection_path.exists() {
+        return Ok(KeyActionResult::Error(format!(
+            "Une connexion existe déjà pour {}. Supprimez-la d'abord si vous voulez la recréer.",
+            connection_id
+        )));
+    }
+    
     // Check if machine is reachable
     if !is_reachable(to_machine, 22, to_user) {
         return Ok(KeyActionResult::Error(format!("Machine {} non joignable", to_machine)));
+    }
+    
+    // Check if key already exists
+    let home = std::env::var("HOME").map_err(|_| "HOME not set".to_string())?;
+    let key_path = std::path::PathBuf::from(&home).join(".ssh").join(format!("id_regroup_{}@{}", current_user, to_machine));
+    
+    if key_path.exists() {
+        return Ok(KeyActionResult::Error(format!(
+            "Une clé existe déjà pour cette connexion ({}). Regroup ne gère qu'une seule clé par connexion.",
+            key_path.display()
+        )));
     }
     
     // Generate key pair
@@ -48,8 +73,6 @@ pub fn install_key_action(
     
     let public_key = get_public_key(&key_path)
         .map_err(|e| format!("Échec de la lecture de la clé publique: {}", e))?;
-    
-    let connection_id = build_connection_id(current_user, to_user, to_machine);
     
     // Build the command for the remote machine
     let cmd = format!(
