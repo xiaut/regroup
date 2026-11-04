@@ -58,6 +58,7 @@ pub const GLOBAL_CONFIG_FILE: &str = "settings.json";
 // Submodules
 // ============================================================
 
+pub mod connection;
 pub mod device;
 pub mod json_helpers;
 pub mod loading;
@@ -65,4 +66,5 @@ pub mod settings;
 pub mod validation;
 
 // Re-export commonly used items
+pub use connection::{Connection, CONNECTIONS_DIR};
 pub use loading::load_config;

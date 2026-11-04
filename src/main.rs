@@ -45,6 +45,7 @@ mod git;
 mod interactive;
 mod signing;
 mod ssh;
+mod tui;
 mod ui;
 
 use std::sync::atomic::{AtomicBool, Ordering};

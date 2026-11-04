@@ -203,6 +203,16 @@ pub enum Action {
     SetupCdMode,
     SetupCdConfirm,
     SetupCdCancel,
+    /// Enter connections management mode (key 'k').
+    ConnectionsMode,
+    /// Connection creation confirmed.
+    ConnectionCreateConfirm,
+    /// Connection creation cancelled.
+    ConnectionCreateCancel,
+    /// Connection removal confirmed.
+    ConnectionRemoveConfirm,
+    /// Connection removal cancelled.
+    ConnectionRemoveCancel,
     /// Toggle verbose mode on/off (key 'v').
     ToggleVerbose,
     /// Print the CLI help (plain mode; the full-screen ui shows its help
@@ -557,6 +567,7 @@ impl TtyUi {
                 (Question::Idle, 'd') => Some(Action::DeleteMode),
                 (Question::Idle, 'w') => Some(Action::WipeMode),
                 (Question::Idle, 'c') => Some(Action::SetupCdMode),
+                (Question::Idle, 'k') => Some(Action::ConnectionsMode),
                 (Question::Idle, 'v') => Some(Action::ToggleVerbose),
                 (Question::Idle, '?') => {
                     self.show_help = !self.show_help;
@@ -571,6 +582,7 @@ impl TtyUi {
                 (Question::AddDevice { .. }, 'd') => Some(Action::DeleteMode),
                 (Question::AddDevice { .. }, 'w') => Some(Action::WipeMode),
                 (Question::AddDevice { .. }, 'c') => Some(Action::SetupCdMode),
+                (Question::AddDevice { .. }, 'k') => Some(Action::ConnectionsMode),
                 (Question::AddDevice { .. }, 'v') => Some(Action::ToggleVerbose),
                 (Question::AddDevice { .. }, 'q') => Some(Action::Quit),
                 (Question::TrustKey { .. }, 'y') => Some(Action::TrustKey),
@@ -1157,6 +1169,7 @@ impl PlainUi {
             (Question::Idle, "d") => Some(Action::DeleteMode),
             (Question::Idle, "w" | "wipe") => Some(Action::WipeMode),
             (Question::Idle, "c" | "cd") => Some(Action::SetupCdMode),
+            (Question::Idle, "k" | "connections") => Some(Action::ConnectionsMode),
             (Question::Idle, "v" | "verbose") => Some(Action::ToggleVerbose),
             (Question::Idle, "h" | "help" | "?") => Some(Action::Help),
             (Question::Idle, _) => None,
@@ -1165,6 +1178,7 @@ impl PlainUi {
             (Question::AddDevice { .. }, "d") => Some(Action::DeleteMode),
             (Question::AddDevice { .. }, "w") => Some(Action::WipeMode),
             (Question::AddDevice { .. }, "c") => Some(Action::SetupCdMode),
+            (Question::AddDevice { .. }, "k") => Some(Action::ConnectionsMode),
             (Question::AddDevice { .. }, "q") => Some(Action::Quit),
             (Question::AddDevice { .. }, _) => Some(Action::SkipCurrent),
             (Question::TrustKey { .. }, "y" | "yes") => Some(Action::TrustKey),
