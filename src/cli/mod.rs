@@ -16,6 +16,10 @@ use crate::git::{self, sync::git_add_and_commit_file};
 use crate::ssh::config::{remove_block, update_block};
 use crate::ssh::public_key::{self};
 
+pub mod key_management;
+pub mod receive_install_key;
+pub mod receive_remove_key;
+
 // ============================================================
 // Error handling
 // ============================================================

@@ -348,7 +348,7 @@ fn pretty_direction(c: &Connection, d: ConnDirection) -> String {
 
 const HELP_BROWSE: &str = "↑/↓ Naviguer · Enter Connexions · q Retour";
 const HELP_CONNECTIONS: &str =
-    "↑/↓ Naviguer · Enter Détails · a Ajouter (à venir) · d Supprimer (à venir) · q Retour";
+    "↑/↓ Naviguer · Enter Détails · a Ajouter · d Supprimer · q Retour";
 
 /// Common screen chrome: title, bordered frame, list and help line.
 fn render_screen(

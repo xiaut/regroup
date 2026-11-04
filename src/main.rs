@@ -74,6 +74,20 @@ fn main() {
     let mut remove_name: Option<String> = None;
     let mut wipe = false;
     let mut assume_yes = false;
+    
+    // Handle subcommands that don't need the full initialization
+    if !args.is_empty() {
+        match args[0].as_str() {
+            "receive-install-key" => {
+                cli::receive_install_key::run();
+            }
+            "receive-remove-key" => {
+                cli::receive_remove_key::run();
+            }
+            _ => {}
+        }
+    }
+    
     let mut i = 0;
     while i < args.len() {
         let a = &args[i];
