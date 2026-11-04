@@ -21,7 +21,7 @@ use crate::cli::{
     shell_rc_file, sync_git, trust_new_signing_key, unique_device_name, usage,
     wipe as wipe_config,
 };
-use crate::config::{Machine, load_config};
+use crate::config::{CONFIG_DIR, GIT_DIR, Machine, load_config};
 use crate::discovery::beacon::BeaconDevice;
 use crate::ssh::config::update_block;
 use crate::ssh::keys::{SigningPublicKeyB64, SshPublicKey};
@@ -160,6 +160,16 @@ struct InteractiveState {
     /// Setup-cd confirmation is pending (key 'c'): the ui asks for a final
     /// confirm before the 'regroup-cd' shell function is installed.
     setup_cd_pending: bool,
+    /// Install key mode: select target machine and user
+    install_key_mode: bool,
+    /// Selected machine for key installation
+    install_key_target: Option<String>,
+    /// Selected user for key installation
+    install_key_user: Option<String>,
+    /// Remove key mode: select connection to remove
+    remove_key_mode: bool,
+    /// Selected connection for key removal
+    remove_key_connection: Option<String>,
     /// Verbose mode: extra information in the activity log. Initialized
     /// from the -v flag, toggled at runtime with 'v'.
     verbose: bool,
@@ -184,6 +194,11 @@ impl InteractiveState {
             delete_selection: None,
             wipe_pending: false,
             setup_cd_pending: false,
+            install_key_mode: false,
+            install_key_target: None,
+            install_key_user: None,
+            remove_key_mode: false,
+            remove_key_connection: None,
             verbose: ctx.verbose,
             new_count: 0,
         };
@@ -682,6 +697,32 @@ impl InteractiveState {
             // Plain mode only: the full-screen ui shows its help panel
             // instead, without going through an action.
             Action::Help => usage(),
+            Action::InstallKeyMode => {
+                if ctx.dry_run {
+                    ui::log("  (dry run - key installation skipped)");
+                } else {
+                    self.enter_install_key_mode(ctx);
+                }
+            }
+            Action::InstallKeyConfirm => {
+                self.confirm_install_key(ctx);
+            }
+            Action::InstallKeyCancel => {
+                self.cancel_install_key();
+            }
+            Action::RemoveKeyMode => {
+                if ctx.dry_run {
+                    ui::log("  (dry run - key removal skipped)");
+                } else {
+                    self.enter_remove_key_mode(ctx);
+                }
+            }
+            Action::RemoveKeyConfirm => {
+                self.confirm_remove_key(ctx);
+            }
+            Action::RemoveKeyCancel => {
+                self.cancel_remove_key();
+            }
             Action::ConnectionsMode => {
                 // Connections management is notified only: the connections
                 // browser (crate::tui::connections) is not wired into the
@@ -911,6 +952,87 @@ impl InteractiveState {
             self.known_ip
                 .insert(device.ssh_public_key.clone(), device.ip.clone());
         }
+    }
+    
+    /// Enter install key mode: set the flag and prepare state
+    fn enter_install_key_mode(&mut self, _ctx: &Context) {
+        if !self.install_key_mode {
+            self.install_key_mode = true;
+            self.install_key_target = None;
+            self.install_key_user = None;
+            ui::log("Mode installation de clé SSH activé - sélectionnez une machine cible");
+        }
+    }
+    
+    /// Confirm and execute key installation
+    fn confirm_install_key(&mut self, ctx: &Context) {
+        if let (Some(target), Some(user)) = (&self.install_key_target, &self.install_key_user) {
+            // Call the key installation action
+            let config_dir = Path::new(ctx.home).join(CONFIG_DIR).join(GIT_DIR);
+            let current_user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
+            let result = crate::tui::key_actions::install_key_action(
+                ctx.home,
+                &config_dir,
+                ctx.local_name,
+                &current_user,
+                target,
+                user,
+            );
+            
+            match result {
+                Ok(crate::tui::key_actions::KeyActionResult::Success(msg)) => {
+                    ui::log(&format!("Succès: {}", msg));
+                }
+                Ok(crate::tui::key_actions::KeyActionResult::Error(msg)) => {
+                    ui::log(&format!("Erreur: {}", msg));
+                }
+                Ok(crate::tui::key_actions::KeyActionResult::Cancelled) => {
+                    ui::log("Installation annulée");
+                }
+                Err(e) => {
+                    ui::log(&format!("Erreur: {}", e));
+                }
+            }
+        }
+        
+        // Reset state
+        self.install_key_mode = false;
+        self.install_key_target = None;
+        self.install_key_user = None;
+    }
+    
+    /// Cancel key installation
+    fn cancel_install_key(&mut self) {
+        self.install_key_mode = false;
+        self.install_key_target = None;
+        self.install_key_user = None;
+        ui::log("Installation de clé annulée");
+    }
+    
+    /// Enter remove key mode
+    fn enter_remove_key_mode(&mut self, _ctx: &Context) {
+        if !self.remove_key_mode {
+            self.remove_key_mode = true;
+            self.remove_key_connection = None;
+            ui::log("Mode suppression de clé SSH activé - sélectionnez une connexion");
+        }
+    }
+    
+    /// Confirm and execute key removal
+    fn confirm_remove_key(&mut self, _ctx: &Context) {
+        // For now, just log that removal is not fully implemented
+        ui::log("Suppression de clé: non encore implémentée dans la TUI principale");
+        
+        // Reset state
+        self.remove_key_mode = false;
+        self.remove_key_connection = None;
+    }
+    
+    /// Cancel key removal
+    fn cancel_remove_key(&mut self) {
+        self.remove_key_mode = false;
+        self.remove_key_connection = None;
+        ui::log("Suppression de clé annulée");
     }
 }
 

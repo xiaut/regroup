@@ -170,6 +170,16 @@ pub enum Question {
     /// Install the 'regroup-cd' shell function (key 'c') into `file`
     /// (~/.zshrc or ~/.bashrc), replacing any existing definition.
     SetupCd { file: String },
+    /// Install SSH key: select target machine (key 'i')
+    InstallKeySelectMachine { machines: Vec<String> },
+    /// Install SSH key: select target user
+    InstallKeySelectUser { machine: String, users: Vec<String> },
+    /// Install SSH key: confirm installation
+    InstallKeyConfirm { from_user: String, from_machine: String, to_user: String, to_machine: String },
+    /// Remove SSH key: select connection (key 'r')
+    RemoveKeySelectConnection { connections: Vec<(String, String, String)> },
+    /// Remove SSH key: confirm removal
+    RemoveKeyConfirm { connection_id: String, from_user: String, from_machine: String, to_user: String, to_machine: String },
 }
 
 /// A user decision, translated by the ui from key presses (or, in plain
@@ -205,6 +215,18 @@ pub enum Action {
     SetupCdCancel,
     /// Enter connections management mode (key 'k').
     ConnectionsMode,
+    /// Enter install key mode (key 'i').
+    InstallKeyMode,
+    /// Confirm install key action.
+    InstallKeyConfirm,
+    /// Cancel install key action.
+    InstallKeyCancel,
+    /// Enter remove key mode (key 'r').
+    RemoveKeyMode,
+    /// Confirm remove key action.
+    RemoveKeyConfirm,
+    /// Cancel remove key action.
+    RemoveKeyCancel,
     /// Toggle verbose mode on/off (key 'v').
     ToggleVerbose,
     /// Print the CLI help (plain mode; the full-screen ui shows its help
@@ -560,6 +582,8 @@ impl TtyUi {
                 (Question::Idle, 'w') => Some(Action::WipeMode),
                 (Question::Idle, 'c') => Some(Action::SetupCdMode),
                 (Question::Idle, 'k') => Some(Action::ConnectionsMode),
+                (Question::Idle, 'i') => Some(Action::InstallKeyMode),
+                (Question::Idle, 'r') => Some(Action::RemoveKeyMode),
                 (Question::Idle, 'v') => Some(Action::ToggleVerbose),
                 (Question::Idle, '?') => {
                     self.show_help = !self.show_help;
@@ -575,6 +599,8 @@ impl TtyUi {
                 (Question::AddDevice { .. }, 'w') => Some(Action::WipeMode),
                 (Question::AddDevice { .. }, 'c') => Some(Action::SetupCdMode),
                 (Question::AddDevice { .. }, 'k') => Some(Action::ConnectionsMode),
+                (Question::AddDevice { .. }, 'i') => Some(Action::InstallKeyMode),
+                (Question::AddDevice { .. }, 'r') => Some(Action::RemoveKeyMode),
                 (Question::AddDevice { .. }, 'v') => Some(Action::ToggleVerbose),
                 (Question::AddDevice { .. }, 'q') => Some(Action::Quit),
                 (Question::TrustKey { .. }, 'y') => Some(Action::TrustKey),
@@ -1067,6 +1093,36 @@ fn render_question(
             ),
             hint_spans("[Enter/y] confirm   [Esc/c/q] cancel", ctx.key_flash),
         ),
+        Question::InstallKeySelectMachine { machines } => (
+            "Install SSH key",
+            Color::Green,
+            format!("Select target machine ({} available)", machines.len()),
+            hint_spans("[Up/Dn] select   [Enter] confirm   [Esc/q] cancel", ctx.key_flash),
+        ),
+        Question::InstallKeySelectUser { machine, users } => (
+            "Install SSH key",
+            Color::Green,
+            format!("Select user on {machine} ({} available)", users.len()),
+            hint_spans("[Up/Dn] select   [Enter] confirm   [Esc] back", ctx.key_flash),
+        ),
+        Question::InstallKeyConfirm { from_user, from_machine, to_user, to_machine } => (
+            "Install SSH key",
+            Color::Green,
+            format!("Install key from {}@{} to {}@{}?", from_user, from_machine, to_user, to_machine),
+            hint_spans("[y] confirm   [n/Esc] cancel", ctx.key_flash),
+        ),
+        Question::RemoveKeySelectConnection { connections } => (
+            "Remove SSH key",
+            Color::Red,
+            format!("Select connection to remove ({} available)", connections.len()),
+            hint_spans("[Up/Dn] select   [Enter] confirm   [Esc/q] cancel", ctx.key_flash),
+        ),
+        Question::RemoveKeyConfirm { connection_id, from_user, from_machine, to_user, to_machine } => (
+            "Remove SSH key",
+            Color::Red,
+            format!("Remove key {} ({}@{}) from {}@{}?", connection_id, from_user, from_machine, to_user, to_machine),
+            hint_spans("[y] confirm   [n/Esc] cancel", ctx.key_flash),
+        ),
     }
     };
     let text = Text::from(vec![
@@ -1149,6 +1205,21 @@ impl PlainUi {
             Question::SetupCd { file } => {
                 format!("Install 'regroup-cd' in ~/{file}? [y/N]:")
             }
+            Question::InstallKeySelectMachine { machines } => {
+                format!("Select target machine for key installation ({} available):", machines.len())
+            }
+            Question::InstallKeySelectUser { machine, users } => {
+                format!("Select user on {} for key installation ({} available):", machine, users.len())
+            }
+            Question::InstallKeyConfirm { from_user, from_machine, to_user, to_machine } => {
+                format!("Install SSH key from {}@{} to {}@{}? [y/N]:", from_user, from_machine, to_user, to_machine)
+            }
+            Question::RemoveKeySelectConnection { connections } => {
+                format!("Select connection to remove ({} available):", connections.len())
+            }
+            Question::RemoveKeyConfirm { connection_id, .. } => {
+                format!("Remove SSH key {connection_id}? [y/N]:")
+            }
         }
     }
 
@@ -1184,6 +1255,20 @@ impl PlainUi {
             (Question::Wipe { .. }, _) => Some(Action::WipeCancel),
             (Question::SetupCd { .. }, "y" | "yes") => Some(Action::SetupCdConfirm),
             (Question::SetupCd { .. }, _) => Some(Action::SetupCdCancel),
+            // Key installation/removal actions
+            (Question::InstallKeySelectMachine { .. }, "q") => Some(Action::InstallKeyCancel),
+            (Question::InstallKeySelectMachine { .. }, _) => Some(Action::InstallKeyMode),
+            (Question::InstallKeySelectUser { .. }, "q") => Some(Action::InstallKeyCancel),
+            (Question::InstallKeySelectUser { .. }, _machine) => {
+                // This would require more context to handle properly
+                Some(Action::InstallKeyMode)
+            }
+            (Question::InstallKeyConfirm { .. }, "y" | "yes") => Some(Action::InstallKeyConfirm),
+            (Question::InstallKeyConfirm { .. }, _) => Some(Action::InstallKeyCancel),
+            (Question::RemoveKeySelectConnection { .. }, "q") => Some(Action::RemoveKeyCancel),
+            (Question::RemoveKeySelectConnection { .. }, _) => Some(Action::RemoveKeyMode),
+            (Question::RemoveKeyConfirm { .. }, "y" | "yes") => Some(Action::RemoveKeyConfirm),
+            (Question::RemoveKeyConfirm { .. }, _) => Some(Action::RemoveKeyCancel),
         }
     }
 }
