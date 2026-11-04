@@ -273,6 +273,23 @@ impl InteractiveState {
             Question::TrustKey {
                 name: device.name.clone(),
             }
+        } else if self.install_key_mode {
+            // For now, use a simple question - full interactive selection comes later
+            Question::InstallKeyConfirm {
+                from_user: std::env::var("USER").unwrap_or_else(|_| "unknown".to_string()),
+                from_machine: ctx.local_name.to_string(),
+                to_user: self.install_key_user.clone().unwrap_or_else(|| "unknown".to_string()),
+                to_machine: self.install_key_target.clone().unwrap_or_else(|| "unknown".to_string()),
+            }
+        } else if self.remove_key_mode {
+            // For now, use a simple question - full interactive selection comes later
+            Question::RemoveKeyConfirm {
+                connection_id: self.remove_key_connection.clone().unwrap_or_else(|| "unknown".to_string()),
+                from_user: std::env::var("USER").unwrap_or_else(|_| "unknown".to_string()),
+                from_machine: ctx.local_name.to_string(),
+                to_user: "unknown".to_string(),
+                to_machine: "unknown".to_string(),
+            }
         } else if plain
             && !ctx.dry_run
             && let Some(device) = self.pending_devices.front()
@@ -701,27 +718,27 @@ impl InteractiveState {
                 if ctx.dry_run {
                     ui::log("  (dry run - key installation skipped)");
                 } else {
-                    self.enter_install_key_mode(ctx);
+                    self.execute_install_key(ctx);
                 }
             }
             Action::InstallKeyConfirm => {
-                self.confirm_install_key(ctx);
+                // Not used in current simple implementation
             }
             Action::InstallKeyCancel => {
-                self.cancel_install_key();
+                // Not used in current simple implementation
             }
             Action::RemoveKeyMode => {
                 if ctx.dry_run {
                     ui::log("  (dry run - key removal skipped)");
                 } else {
-                    self.enter_remove_key_mode(ctx);
+                    self.execute_remove_key(ctx);
                 }
             }
             Action::RemoveKeyConfirm => {
-                self.confirm_remove_key(ctx);
+                // Not used in current simple implementation
             }
             Action::RemoveKeyCancel => {
-                self.cancel_remove_key();
+                // Not used in current simple implementation
             }
             Action::ConnectionsMode => {
                 // Connections management is notified only: the connections
@@ -954,85 +971,116 @@ impl InteractiveState {
         }
     }
     
-    /// Enter install key mode: set the flag and prepare state
-    fn enter_install_key_mode(&mut self, _ctx: &Context) {
-        if !self.install_key_mode {
-            self.install_key_mode = true;
-            self.install_key_target = None;
-            self.install_key_user = None;
-            ui::log("Mode installation de clé SSH activé - sélectionnez une machine cible");
+    /// Execute key installation on the first known machine
+    fn execute_install_key(&mut self, ctx: &Context) {
+        let config_dir = Path::new(ctx.home).join(CONFIG_DIR).join(GIT_DIR);
+        let current_user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
+        
+        // Get the first known machine (or selected one)
+        let machines: Vec<Machine> = self.key_to_machine.values().cloned().collect();
+        if machines.is_empty() {
+            ui::log("Aucune machine connue pour installer une clé");
+            return;
+        }
+        
+        let target_machine = &machines[0].name;
+        let target_user = if machines[0].user.is_empty() {
+            current_user.clone()
+        } else {
+            machines[0].user.clone()
+        };
+        
+        ui::log(&format!("Installation de clé vers {}@{}", target_user, target_machine));
+        
+        let result = crate::tui::key_actions::install_key_action(
+            ctx.home,
+            &config_dir,
+            ctx.local_name,
+            &current_user,
+            target_machine,
+            &target_user,
+        );
+        
+        match result {
+            Ok(crate::tui::key_actions::KeyActionResult::Success(msg)) => {
+                ui::log(&format!("Succès: {}", msg));
+            }
+            Ok(crate::tui::key_actions::KeyActionResult::Error(msg)) => {
+                ui::log(&format!("Erreur: {}", msg));
+            }
+            Ok(crate::tui::key_actions::KeyActionResult::Cancelled) => {
+                ui::log("Installation annulée");
+            }
+            Err(e) => {
+                ui::log(&format!("Erreur: {}", e));
+            }
         }
     }
     
-    /// Confirm and execute key installation
-    fn confirm_install_key(&mut self, ctx: &Context) {
-        if let (Some(target), Some(user)) = (&self.install_key_target, &self.install_key_user) {
-            // Call the key installation action
-            let config_dir = Path::new(ctx.home).join(CONFIG_DIR).join(GIT_DIR);
-            let current_user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
-            let result = crate::tui::key_actions::install_key_action(
-                ctx.home,
-                &config_dir,
-                ctx.local_name,
-                &current_user,
-                target,
-                user,
-            );
-            
-            match result {
-                Ok(crate::tui::key_actions::KeyActionResult::Success(msg)) => {
-                    ui::log(&format!("Succès: {}", msg));
-                }
-                Ok(crate::tui::key_actions::KeyActionResult::Error(msg)) => {
-                    ui::log(&format!("Erreur: {}", msg));
-                }
-                Ok(crate::tui::key_actions::KeyActionResult::Cancelled) => {
-                    ui::log("Installation annulée");
-                }
-                Err(e) => {
-                    ui::log(&format!("Erreur: {}", e));
+    /// Execute key removal from the first known machine
+    fn execute_remove_key(&mut self, ctx: &Context) {
+        let config_dir = Path::new(ctx.home).join(CONFIG_DIR).join(GIT_DIR);
+        let current_user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
+        
+        // For now, just log that removal needs more implementation
+        ui::log("Suppression de clé: sélection d'une connexion à implémenter");
+        
+        // Find first outgoing connection
+        let connections_dir = config_dir.join("devices").join(ctx.local_name).join("connections");
+        if !connections_dir.exists() {
+            ui::log("Aucune connexion sortante trouvée");
+            return;
+        }
+        
+        // Find first connection file
+        if let Ok(entries) = std::fs::read_dir(&connections_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("json") {
+                    let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                    // Check if this is an outgoing connection (from current_user)
+                    if filename.starts_with(&format!("{}->", current_user)) {
+                        let connection_id = filename.trim_end_matches(".json").to_string();
+                        let (from_user, to_user, to_machine) = crate::cli::key_management::parse_connection_id(&connection_id)
+                            .unwrap_or_default();
+                        
+                        ui::log(&format!("Suppression de la connexion: {}", connection_id));
+                        
+                        let result = crate::tui::key_actions::remove_key_action(
+                            ctx.home,
+                            &config_dir,
+                            ctx.local_name,
+                            &current_user,
+                            &from_user,
+                            &to_machine,
+                            &to_user,
+                            &connection_id,
+                        );
+                        
+                        match result {
+                            Ok(crate::tui::key_actions::KeyActionResult::Success(msg)) => {
+                                ui::log(&format!("Succès: {}", msg));
+                                return;
+                            }
+                            Ok(crate::tui::key_actions::KeyActionResult::Error(msg)) => {
+                                ui::log(&format!("Erreur: {}", msg));
+                                return;
+                            }
+                            Ok(crate::tui::key_actions::KeyActionResult::Cancelled) => {
+                                ui::log("Suppression annulée");
+                                return;
+                            }
+                            Err(e) => {
+                                ui::log(&format!("Erreur: {}", e));
+                                return;
+                            }
+                        }
+                    }
                 }
             }
         }
         
-        // Reset state
-        self.install_key_mode = false;
-        self.install_key_target = None;
-        self.install_key_user = None;
-    }
-    
-    /// Cancel key installation
-    fn cancel_install_key(&mut self) {
-        self.install_key_mode = false;
-        self.install_key_target = None;
-        self.install_key_user = None;
-        ui::log("Installation de clé annulée");
-    }
-    
-    /// Enter remove key mode
-    fn enter_remove_key_mode(&mut self, _ctx: &Context) {
-        if !self.remove_key_mode {
-            self.remove_key_mode = true;
-            self.remove_key_connection = None;
-            ui::log("Mode suppression de clé SSH activé - sélectionnez une connexion");
-        }
-    }
-    
-    /// Confirm and execute key removal
-    fn confirm_remove_key(&mut self, _ctx: &Context) {
-        // For now, just log that removal is not fully implemented
-        ui::log("Suppression de clé: non encore implémentée dans la TUI principale");
-        
-        // Reset state
-        self.remove_key_mode = false;
-        self.remove_key_connection = None;
-    }
-    
-    /// Cancel key removal
-    fn cancel_remove_key(&mut self) {
-        self.remove_key_mode = false;
-        self.remove_key_connection = None;
-        ui::log("Suppression de clé annulée");
+        ui::log("Aucune connexion sortante trouvée pour cet utilisateur");
     }
 }
 
