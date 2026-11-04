@@ -158,8 +158,8 @@ pub fn sync_git_remotes(
         }
 
         // The remote URL needs an SSH user. Devices discovered via beacon carry
-        // none (the beacon format has no user field), so fall back to the
-        // current local user; "user" in the device file overrides it.
+        // their user field; fall back to the current local user if empty.
+        // "user" in the device file overrides it.
         let user = if machine.user.is_empty() {
             env::var("USER")
                 .or_else(|_| env::var("LOGNAME"))

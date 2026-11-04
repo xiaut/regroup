@@ -323,7 +323,7 @@ pub fn add_device_to_config(
         name: name.to_string(),
         ssh_public_key: device.ssh_public_key.clone(),
         signing_public_key: device.signing_public_key.clone(),
-        user: String::new(),
+        user: device.user.clone(),
         port: device.port,
         port_explicit: true,
     };
