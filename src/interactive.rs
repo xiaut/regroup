@@ -683,54 +683,18 @@ impl InteractiveState {
             // instead, without going through an action.
             Action::Help => usage(),
             Action::ConnectionsMode => {
-                // Open the connections management TUI
-                self.handle_connections(ctx);
-            }
-            Action::ConnectionCreateConfirm => {
-                // Connection creation will be handled by the TUI
-            }
-            Action::ConnectionCreateCancel => {
-                // Connection creation cancelled
-            }
-            Action::ConnectionRemoveConfirm => {
-                // Connection removal will be handled by the TUI
-            }
-            Action::ConnectionRemoveCancel => {
-                // Connection removal cancelled
+                // Connections management is notified only: the connections
+                // browser (crate::tui::connections) is not wired into the
+                // main loop yet (handing the terminal to a nested ratatui
+                // loop and restoring the main drawing state needs care), and
+                // connection creation/removal procedures are unimplemented.
+                ui::log(
+                    "Gestion des connexions : consultation via devices/<nom>/connections/ \
+                     dans le dépôt git ; création et suppression non implémentées.",
+                );
             }
         }
         false
-    }
-
-    /// Handles the connections management TUI
-    fn handle_connections(&mut self, ctx: &Context) {
-        use crate::tui::connections::{handle_connections, ConnectionResult};
-        use std::path::Path;
-        
-        // Get the local machine name and user
-        let local_machine = ctx.local_name.to_string();
-        let local_user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
-        
-        // Get the config directory
-        let config_dir = Path::new(ctx.home).join(crate::config::CONFIG_DIR).join(crate::config::GIT_DIR);
-        
-        // Get the list of machines
-        let machines: Vec<crate::config::Machine> = self.key_to_machine.values().cloned().collect();
-        
-        // Start the connections TUI
-        // We need to temporarily stop the current UI to show the connections UI
-        // For now, we'll just log that we're entering connections mode
-        ui::log("Opening connections management...");
-        
-        // In a real implementation, we would:
-        // 1. Save the current terminal state
-        // 2. Run the connections TUI
-        // 3. Restore the terminal state
-        // For now, we'll just call the function and handle the result
-        
-        // Note: This is a simplified implementation. A full implementation would
-        // need to properly manage the terminal state transitions.
-        ui::log("Connections management not yet fully integrated with main TUI");
     }
 
     /// Sorted names of the devices that can be deleted (known ones).

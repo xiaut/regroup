@@ -5,12 +5,17 @@ Find machines by their SSH host key and update `~/.ssh/config`.
 ## Configuration & Sync
 
 **Configuration is stored in `~/.regroup-config/git/`** - a git repository where:
-- Each device has its own JSON file in `devices/`
+- Each device owns a directory `devices/<name>/` holding its latest known
+  state (`device.json`), its known users (`users/<user>.json`) and its
+  connections (`connections/`)
 - Devices are identified by their **SSH public key** (hostnames and IPs can change)
 - Devices announce themselves via **signed UDP beacons** (Ed25519); regroup
   listens continuously and prompts for each new device
 - Git remotes are **automatically configured** for all other devices (using hostnames)
-- Each device **owns** its own config file and can overwrite only it
+- Devices only ever write inside their own directory (`users/` and
+  `connections/`); `device.json` can also be written by a machine that
+  discovers new knowledge about a peer, and git sync resolves diverging
+  writes with the **most recent commit** (last-writer-wins)
 - If a new device's **name is already taken**, you are **asked to choose a new name**
 
 ## Quick Start
@@ -26,7 +31,7 @@ This will:
    - `receive.denyCurrentBranch` set to `updateInstead` (allows pushing to checked-out branches)
    - `pull.rebase` set to `true` (maintains linear history)
 2. Create `settings.json` with defaults
-3. Create `devices/<hostname>.json` with auto-detected info
+3. Create `devices/<hostname>/device.json` with auto-detected info
 4. Enter continuous interactive mode: announce + listen for beacons
 
 ### On second device:
@@ -37,7 +42,7 @@ This will:
 
 This will:
 1. Create local `~/.regroup-config/git/`
-2. Create its own device file
+2. Create its own machine directory (auto-detected info)
 3. Discover the first device via its UDP beacon and prompt to add it
 4. Enter continuous interactive mode (press `s` to pull from and push to git remotes)
 
@@ -81,7 +86,7 @@ On every run, regroup enters continuous interactive mode:
 2. Listen for other machines' beacons continuously
    - Each beacon's Ed25519 signature is verified; malformed or forged beacons are rejected
    - Beacons from an accepted machine must be signed with the signing key
-     pinned in its device file; a different key means reinstall (you are asked)
+     pinned in its machine file; a different key means reinstall (you are asked)
      or spoofing (the beacon is rejected)
    - Beacons older than 5 minutes, or dated too far in the future, are rejected
    - Beacons announcing an SSH public key we already know only update the
@@ -113,7 +118,7 @@ This handles:
     the add, or — for a known device whose IP changed — keeps the last
     verified IP and warns loudly
   - *the announcer*: each machine's Ed25519 signing key is pinned in its
-    device file at first acceptance; beacons signed with any other key are
+    machine file at first acceptance; beacons signed with any other key are
     detected instantly (no network access needed) and the user is asked to
     confirm — expected after a reinstall, suspicious otherwise
 - **Git sync**: changes propagate through the network
@@ -123,7 +128,7 @@ This handles:
 1. **Remote URLs** use the format: `user@hostname:~/.regroup-config/git`
 
    Devices without a `user` field (e.g. added via beacon) fall back to the
-   current local user for the remote URL; set `"user"` in the device file to
+   current local user for the remote URL; set `"user"` in the machine file to
    override. Remotes pointing at a regroup config repository are removed when
    the corresponding device disappears from the config; other remotes (e.g.
    a backup repo you added yourself) are left untouched.
@@ -141,11 +146,14 @@ This handles:
 
 ### Device Ownership & Name Conflicts
 
-- Each device owns its own config file (`devices/<name>.json`)
+- Each device owns its directory (`devices/<name>/`): its `users/` and
+  `connections/` files are only ever written by the machine itself, and a
+  user running regroup may only modify connection files where their own name
+  is the member located on this machine
 - When you accept a new device whose name is already used by another machine,
   regroup asks you to choose a new name. A name is considered taken when it
   matches:
-  - a machine in the regroup config (`devices/` directory), or
+  - a machine in the regroup config (`devices/<name>/`), or
   - an existing `Host` block in `~/.ssh/config` (regroup-managed or your own)
 - The first free name (`laptop-2`, `-3`, ...) is suggested as the default;
   press Enter to accept it, or type any other name. Names that are also taken
@@ -161,7 +169,7 @@ continuously and prompts for each new device.
 Usage:
   ./regroup                continuous interactive mode, update ~/.ssh/config
   ./regroup test           dry run: nothing is modified
-  ./regroup remove <name>  remove a device (device file, ~/.ssh/config block, git remote)
+  ./regroup remove <name>  remove a device (machine dir, ~/.ssh/config block, git remote)
   ./regroup wipe [--yes]   delete the entire regroup configuration
   ./regroup -v             verbose
   ./regroup selftest       built-in checks (external tools, ssh-keygen fingerprint)
@@ -180,9 +188,12 @@ Interactive commands (full-screen mode):
   q               - quit the program
 
 Config repository structure (~/.regroup-config/git/):
-  settings.json           (optional: udp_port, wait_secs)
+  settings.json                     (optional: udp_port, wait_secs)
   devices/
-    <hostname>.json       (each device's config: name, ssh_public_key, signing_public_key, user, port)
+    <hostname>/                     (one directory per device)
+      device.json                  (latest known state: name, ssh_public_key, user, port)
+      users/<user>.json             (known users of the device, written by the device itself)
+      connections/<conn>.json       (connections of the device, owner-scoped)
 
 Exit codes:
   0  normal exit
@@ -192,9 +203,10 @@ Exit codes:
 
 ## Configuration Structure
 
-### Device Configuration File
+### Device Directory
 
-Each device file (`devices/<name>.json`) contains:
+Each device owns one directory `devices/<name>/`. `device.json` contains
+the latest known state:
 
 ```json
 {
@@ -209,11 +221,44 @@ Each device file (`devices/<name>.json`) contains:
 Fields:
 - `name`: Device hostname (auto-detected) - **required**
 - `ssh_public_key`: SSH server host public key (OpenSSH format) - **required**; this is the unique identifier of a machine (hostnames and IPs can change)
-- `signing_public_key`: Ed25519 signing public key (base64, **required**) — written by regroup when the device file is created; beacons signed with any other key trigger a confirmation prompt (reinstall or spoofing)
+- `signing_public_key`: Ed25519 signing public key (base64, **required**) — written by regroup when the machine file is created; beacons signed with any other key trigger a confirmation prompt (reinstall or spoofing)
 - `user`: SSH username (defaults to current user for auto-created devices, omitted if empty)
 - `port`: SSH port (defaults to 22; devices discovered via beacon keep their announced port, e.g. Termux's 8022)
 
 **Important**: Devices are identified by their **SSH public key**, not by hostname or IP address. This allows the system to handle host name and IP changes automatically.
+
+On conflicts (the same file written by several machines or by several users
+of one machine), the most recent commit wins.
+
+### Known Users (`users/`)
+
+`devices/<name>/users/<user>.json` holds one file per user known to run on
+the machine. Only the machine itself writes there — the file is created the
+first time a user runs regroup, then propagates to other machines through
+git sync:
+
+```json
+{
+  "name": "username",
+  "first_seen": "2026-11-05T10:00:00Z"
+}
+```
+
+### Connections (`connections/`) — not enabled yet
+
+Connection files (`devices/<name>/connections/`) are prepared but the
+procedures to create and remove connections (dedicated SSH key pair,
+installation of the public key on the target machine) are not implemented
+yet. The storage layer is in place: the member of the connection located on
+the machine whose directory the file lives in is written as a bare user
+name, the other one as `user@machine`, and the arrow keeps the real
+direction:
+
+- outgoing: `<user>-><user>@<machine>.json` (e.g. `alice->bob@laptop.json`)
+- incoming: `<user>@<machine>-><user>.json` (e.g. `alice@ordi->bob.json`)
+
+A user may only modify (create, edit, delete) connection files in which
+their own name is the member on the current machine.
 
 ### Global Settings
 
@@ -278,11 +323,11 @@ Fields:
 # From the command line
 ./regroup remove <name>
 
-# Delete the whole configuration (device files, git repo, ~/.ssh/config blocks)
+# Delete the whole configuration (machine dirs, git repo, ~/.ssh/config blocks)
 ./regroup wipe --yes
 ```
 
-Removing a device deletes its device file (committed, so the removal
+Removing a device deletes its machine directory (committed, so the removal
 propagates to other machines on the next git sync), its `~/.ssh/config`
 block, its git remote and the `~/.ssh/known_hosts` entries of its last
 known IP. Machines that were removed on another machine get the same
@@ -298,8 +343,9 @@ recorded) and is handy for testing a fresh setup.
 ```bash
 # On any device, add a new device config
 # signing_public_key is required: take it from the device's own config
-# (~/.regroup-config/git/devices/<name>.json on that device)
-cat > ~/.regroup-config/git/devices/newdevice.json << EOF
+# (~/.regroup-config/git/devices/<name>/device.json on that device)
+mkdir -p ~/.regroup-config/git/devices/newdevice
+cat > ~/.regroup-config/git/devices/newdevice/device.json << EOF
 {
   "name": "newdevice",
   "ssh_public_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA...",
@@ -310,7 +356,7 @@ EOF
 
 # Commit and regroup will use it on the next run
 cd ~/.regroup-config/git
-git add devices/newdevice.json
+git add devices/newdevice/device.json
 git commit -m "Add newdevice"
 
 # On next run, newdevice will be recognized by its public key and synced

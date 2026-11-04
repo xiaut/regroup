@@ -205,14 +205,6 @@ pub enum Action {
     SetupCdCancel,
     /// Enter connections management mode (key 'k').
     ConnectionsMode,
-    /// Connection creation confirmed.
-    ConnectionCreateConfirm,
-    /// Connection creation cancelled.
-    ConnectionCreateCancel,
-    /// Connection removal confirmed.
-    ConnectionRemoveConfirm,
-    /// Connection removal cancelled.
-    ConnectionRemoveCancel,
     /// Toggle verbose mode on/off (key 'v').
     ToggleVerbose,
     /// Print the CLI help (plain mode; the full-screen ui shows its help

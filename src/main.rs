@@ -1,14 +1,16 @@
 // regroup — find machines by their SSH host key fingerprint and update ~/.ssh/config.
 //
 // Configuration is stored in ~/.regroup-config/ git repository where each device
-// has its own JSON file in the devices/ directory. Git remotes are automatically
-// configured for all other devices to enable decentralized sync.
+// owns a directory devices/<name>/ (device.json, its known users, its
+// connections). Git remotes are automatically configured for all other devices
+// to enable decentralized sync; on conflicts the most recent commit wins.
 // NOTE: Configuration files are backups of discovered information, not the primary
 // source of truth. Devices identify themselves via their public key (SSH fingerprint).
 //
 // Continuous interactive mode: listens for UDP beacons in background, prompts user
 // for each new device. User can press 's' to sync with git, 'q' to quit.
-// Each device owns its own config file and can only overwrite it.
+// Each device only writes inside its own directory (connection and user
+// files); device.json holds the latest known state of the device.
 //
 // Build (Termux):  pkg install rust openssh && cargo build --release
 // Build (Ubuntu): sudo apt install cargo && cargo build --release

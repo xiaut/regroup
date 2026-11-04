@@ -1,656 +1,401 @@
-//! TUI for managing regroup connections
+//! TUI for browsing regroup connections
 //!
-//! This module provides the interactive interface for:
-//! - Creating new connections between machines
-//! - Viewing existing connections
-//! - Removing connections
+//! View-only for now: the procedures to create and remove connections
+//! (dedicated SSH key pair, installation of the public key on the target
+//! machine) are not implemented yet and will be redesigned (ssh-copy-id is
+//! one candidate). Keys 'a' (add) and 'd' (delete) answer with an explicit
+//! "not implemented" message.
+//!
+//! The data layer is ready: connections live in
+//! `devices/<name>/connections/` under the owner-scoped naming rule (see
+//! config::connection).
+//!
+//! This screen is not wired into the main interactive loop yet: handing
+//! the terminal over to a nested ratatui loop and restoring the main
+//! drawing state needs care (see ui.rs TtyUi).
+#![allow(
+    dead_code,
+    reason = "consultation screen; wiring into the main TUI loop comes with the connection procedures"
+)]
 
-use std::io::{self, Write};
+use std::io;
+use std::path::Path;
+
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::{
-    backend::Backend,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
-    Frame,
 };
 
-use crate::config::{Machine, Connection, CONNECTIONS_DIR};
-use crate::ssh::key_manager;
-use std::path::Path;
+use crate::config::connection::{self as conn_store, Connection, Direction as ConnDirection};
+use crate::config::Machine;
 
-/// State for connection management TUI
-pub enum ConnectionState {
-    /// List of machines to select target
-    MachineList {
-        machines: Vec<Machine>,
-        selected: Option<usize>,
-        local_machine: String,
-        local_user: String,
-    },
-    /// List of connections for the selected machine
-    ConnectionList {
-        machine_name: String,
-        connections: Vec<Connection>,
-        selected: Option<usize>,
-        local_machine: String,
-        is_outgoing: bool, // true = outgoing, false = incoming
-    },
-    /// Confirmation before creating a connection
-    ConfirmCreate {
-        local_machine: String,
-        local_user: String,
-        target_machine: String,
-        target_user: String,
-    },
-    /// Confirmation before removing a connection
-    ConfirmRemove {
-        local_machine: String,
-        target_machine: String,
-        connection: Connection,
-    },
-    /// Display connection details
-    ConnectionDetails {
-        connection: Connection,
-        local_machine: String,
-    },
-}
+const NOT_IMPLEMENTED: &str =
+    "Création et suppression de connexions : non implémentées pour le moment.";
 
-/// Result of connection management
+/// Result of the connections screen
+#[derive(Debug)]
 pub enum ConnectionResult {
-    /// A new connection was created
-    Created(Connection),
-    /// A connection was removed
-    Removed(Connection),
     /// No change
     None,
     /// Error occurred
     Error(String),
 }
 
-/// Manages connection TUI for the local machine
-pub fn handle_connections<B: ratatui::backend::Backend>(
-    terminal: &mut ratatui::Terminal<B>,
+/// The screen currently displayed.
+enum Screen {
+    /// Choice of the machine whose connections to browse
+    MachineList { selected: usize },
+    /// All connections of the selected machine (both directions)
+    ConnectionList {
+        machine_name: String,
+        items: Vec<(Connection, ConnDirection)>,
+        selected: usize,
+    },
+    /// Details of one connection
+    ConnectionDetails {
+        connection: Connection,
+        direction: ConnDirection,
+    },
+    /// Informational message (creation/removal not implemented, load error)
+    Message { text: String },
+}
+
+/// Browse the connections of all known machines except the local one.
+pub fn handle_connections(
+    terminal: &mut ratatui::Terminal<impl ratatui::backend::Backend>,
     config_dir: &Path,
     machines: &[Machine],
     local_machine: &str,
-    local_user: &str,
 ) -> io::Result<ConnectionResult> {
-    // Find the local machine in the list
-    let local_machine_index = machines.iter()
-        .position(|m| m.name == local_machine)
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("Local machine {} not found", local_machine)))?;
-    
-    let local_machine_obj = &machines[local_machine_index];
-    
-    // Filter out the local machine from the target list
-    let target_machines: Vec<Machine> = machines.iter()
+    let machines: Vec<Machine> = machines
+        .iter()
         .filter(|m| m.name != local_machine)
         .cloned()
         .collect();
-    
-    if target_machines.is_empty() {
+    if machines.is_empty() {
+        return Ok(ConnectionResult::Error(
+            "Aucune autre machine connue.".to_string(),
+        ));
     }
-    
-    
-    let mut state = ConnectionState::MachineList {
-        machines: target_machines,
-        selected: None,
-        local_machine: local_machine.to_string(),
-        local_user: local_user.to_string(),
-    };
-    
+
+    let mut screen = Screen::MachineList { selected: 0 };
+
     loop {
-        terminal.draw(|f| {
-            match &state {
-                ConnectionState::MachineList { machines, selected, local_machine, local_user } => {
-                    draw_machine_list(f, machines, *selected, local_machine, local_user);
-                }
-                ConnectionState::ConnectionList { machine_name, connections, selected, local_machine, is_outgoing } => {
-                    draw_connection_list(f, machine_name, connections, *selected, local_machine, *is_outgoing);
-                }
-                ConnectionState::ConfirmCreate { local_machine, local_user, target_machine, target_user } => {
-                    draw_confirm_create(f, local_machine, local_user, target_machine, target_user);
-                }
-                ConnectionState::ConfirmRemove { local_machine, target_machine, connection } => {
-                    draw_confirm_remove(f, local_machine, target_machine, connection);
-                }
-                ConnectionState::ConnectionDetails { connection, local_machine } => {
-                    draw_connection_details(f, connection, local_machine);
-                }
+        terminal.draw(|f| match &screen {
+            Screen::MachineList { selected } => {
+                draw_machine_list(f, &machines, *selected, local_machine)
             }
+            Screen::ConnectionList {
+                machine_name,
+                items,
+                selected,
+            } => draw_connection_list(f, machine_name, items, *selected),
+            Screen::ConnectionDetails {
+                connection,
+                direction,
+            } => draw_connection_details(f, connection, *direction),
+            Screen::Message { text } => draw_message(f, text),
         })?;
-        
-        if let Event::Key(key) = event::read()? {
-            if key.kind == KeyEventKind::Press {
-                match &mut state {
-                    ConnectionState::MachineList { machines, selected, local_machine, local_user } => {
-                        match key.code {
-                            KeyCode::Esc | KeyCode::Char('q') => return Ok(ConnectionResult::None),
-                            KeyCode::Up => {
-                                if let Some(sel) = *selected {
-                                    *selected = Some(sel.saturating_sub(1));
-                                } else if !machines.is_empty() {
-                                    *selected = Some(0);
-                                }
-                            }
-                            KeyCode::Down => {
-                                if let Some(sel) = *selected {
-                                    if sel < machines.len() - 1 {
-                                        *selected = Some(sel + 1);
-                                    }
-                                } else if !machines.is_empty() {
-                                    *selected = Some(0);
-                                }
-                            }
-                            KeyCode::Enter => {
-                                if let Some(index) = *selected {
-                                    let target = &machines[index];
-                                    // Show connection list for this target
-                                    // First, try to load existing connections
-                                    match key_manager::list_connections_for_target(config_dir, &target.name) {
-                                        Ok(conns) => {
-                                            state = ConnectionState::ConnectionList {
-                                                machine_name: target.name.clone(),
-                                                connections: conns,
-                                                selected: None,
-                                                local_machine: local_machine.clone(),
-                                                is_outgoing: true,
-                                            };
-                                        }
-                                        Err(_) => {
-                                            // No connections yet, show empty list
-                                            state = ConnectionState::ConnectionList {
-                                                machine_name: target.name.clone(),
-                                                connections: Vec::new(),
-                                                selected: None,
-                                                local_machine: local_machine.clone(),
-                                                is_outgoing: true,
-                                            };
-                                        }
-                                    }
-                                }
-                            }
-                            KeyCode::Char('a') => {
-                                if let Some(index) = *selected {
-                                    let target = &machines[index];
-                                    state = ConnectionState::ConfirmCreate {
-                                        local_machine: local_machine.clone(),
-                                        local_user: local_user.clone(),
-                                        target_machine: target.name.clone(),
-                                        target_user: target.user.clone(),
-                                    };
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                    ConnectionState::ConnectionList { machine_name, connections, selected, local_machine, is_outgoing } => {
-                        match key.code {
-                            KeyCode::Esc => {
-                                // Return to machine list
-                                state = ConnectionState::MachineList {
-                                    machines: machines.to_vec(),
-                                    selected: None,
-                                    local_machine: local_machine.clone(),
-                                    local_user: local_user.to_string(),
-                                };
-                            }
-                            KeyCode::Up => {
-                                if let Some(sel) = *selected {
-                                    *selected = Some(sel.saturating_sub(1));
-                                } else if !connections.is_empty() {
-                                    *selected = Some(0);
-                                }
-                            }
-                            KeyCode::Down => {
-                                if let Some(sel) = *selected {
-                                    if sel < connections.len() - 1 {
-                                        *selected = Some(sel + 1);
-                                    }
-                                } else if !connections.is_empty() {
-                                    *selected = Some(0);
-                                }
-                            }
-                            KeyCode::Enter => {
-                                if let Some(index) = *selected {
-                                    state = ConnectionState::ConnectionDetails {
-                                        connection: connections[index].clone(),
-                                        local_machine: local_machine.clone(),
-                                    };
-                                }
-                            }
-                            KeyCode::Char('d') => {
-                                if let Some(index) = *selected {
-                                    state = ConnectionState::ConfirmRemove {
-                                        local_machine: local_machine.clone(),
-                                        target_machine: machine_name.clone(),
-                                        connection: connections[index].clone(),
-                                    };
-                                }
-                            }
-                            KeyCode::Char('a') => {
-                                // Add new connection to this machine
-                                // We need to find the machine object
-                                if let Some(target) = machines.iter().find(|m| m.name == *machine_name) {
-                                    state = ConnectionState::ConfirmCreate {
-                                        local_machine: local_machine.clone(),
-                                        local_user: local_user.to_string(),
-                                        target_machine: target.name.clone(),
-                                        target_user: target.user.clone(),
-                                    };
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                    ConnectionState::ConfirmCreate { local_machine, local_user, target_machine, target_user } => {
-                        match key.code {
-                            KeyCode::Esc | KeyCode::Char('n') => {
-                                // Return to machine list
-                                state = ConnectionState::MachineList {
-                                    machines: machines.to_vec(),
-                                    selected: None,
-                                    local_machine: local_machine.clone(),
-                                    local_user: local_user.clone(),
-                                };
-                            }
-                            KeyCode::Char('y') | KeyCode::Enter => {
-                                // Create the connection
-                                return match key_manager::create_connection(
-                                    config_dir,
-                                    local_machine,
-                                    local_user,
-                                    target_machine,
-                                    target_user,
-                                    "ed25519",
-                                ) {
-                                    Ok(conn) => {
-                                        // Install the key on the target machine
-                                        if let Err(e) = key_manager::install_public_key(
-                                            target_machine,
-                                            22, // Default port, should be looked up
-                                            target_user,
-                                            &conn.public_key,
-                                        ) {
-                                            return Ok(ConnectionResult::Error(format!("Failed to install key: {}", e)));
-                                        }
-                                        Ok(ConnectionResult::Created(conn))
-                                    }
-                                    Err(e) => Ok(ConnectionResult::Error(format!("Failed to create connection: {}", e))),
-                                };
-                            }
-                            _ => {}
-                        }
-                    }
-                    ConnectionState::ConfirmRemove { local_machine, target_machine, connection } => {
-                        match key.code {
-                            KeyCode::Esc | KeyCode::Char('n') => {
-                                // Return to connection list
-                                match key_manager::list_connections_for_target(config_dir, target_machine) {
-                                    Ok(conns) => {
-                                        state = ConnectionState::ConnectionList {
-                                            machine_name: target_machine.clone(),
-                                            connections: conns,
-                                            selected: None,
-                                            local_machine: local_machine.clone(),
-                                            is_outgoing: true,
-                                        };
-                                    }
-                                    Err(_) => {
-                                        state = ConnectionState::ConnectionList {
-                                            machine_name: target_machine.clone(),
-                                            connections: Vec::new(),
-                                            selected: None,
-                                            local_machine: local_machine.clone(),
-                                            is_outgoing: true,
-                                        };
-                                    }
-                                }
-                            }
-                            KeyCode::Char('y') | KeyCode::Enter => {
-                                // Remove the connection
-                                return match key_manager::remove_connection(
-                                    config_dir,
-                                    local_machine,
-                                    target_machine,
-                                    connection,
-                                ) {
-                                    Ok(_) => Ok(ConnectionResult::Removed(connection.clone())),
-                                    Err(e) => Ok(ConnectionResult::Error(format!("Failed to remove connection: {}", e))),
-                                };
-                            }
-                            _ => {}
-                        }
-                    }
-                    ConnectionState::ConnectionDetails { connection, local_machine } => {
-                        match key.code {
-                            KeyCode::Esc | KeyCode::Char('q') => {
-                                // Return to connection list
-                                // We need to reload the connections for the target machine
-                                let target_machine = connection.to.split('@').last().unwrap_or("");
-                                match key_manager::list_connections_for_target(config_dir, target_machine) {
-                                    Ok(conns) => {
-                                        state = ConnectionState::ConnectionList {
-                                            machine_name: target_machine.to_string(),
-                                            connections: conns,
-                                            selected: None,
-                                            local_machine: local_machine.clone(),
-                                            is_outgoing: true,
-                                        };
-                                    }
-                                    Err(_) => {
-                                        state = ConnectionState::ConnectionList {
-                                            machine_name: target_machine.to_string(),
-                                            connections: Vec::new(),
-                                            selected: None,
-                                            local_machine: local_machine.clone(),
-                                            is_outgoing: true,
-                                        };
-                                    }
-                                }
-                            }
-                            _ => {}
-                        }
+
+        let Event::Key(key) = event::read()? else {
+            continue;
+        };
+        if key.kind != KeyEventKind::Press {
+            continue;
+        }
+
+        match &mut screen {
+            Screen::MachineList { selected } => match key.code {
+                KeyCode::Char('q') | KeyCode::Esc => return Ok(ConnectionResult::None),
+                KeyCode::Up => *selected = selected.saturating_sub(1),
+                KeyCode::Down => *selected = (*selected + 1).min(machines.len() - 1),
+                KeyCode::Enter => {
+                    let name = machines[*selected].name.clone();
+                    screen = open_machine_connections(config_dir, &name);
+                }
+                KeyCode::Char('a') | KeyCode::Char('d') => {
+                    screen = Screen::Message {
+                        text: NOT_IMPLEMENTED.to_string(),
+                    };
+                }
+                _ => {}
+            },
+            Screen::ConnectionList {
+                items,
+                selected,
+                ..
+            } => match key.code {
+                KeyCode::Esc => screen = Screen::MachineList { selected: 0 },
+                KeyCode::Up => *selected = selected.saturating_sub(1),
+                KeyCode::Down => {
+                    if !items.is_empty() {
+                        *selected = (*selected + 1).min(items.len() - 1);
                     }
                 }
+                KeyCode::Enter => {
+                    if !items.is_empty() {
+                        let (connection, direction) = items[*selected].clone();
+                        screen = Screen::ConnectionDetails {
+                            connection,
+                            direction,
+                        };
+                    }
+                }
+                KeyCode::Char('a') | KeyCode::Char('d') => screen = Screen::Message {
+                    text: NOT_IMPLEMENTED.to_string(),
+                },
+                KeyCode::Char('q') => return Ok(ConnectionResult::None),
+                _ => {}
+            },
+            Screen::ConnectionDetails {
+                connection,
+                direction,
+            } => {
+                // Any quit key goes back to the machine whose directory
+                // holds this file: source machine for an outgoing
+                // connection, target machine for an incoming one.
+                if matches!(key.code, KeyCode::Esc | KeyCode::Char('q') | KeyCode::Enter) {
+                    let machine = match direction {
+                        ConnDirection::Outgoing => connection.from_machine.clone(),
+                        ConnDirection::Incoming => connection.to_machine.clone(),
+                    };
+                    screen = open_machine_connections(config_dir, &machine);
+                }
             }
+            Screen::Message { .. } => screen = Screen::MachineList { selected: 0 },
         }
     }
 }
 
-/// Draws the machine list
+/// Rebuild the list of a device's connections, both directions mixed;
+/// load failures and malformed files become a message screen.
+fn open_machine_connections(config_dir: &Path, machine_name: &str) -> Screen {
+    match conn_store::load_machine_connections(config_dir, machine_name) {
+        Ok(loaded) => {
+            // Malformed files are reported instead of silently hidden.
+            if !loaded.warnings.is_empty() {
+                return Screen::Message {
+                    text: format!("Fichier(s) ignoré(s) : {}", loaded.warnings.join(" ; ")),
+                };
+            }
+            let mut items: Vec<(Connection, ConnDirection)> = Vec::new();
+            for c in loaded.outgoing {
+                items.push((c, ConnDirection::Outgoing));
+            }
+            for c in loaded.incoming {
+                items.push((c, ConnDirection::Incoming));
+            }
+            Screen::ConnectionList {
+                machine_name: machine_name.to_string(),
+                items,
+                selected: 0,
+            }
+        }
+        Err(e) => Screen::Message {
+            text: format!("Impossible de lire les connexions de {machine_name} : {e}"),
+        },
+    }
+}
+
+// ============================================================
+// Drawing
+// ============================================================
+
 fn draw_machine_list(
     f: &mut ratatui::Frame,
     machines: &[Machine],
-    selected: Option<usize>,
+    selected: usize,
     local_machine: &str,
-    local_user: &str,
 ) {
-    let area = f.size();
-    
-    let title = format!(" Connexions depuis {} ({}) ", local_machine, local_user);
-    let block = Block::default()
-        .title(Span::styled(title, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)))
-        .borders(Borders::ALL);
-    f.render_widget(block, area);
-    
-    let inner = Rect {
-        x: area.x + 1,
-        y: area.y + 1,
-        width: area.width.saturating_sub(2),
-        height: area.height.saturating_sub(2),
-    };
-    
-    // Help text
-    let help = Paragraph::new(Line::from(vec![
-        Span::styled("↑/↓", Style::default().fg(Color::Green)),
-        Span::raw(" Naviguer | "),
-        Span::styled("a", Style::default().fg(Color::Green)),
-        Span::raw(" Ajouter | "),
-        Span::styled("q", Style::default().fg(Color::Yellow)),
-        Span::raw(" Retour"),
-    ]));
-    f.render_widget(help, inner);
-    
-    // Machine list
-    let list_area = Rect {
-        x: inner.x,
-        y: inner.y + 2,
-        width: inner.width,
-        height: inner.height.saturating_sub(3),
-    };
-    
-    let items: Vec<ListItem> = machines.iter()
+    let area = full(f.area());
+    let title = format!(" Connexions — machines connues depuis {} ", local_machine);
+
+    let items: Vec<ListItem> = machines
+        .iter()
         .enumerate()
-        .map(|(i, machine)| {
-            let content = if i == selected.unwrap_or(usize::MAX) {
-                Span::styled(
-                    format!("{} ({})", machine.name, machine.user),
-                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
-                )
+        .map(|(i, m)| {
+            let label = format!("{} ({})", m.name, m.user);
+            let style = if i == selected {
+                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
             } else {
-                Span::styled(
-                    format!("{} ({})", machine.name, machine.user),
-                    Style::default(),
-                )
+                Style::default()
             };
-            ListItem::new(content)
+            ListItem::new(Span::styled(label, style))
         })
         .collect();
-    
-    let list = List::new(items)
-        .block(Block::default())
-        .highlight_style(Style::default().bg(Color::DarkGray));
-    f.render_widget(list, list_area);
+
+    render_screen(f, area, &title, Color::Cyan, items, HELP_BROWSE);
 }
 
-/// Draws the connection list
 fn draw_connection_list(
     f: &mut ratatui::Frame,
     machine_name: &str,
-    connections: &[Connection],
-    selected: Option<usize>,
-    local_machine: &str,
-    is_outgoing: bool,
+    items: &[(Connection, ConnDirection)],
+    selected: usize,
 ) {
-    let area = f.size();
-    
-    let connection_type = if is_outgoing { "sortantes" } else { "entrantes" };
-    let title = format!(" Connexions {} vers {} ", connection_type, machine_name);
-    let block = Block::default()
-        .title(Span::styled(title, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)))
-        .borders(Borders::ALL);
-    f.render_widget(block, area);
-    
-    let inner = Rect {
-        x: area.x + 1,
-        y: area.y + 1,
-        width: area.width.saturating_sub(2),
-        height: area.height.saturating_sub(2),
-    };
-    
-    // Help text
-    let help = Paragraph::new(Line::from(vec![
-        Span::styled("↑/↓", Style::default().fg(Color::Green)),
-        Span::raw(" Naviguer | "),
-        Span::styled("Enter", Style::default().fg(Color::Green)),
-        Span::raw(" Détails | "),
-        Span::styled("a", Style::default().fg(Color::Green)),
-        Span::raw(" Ajouter | "),
-        Span::styled("d", Style::default().fg(Color::Red)),
-        Span::raw(" Supprimer | "),
-        Span::styled("q", Style::default().fg(Color::Yellow)),
-        Span::raw(" Retour"),
-    ]));
-    f.render_widget(help, inner);
-    
-    // Connection list
-    let list_area = Rect {
-        x: inner.x,
-        y: inner.y + 2,
-        width: inner.width,
-        height: inner.height.saturating_sub(3),
-    };
-    
-    let items: Vec<ListItem> = connections.iter()
+    let area = full(f.area());
+    let title = format!(" Connexions de {} ", machine_name);
+
+    let entries: Vec<ListItem> = items
+        .iter()
         .enumerate()
-        .map(|(i, conn)| {
-            // Extract short key fingerprint for display
-            let key_short = if conn.public_key.len() > 30 {
-                &conn.public_key[..30]
-            } else {
-                &conn.public_key
+        .map(|(i, (c, d))| {
+            let (dir, owner) = match d {
+                ConnDirection::Outgoing => ("sortante", c.from_user.as_str()),
+                ConnDirection::Incoming => ("entrante", c.to_user.as_str()),
             };
-            
-            let content = if i == selected.unwrap_or(usize::MAX) {
-                Span::styled(
-                    format!("{} → {} ({}...)", conn.from, conn.to, key_short),
-                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
-                )
+            let label = format!(
+                "{} — {}, à {}",
+                pretty_direction(c, *d),
+                dir,
+                owner
+            );
+            let style = if i == selected {
+                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
             } else {
-                Span::styled(
-                    format!("{} → {} ({}...)", conn.from, conn.to, key_short),
-                    Style::default(),
-                )
+                Style::default()
             };
-            ListItem::new(content)
+            ListItem::new(Span::styled(label, style))
         })
         .collect();
-    
-    let list = List::new(items)
-        .block(Block::default())
-        .highlight_style(Style::default().bg(Color::DarkGray));
-    f.render_widget(list, list_area);
+
+    render_screen(
+        f,
+        area,
+        &title,
+        Color::Cyan,
+        entries,
+        HELP_CONNECTIONS,
+    );
 }
 
-/// Draws the create connection confirmation
-fn draw_confirm_create(
-    f: &mut ratatui::Frame,
-    local_machine: &str,
-    local_user: &str,
-    target_machine: &str,
-    target_user: &str,
-) {
-    let area = f.size();
-    
-    let title = " Créer une nouvelle connexion ";
-    let block = Block::default()
-        .title(Span::styled(title, Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)))
-        .borders(Borders::ALL);
-    f.render_widget(block, area);
-    
-    let inner = Rect {
-        x: area.x + 1,
-        y: area.y + 1,
-        width: area.width.saturating_sub(2),
-        height: area.height.saturating_sub(2),
-    };
-    
-    let content = Paragraph::new(vec![
-        Line::from(vec![
-            Span::raw("De: "),
-            Span::styled(format!("{}@{}", local_user, local_machine), Style::default().fg(Color::Yellow)),
-        ]),
-        Line::from(vec![
-            Span::raw("À: "),
-            Span::styled(format!("{}@{}", target_user, target_machine), Style::default().fg(Color::Yellow)),
-        ]),
-        Line::from(vec![]),
-        Line::from(vec![
-            Span::raw("Une nouvelle paire de clés SSH sera générée."),
-        ]),
-        Line::from(vec![
-            Span::raw("La clé publique sera installée sur la machine cible."),
-        ]),
-        Line::from(vec![]),
-        Line::from(vec![
-            Span::styled("y", Style::default().fg(Color::Green)),
-            Span::raw(" Oui | "),
-            Span::styled("n", Style::default().fg(Color::Red)),
-            Span::raw(" Non"),
-        ]),
-    ]);
-    f.render_widget(content, inner);
-}
-
-/// Draws the remove connection confirmation
-fn draw_confirm_remove(
-    f: &mut ratatui::Frame,
-    local_machine: &str,
-    target_machine: &str,
-    connection: &Connection,
-) {
-    let area = f.size();
-    
-    let title = " Supprimer la connexion ";
-    let block = Block::default()
-        .title(Span::styled(title, Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)))
-        .borders(Borders::ALL);
-    f.render_widget(block, area);
-    
-    let inner = Rect {
-        x: area.x + 1,
-        y: area.y + 1,
-        width: area.width.saturating_sub(2),
-        height: area.height.saturating_sub(2),
-    };
-    
-    let content = Paragraph::new(vec![
-        Line::from(vec![
-            Span::raw("Supprimer: "),
-            Span::styled(format!("{} → {}", connection.from, connection.to), Style::default().fg(Color::Yellow)),
-        ]),
-        Line::from(vec![]),
-        Line::from(vec![
-            Span::raw("La clé SSH sera supprimée des deux machines."),
-        ]),
-        Line::from(vec![]),
-        Line::from(vec![
-            Span::styled("y", Style::default().fg(Color::Green)),
-            Span::raw(" Oui | "),
-            Span::styled("n", Style::default().fg(Color::Red)),
-            Span::raw(" Non"),
-        ]),
-    ]);
-    f.render_widget(content, inner);
-}
-
-/// Draws connection details
 fn draw_connection_details(
     f: &mut ratatui::Frame,
     connection: &Connection,
-    local_machine: &str,
+    direction: ConnDirection,
 ) {
-    let area = f.size();
-    
-    let title = " Détails de la connexion ";
+    let area = full(f.area());
     let block = Block::default()
-        .title(Span::styled(title, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)))
+        .title(Span::styled(
+            " Détails de la connexion ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ))
         .borders(Borders::ALL);
     f.render_widget(block, area);
-    
-    let inner = Rect {
-        x: area.x + 1,
-        y: area.y + 1,
-        width: area.width.saturating_sub(2),
-        height: area.height.saturating_sub(2),
+    let inner = inner_of(area);
+
+    let dir_label = match direction {
+        ConnDirection::Outgoing => "sortante",
+        ConnDirection::Incoming => "entrante",
     };
-    
     let content = Paragraph::new(vec![
-        Line::from(vec![
-            Span::styled("De: ", Style::default().fg(Color::Green)),
-            Span::raw(&connection.from),
-        ]),
-        Line::from(vec![
-            Span::styled("À: ", Style::default().fg(Color::Green)),
-            Span::raw(&connection.to),
-        ]),
-        Line::from(vec![]),
-        Line::from(vec![
-            Span::styled("Clé publique: ", Style::default().fg(Color::Green)),
-        ]),
-        Line::from(vec![
-            Span::raw(&connection.public_key),
-        ]),
-        Line::from(vec![]),
-        Line::from(vec![
-            Span::styled("Clé privée: ", Style::default().fg(Color::Green)),
-        ]),
-        Line::from(vec![
-            Span::raw(&connection.private_key_path),
-        ]),
-        Line::from(vec![]),
-        Line::from(vec![
-            Span::styled("Créée le: ", Style::default().fg(Color::Green)),
-            Span::raw(&connection.created_at),
-        ]),
-        Line::from(vec![]),
+        Line::from(pretty_direction(connection, direction)),
+        Line::from(format!("Type : {dir_label}")),
+        Line::from(format!("Clé publique   : {}", connection.public_key)),
+        Line::from(format!("Clé privée     : {}", connection.private_key_path)),
+        Line::from(format!("Créée le       : {}", connection.created_at)),
+        Line::from(String::new()),
         Line::from(vec![
             Span::styled("q", Style::default().fg(Color::Yellow)),
             Span::raw(" Retour"),
         ]),
-    ]).wrap(Wrap { trim: true });
+    ])
+    .wrap(Wrap { trim: true });
     f.render_widget(content, inner);
+}
+
+fn draw_message(f: &mut ratatui::Frame, text: &str) {
+    let area = full(f.area());
+    let block = Block::default()
+        .title(Span::styled(
+            " Information ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ))
+        .borders(Borders::ALL);
+    f.render_widget(block, area);
+    let inner = inner_of(area);
+    let content = Paragraph::new(vec![
+        Line::from(Span::styled(text, Style::default().fg(Color::Yellow))),
+        Line::from(String::new()),
+        Line::from(vec![
+            Span::styled("Touche quelconque", Style::default().fg(Color::Green)),
+            Span::raw(" Retour"),
+        ]),
+    ])
+    .wrap(Wrap { trim: true });
+    f.render_widget(content, inner);
+}
+
+fn pretty_direction(c: &Connection, d: ConnDirection) -> String {
+    match d {
+        ConnDirection::Outgoing => format!(
+            "{}(ici) → {}@{}",
+            c.from_user, c.to_user, c.to_machine
+        ),
+        ConnDirection::Incoming => format!(
+            "{}@{} → {}(ici)",
+            c.from_user, c.from_machine, c.to_user
+        ),
+    }
+}
+
+const HELP_BROWSE: &str = "↑/↓ Naviguer · Enter Connexions · q Retour";
+const HELP_CONNECTIONS: &str =
+    "↑/↓ Naviguer · Enter Détails · a Ajouter (à venir) · d Supprimer (à venir) · q Retour";
+
+/// Common screen chrome: title, bordered frame, list and help line.
+fn render_screen(
+    f: &mut ratatui::Frame,
+    area: Rect,
+    title: &str,
+    title_color: Color,
+    items: Vec<ListItem>,
+    help: &str,
+) {
+    f.render_widget(Clear, area);
+    let block = Block::default()
+        .title(Span::styled(
+            title,
+            Style::default().fg(title_color).add_modifier(Modifier::BOLD),
+        ))
+        .borders(Borders::ALL);
+    f.render_widget(block, area);
+    let inner = inner_of(area);
+
+    let list_area = Rect {
+        x: inner.x,
+        y: inner.y + 2,
+        width: inner.width,
+        height: inner.height.saturating_sub(3),
+    };
+    let list = List::new(items).highlight_style(Style::default().bg(Color::DarkGray));
+    f.render_widget(list, list_area);
+
+    let help_area = Rect {
+        x: area.x + 1,
+        y: area.y + area.height.saturating_sub(2),
+        width: inner.width,
+        height: 1,
+    };
+    f.render_widget(Paragraph::new(help), help_area);
+}
+
+fn full(area: Rect) -> Rect {
+    area
+}
+
+fn inner_of(area: Rect) -> Rect {
+    Rect {
+        x: area.x + 1,
+        y: area.y + 1,
+        width: area.width.saturating_sub(2),
+        height: area.height.saturating_sub(2),
+    }
 }

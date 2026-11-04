@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::config::device::save_device_file;
-use crate::config::{CONFIG_DIR, DEVICES_DIR, GIT_DIR, Machine, load_config};
+use crate::config::{CONFIG_DIR, GIT_DIR, Machine, load_config};
 use crate::discovery::beacon::BeaconDevice;
 use crate::discovery::host_name;
 use crate::git::{self, sync::git_add_and_commit_file};
@@ -131,7 +131,7 @@ pub fn run_selftest() -> ! {
 /// The full help text, shared by `regroup -h` and the interactive help
 /// panel (key '?' in the full-screen ui, 'h' in plain mode).
 pub fn usage_text() -> &'static str {
-    "regroup — find machines by their SSH host key and update ~/.ssh/config.\nDevices announce themselves via signed UDP beacons; regroup listens for them\ncontinuously and prompts for each new device.\n\nConfiguration is stored in ~/.regroup-config/git/ (a git repository) where each\ndevice has its own JSON file in the devices/ directory. Git remotes can be\nconfigured for all other devices to enable decentralized sync (press 's' in\ninteractive mode to pull from and push to them).\n\nUsage:\n  ./regroup                continuous interactive mode, update ~/.ssh/config\n  ./regroup test           dry run: nothing is modified\n  ./regroup remove <name>  remove a device (device file, ~/.ssh/config block, git remote)\n  ./regroup wipe [--yes]   delete the entire regroup configuration\n  ./regroup -v             verbose (toggle at runtime with 'v' in interactive mode)\n  ./regroup selftest       built-in checks (external tools, ssh-keygen fingerprint)\n  ./regroup setup-cd       install 'regroup-cd' shell function to change to config directory\n  ./regroup -h             this help\n\nInteractive commands (full-screen mode):\n  Up/Dn           - select a machine in the Detected panel\n  Enter/y         - add the selected machine (it moves to the Added panel)\n  n               - ignore the selected machine (its beacons are ignored this run)\n  s               - sync git (pull from remotes, push to remotes)\n  d               - delete a known device (select in the Added panel, Enter confirms, Esc cancels)\n  w               - wipe the whole configuration (Enter confirms, Esc cancels)\n  c               - install the 'regroup-cd' shell function (Enter confirms, Esc cancels)\n  v               - toggle verbose mode (this machine's identity, git sync details in the activity log)\n  PgUp/PgDn       - scroll the activity log\n  ?               - show/hide this help panel\n  q               - quit the program\n\nConfig repository structure (~/.regroup-config/git/):\n  settings.json           (optional: udp_port, wait_secs)\n  devices/\n    <hostname>.json       (each device's config: name, ssh_public_key, user, port)\n\nExit codes:\n  0  normal exit\n  1  selftest failure\n  2  configuration or environment error"
+    "regroup — find machines by their SSH host key and update ~/.ssh/config.\nDevices announce themselves via signed UDP beacons; regroup listens for them\ncontinuously and prompts for each new device.\n\nConfiguration is stored in ~/.regroup-config/git/ (a git repository) where\neach device owns a directory devices/<name>/ holding its latest known\nstate (device.json) and its lists (known users, connections). Git remotes\ncan be configured for all other devices to enable decentralized sync\n(press 's' in interactive mode to pull from and push to them).\n\nUsage:\n  ./regroup                continuous interactive mode, update ~/.ssh/config\n  ./regroup test           dry run: nothing is modified\n  ./regroup remove <name>  remove a device (device dir, ~/.ssh/config block, git remote)\n  ./regroup wipe [--yes]   delete the entire regroup configuration\n  ./regroup -v             verbose (toggle at runtime with 'v' in interactive mode)\n  ./regroup selftest       built-in checks (external tools, ssh-keygen fingerprint)\n  ./regroup setup-cd       install 'regroup-cd' shell function to change to config directory\n  ./regroup -h             this help\n\nInteractive commands (full-screen mode):\n  Up/Dn           - select a machine in the Detected panel\n  Enter/y         - add the selected machine (it moves to the Added panel)\n  n               - ignore the selected machine (its beacons are ignored this run)\n  s               - sync git (pull from remotes, push to remotes)\n  d               - delete a known device (select in the Added panel, Enter confirms, Esc cancels)\n  w               - wipe the whole configuration (Enter confirms, Esc cancels)\n  c               - install the 'regroup-cd' shell function (Enter confirms, Esc cancels)\n  v               - toggle verbose mode (this machine's identity, git sync details in the activity log)\n  PgUp/PgDn       - scroll the activity log\n  ?               - show/hide this help panel\n  q               - quit the program\n\nConfig repository structure (~/.regroup-config/git/):\n  settings.json                     (optional: udp_port, wait_secs)\n  devices/\n    <hostname>/                     (one directory per device)\n      device.json                  (latest known state: name, ssh_public_key, user, port)\n      users/<user>.json             (known users of the device, written by the device itself)\n      connections/<conn>.json       (connections of the device, owner-scoped)\n\nExit codes:\n  0  normal exit\n  1  selftest failure\n  2  configuration or environment error"
 }
 
 /// Print usage information
@@ -228,27 +228,27 @@ fn ssh_config_has_host(ssh_content: &str, name: &str) -> bool {
     false
 }
 
-/// Path of the regroup config devices directory for the given home.
-fn devices_dir_for(home: &str) -> PathBuf {
-    PathBuf::from(home)
-        .join(CONFIG_DIR)
-        .join(GIT_DIR)
-        .join(DEVICES_DIR)
+/// Path of the config git repository for the given home:
+/// `<home>/.regroup-config/git/`.
+fn config_dir_of(home: &str) -> PathBuf {
+    PathBuf::from(home).join(CONFIG_DIR).join(GIT_DIR)
 }
 
 /// Check whether a device name is already used by another machine.
 ///
 /// A name is taken when it is already used by:
-/// - a machine in the regroup config (devices loaded from `devices/`),
-/// - an existing `devices/<name>.json` file (even one that failed to load), or
+/// - a device in the regroup config (loaded from `devices/<name>/`),
+/// - an existing `devices/<name>/device.json` file (even one that failed
+///   to load), or
 /// - an existing "Host <name>" block in ~/.ssh/config, whether regroup-managed
 ///   or configured by the user for an unrelated host.
 pub fn device_name_taken(name: &str, home: &str, ssh_config: &Path) -> bool {
     let ssh_content = fs::read_to_string(ssh_config).unwrap_or_default();
+    let config_dir = PathBuf::from(home).join(CONFIG_DIR).join(GIT_DIR);
     name_taken(
         name,
         &ssh_content,
-        &devices_dir_for(home),
+        &config_dir,
         &load_config().machines,
     )
 }
@@ -256,11 +256,11 @@ pub fn device_name_taken(name: &str, home: &str, ssh_config: &Path) -> bool {
 fn name_taken(
     name: &str,
     ssh_content: &str,
-    devices_dir: &Path,
+    config_dir: &Path,
     known_machines: &[Machine],
 ) -> bool {
     known_machines.iter().any(|m| m.name == name)
-        || devices_dir.join(format!("{}.json", name)).exists()
+        || crate::config::device_file_path(config_dir, name).exists()
         || ssh_config_has_host(ssh_content, name)
 }
 
@@ -270,8 +270,8 @@ fn name_taken(
 pub fn unique_device_name(desired: &str, home: &str, ssh_config: &Path) -> String {
     let ssh_content = fs::read_to_string(ssh_config).unwrap_or_default();
     let known_machines = load_config().machines;
-    let devices_dir = devices_dir_for(home);
-    if !name_taken(desired, &ssh_content, &devices_dir, &known_machines) {
+    let config_dir = PathBuf::from(home).join(CONFIG_DIR).join(GIT_DIR);
+    if !name_taken(desired, &ssh_content, &config_dir, &known_machines) {
         return desired.to_string();
     }
     let mut n = 2;
@@ -279,7 +279,7 @@ pub fn unique_device_name(desired: &str, home: &str, ssh_config: &Path) -> Strin
         && name_taken(
             &format!("{}-{}", desired, n),
             &ssh_content,
-            &devices_dir,
+            &config_dir,
             &known_machines,
         )
     {
@@ -291,6 +291,13 @@ pub fn unique_device_name(desired: &str, home: &str, ssh_config: &Path) -> Strin
 /// Add an accepted device to the configuration (device file, ~/.ssh/config,
 /// known_hosts) and commit it to the config git repository, under the given
 /// name.
+///
+/// The device file is written in the accepted device's directory
+/// (`devices/<name>/device.json`) and holds our latest known state of it —
+/// the device itself writes its own file too, and git sync resolves
+/// diverging writes last-writer-wins (most recent commit wins). The
+/// per-device write isolation applies strictly to `users/` and
+/// `connections/`: those are only ever written by the device itself.
 ///
 /// The caller is responsible for the name: interactive mode asks the user to
 /// pick a collision-free name first (see `device_name_taken`); an unavailable
@@ -305,16 +312,15 @@ pub fn add_device_to_config(
     name: &str,
     new_count: &mut usize,
 ) -> Option<Machine> {
-    let config_dir = PathBuf::from(home).join(CONFIG_DIR).join(GIT_DIR);
-    let devices_dir = config_dir.join(DEVICES_DIR);
+    let config_dir = config_dir_of(home);
 
-    // Ensure devices directory exists
-    if let Err(e) = fs::create_dir_all(&devices_dir) {
-        warn(&format!("could not create devices directory: {}", e));
+    // Ensure the device's own directory exists
+    if let Err(e) = fs::create_dir_all(crate::config::device_dir(&config_dir, name)) {
+        warn(&format!("could not create device directory: {}", e));
         return None;
     }
 
-    let device_path = devices_dir.join(format!("{}.json", name));
+    let device_path = crate::config::device_file_path(&config_dir, name);
     // The beacon explicitly carries the device's SSH port: mark it explicit so
     // ~/.ssh/config and the device file keep it (e.g. Termux port 8022).
     // Pin the device's Ed25519 signing key: future beacons must be signed
@@ -428,10 +434,8 @@ pub fn trust_new_signing_key(home: &str, device: &BeaconDevice) {
     };
     machine.signing_public_key = device.signing_public_key.clone();
 
-    let config_dir = PathBuf::from(home).join(CONFIG_DIR).join(GIT_DIR);
-    let device_path = config_dir
-        .join(DEVICES_DIR)
-        .join(format!("{}.json", machine.name));
+    let config_dir = config_dir_of(home);
+    let device_path = crate::config::device_file_path(&config_dir, &machine.name);
     if let Err(e) = save_device_file(&device_path, &machine) {
         warn(&format!(
             "could not update signing key for {}: {}",
@@ -560,24 +564,24 @@ pub fn remove_local_traces(
     }
 }
 
-/// Remove a device entirely: delete its device file (and commit the
-/// deletion, which propagates to other machines on git sync), then remove
-/// its local traces. Returns true when the device file was deleted.
+/// Remove a device entirely: delete its device directory (device file,
+/// users and connections; the committed deletion propagates to other
+/// machines on git sync), then remove its local traces. Returns true when
+/// the device directory was deleted.
 pub fn remove_device(
     home: &str,
     ssh_config: &Path,
     machine: &Machine,
     last_ip: Option<&str>,
 ) -> bool {
-    let config_dir = PathBuf::from(home).join(CONFIG_DIR).join(GIT_DIR);
-    let device_path = config_dir
-        .join(DEVICES_DIR)
-        .join(format!("{}.json", machine.name));
+    let config_dir = config_dir_of(home);
+    let dir = crate::config::device_dir(&config_dir, &machine.name);
     let mut ok = true;
-    match fs::remove_file(&device_path) {
+    match fs::remove_dir_all(&dir) {
         Ok(()) => {
+            // `git add` on the directory stages every deletion inside it.
             if let Err(e) =
-                git_add_and_commit_file(&config_dir, &device_path, &format!("Remove device {}", machine.name))
+                git_add_and_commit_file(&config_dir, &dir, &format!("Remove device {}", machine.name))
             {
                 warn(&format!(
                     "could not commit removal of {}: {}",
@@ -588,7 +592,7 @@ pub fn remove_device(
         Err(e) if e.kind() == io::ErrorKind::NotFound => {}
         Err(e) => {
             warn(&format!(
-                "could not delete device file for {}: {}",
+                "could not delete device directory for {}: {}",
                 machine.name, e
             ));
             ok = false;
@@ -678,18 +682,14 @@ mod tests {
             port_explicit: false,
         };
         let machines = vec![machine];
-        fs::write(dir.join("on-disk.json"), "{}").unwrap();
+        let on_disk = crate::config::device_file_path(&dir, "on-disk");
+        fs::create_dir_all(on_disk.parent().unwrap()).unwrap();
+        fs::write(&on_disk, "{}").unwrap();
         let ssh = "Host in-ssh\n  User x\n";
 
         assert!(name_taken("known", "", &dir, &machines), "machine list");
-        assert!(
-            name_taken("on-disk", "", &dir, &machines),
-            "devices dir file"
-        );
-        assert!(
-            name_taken("in-ssh", ssh, &dir, &machines),
-            "ssh config block"
-        );
+        assert!(name_taken("on-disk", "", &dir, &machines), "device file on disk");
+        assert!(name_taken("in-ssh", ssh, &dir, &machines), "ssh config block");
         assert!(!name_taken("free", ssh, &dir, &machines), "free name");
 
         let _ = fs::remove_dir_all(&dir);
