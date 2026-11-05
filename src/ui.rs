@@ -1,12 +1,13 @@
 //! Terminal user interface for interactive mode.
 //!
 //! Two backends behind the same interface:
-//! - a full-screen ratatui interface when stdout is a terminal: two
-//!   side-by-side machine panels (detected machines on the left, added
-//!   machines on the right), an activity log for general messages, and the
-//!   current question as the bottom block — the question can never be
-//!   pushed away by notifications; key '?' replaces the machine panels and
-//!   the activity pane with the CLI help, keeping the bottom block;
+//! - a full-screen ratatui interface when stdout is a terminal: two machine
+//!   panels (detected machines on the left, added machines on the right when
+//!   the screen is wide enough; otherwise detected on top, added below),
+//!   an activity log for general messages, and the current question as the
+//!   bottom block — the question can never be pushed away by notifications;
+//!   key '?' replaces the machine panels and the activity pane with the CLI
+//!   help, keeping the bottom block;
 //! - a plain line-based fallback otherwise (piped output): prompts are
 //!   printed as they change and answers are read as input lines.
 //!
@@ -46,6 +47,9 @@ const BLINK_MS: u64 = 250;
 const KEY_FLASH_MS: u64 = 700;
 /// How long a machine's row animates after a beacon is received from it.
 const PULSE_MS: u64 = 900;
+/// Minimum terminal width to display machine panels side-by-side.
+/// Below this, panels stack vertically (detected on top, added below).
+const MIN_WIDTH_FOR_SIDE_BY_SIDE: u16 = 80;
 
 /// Sender side of the log channel; unset until [`Ui::start`] creates it.
 static LOG_TX: OnceLock<mpsc::Sender<UiEvent>> = OnceLock::new();
@@ -679,30 +683,60 @@ impl TtyUi {
                 *help_scroll = (*help_scroll).min(max_scroll);
                 render_help(frame, help_area, *help_scroll);
             } else {
-                let [detected_area, _gap, added_area] = Layout::horizontal([
-                    Constraint::Fill(1),
-                    Constraint::Length(1),
-                    Constraint::Fill(1),
-                ])
-                .areas(machines_area);
-                render_machines(
-                    frame,
-                    detected_area,
-                    PanelTheme::new("Detected", Color::Yellow, "detected"),
-                    detected,
-                    *selected,
-                    flashes,
-                    pulses,
-                );
-                render_machines(
-                    frame,
-                    added_area,
-                    PanelTheme::new("Added", Color::Green, "known"),
-                    added,
-                    *delete_selected,
-                    flashes,
-                    pulses,
-                );
+                let narrow = frame.area().width < MIN_WIDTH_FOR_SIDE_BY_SIDE;
+                if narrow {
+                    // Narrow screen: stack machine panels vertically
+                    // (detected on top, added below)
+                    let [detected_area, added_area] = Layout::vertical([
+                        Constraint::Percentage(50),
+                        Constraint::Percentage(50),
+                    ])
+                    .areas(machines_area);
+                    render_machines(
+                        frame,
+                        detected_area,
+                        PanelTheme::new("Detected", Color::Yellow, "detected"),
+                        detected,
+                        *selected,
+                        flashes,
+                        pulses,
+                    );
+                    render_machines(
+                        frame,
+                        added_area,
+                        PanelTheme::new("Added", Color::Green, "known"),
+                        added,
+                        *delete_selected,
+                        flashes,
+                        pulses,
+                    );
+                } else {
+                    // Wide screen: side-by-side panels
+                    let [detected_area, _gap, added_area] = Layout::horizontal([
+                        Constraint::Fill(1),
+                        Constraint::Length(1),
+                        Constraint::Fill(1),
+                    ])
+                    .areas(machines_area);
+                    render_machines(
+                        frame,
+                        detected_area,
+                        PanelTheme::new("Detected", Color::Yellow, "detected"),
+                        detected,
+                        *selected,
+                        flashes,
+                        pulses,
+                    );
+                    render_machines(
+                        frame,
+                        added_area,
+                        PanelTheme::new("Added", Color::Green, "known"),
+                        added,
+                        *delete_selected,
+                        flashes,
+                        pulses,
+                    );
+                }
                 render_log(frame, log_area, log, *scroll, *verbose);
             }
             cursor = render_question(
