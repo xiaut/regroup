@@ -106,7 +106,7 @@ pub fn handle_receive_install_key() -> Result<(), String> {
     
     if incoming_connection_path.exists() {
         return Err(format!(
-            "Une connexion existe déjà pour {}. Utilisez la suppression pour recommencer.",
+            "Connection already exists for {}. Remove it first if you want to recreate it.",
             args.connection_id
         ));
     }

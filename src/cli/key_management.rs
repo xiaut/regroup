@@ -99,7 +99,7 @@ pub fn install_authorized_key(public_key: &str, connection_id: &str) -> Result<(
     
     if content.lines().any(|l| l.trim() == line) {
         return Err(format!(
-            "Clé déjà installée dans authorized_keys pour la connexion {}",
+            "Key already installed in authorized_keys for connection {}",
             connection_id
         ));
     }

@@ -979,7 +979,7 @@ impl InteractiveState {
         // Get the first known machine (or selected one)
         let machines: Vec<Machine> = self.key_to_machine.values().cloned().collect();
         if machines.is_empty() {
-            ui::log("Aucune machine connue pour installer une clé");
+            ui::log("No known machines to install a key to");
             return;
         }
         
@@ -990,7 +990,7 @@ impl InteractiveState {
             machines[0].user.clone()
         };
         
-        ui::log(&format!("Installation de clé vers {}@{}", target_user, target_machine));
+        ui::log(&format!("Installing key to {}@{}", target_user, target_machine));
         
         let result = crate::tui::key_actions::install_key_action(
             ctx.home,
@@ -1003,16 +1003,16 @@ impl InteractiveState {
         
         match result {
             Ok(crate::tui::key_actions::KeyActionResult::Success(msg)) => {
-                ui::log(&format!("Succès: {}", msg));
+                ui::log(&format!("Success: {}", msg));
             }
             Ok(crate::tui::key_actions::KeyActionResult::Error(msg)) => {
-                ui::log(&format!("Erreur: {}", msg));
+                ui::log(&format!("Error: {}", msg));
             }
             Ok(crate::tui::key_actions::KeyActionResult::Cancelled) => {
-                ui::log("Installation annulée");
+                ui::log("Installation cancelled");
             }
             Err(e) => {
-                ui::log(&format!("Erreur: {}", e));
+                ui::log(&format!("Error: {}", e));
             }
         }
     }
@@ -1022,13 +1022,10 @@ impl InteractiveState {
         let config_dir = Path::new(ctx.home).join(CONFIG_DIR).join(GIT_DIR);
         let current_user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
         
-        // For now, just log that removal needs more implementation
-        ui::log("Suppression de clé: sélection d'une connexion à implémenter");
-        
         // Find first outgoing connection
         let connections_dir = config_dir.join("devices").join(ctx.local_name).join("connections");
         if !connections_dir.exists() {
-            ui::log("Aucune connexion sortante trouvée");
+            ui::log("No outgoing connections found");
             return;
         }
         
@@ -1044,7 +1041,7 @@ impl InteractiveState {
                         let (from_user, to_user, to_machine) = crate::cli::key_management::parse_connection_id(&connection_id)
                             .unwrap_or_default();
                         
-                        ui::log(&format!("Suppression de la connexion: {}", connection_id));
+                        ui::log(&format!("Removing connection: {}", connection_id));
                         
                         let result = crate::tui::key_actions::remove_key_action(
                             ctx.home,
@@ -1059,19 +1056,19 @@ impl InteractiveState {
                         
                         match result {
                             Ok(crate::tui::key_actions::KeyActionResult::Success(msg)) => {
-                                ui::log(&format!("Succès: {}", msg));
+                                ui::log(&format!("Success: {}", msg));
                                 return;
                             }
                             Ok(crate::tui::key_actions::KeyActionResult::Error(msg)) => {
-                                ui::log(&format!("Erreur: {}", msg));
+                                ui::log(&format!("Error: {}", msg));
                                 return;
                             }
                             Ok(crate::tui::key_actions::KeyActionResult::Cancelled) => {
-                                ui::log("Suppression annulée");
+                                ui::log("Removal cancelled");
                                 return;
                             }
                             Err(e) => {
-                                ui::log(&format!("Erreur: {}", e));
+                                ui::log(&format!("Error: {}", e));
                                 return;
                             }
                         }
@@ -1080,7 +1077,7 @@ impl InteractiveState {
             }
         }
         
-        ui::log("Aucune connexion sortante trouvée pour cet utilisateur");
+        ui::log("No outgoing connections found for this user");
     }
 }
 

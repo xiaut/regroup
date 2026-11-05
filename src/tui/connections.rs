@@ -77,7 +77,7 @@ pub fn handle_connections(
         .collect();
     if machines.is_empty() {
         return Ok(ConnectionResult::Error(
-            "Aucune autre machine connue.".to_string(),
+            "No other machines known.".to_string(),
         ));
     }
 
@@ -296,9 +296,9 @@ fn draw_connection_details(
     let content = Paragraph::new(vec![
         Line::from(pretty_direction(connection, direction)),
         Line::from(format!("Type : {dir_label}")),
-        Line::from(format!("Clé publique   : {}", connection.public_key)),
-        Line::from(format!("Clé privée     : {}", connection.private_key_path)),
-        Line::from(format!("Créée le       : {}", connection.created_at)),
+        Line::from(format!("Public key     : {}", connection.public_key)),
+        Line::from(format!("Private key    : {}", connection.private_key_path)),
+        Line::from(format!("Created at     : {}", connection.created_at)),
         Line::from(String::new()),
         Line::from(vec![
             Span::styled("q", Style::default().fg(Color::Yellow)),

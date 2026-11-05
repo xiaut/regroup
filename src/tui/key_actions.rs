@@ -46,14 +46,14 @@ pub fn install_key_action(
     
     if connection_path.exists() {
         return Ok(KeyActionResult::Error(format!(
-            "Une connexion existe déjà pour {}. Supprimez-la d'abord si vous voulez la recréer.",
+            "Connection already exists for {}. Remove it first if you want to recreate it.",
             connection_id
         )));
     }
     
     // Check if machine is reachable
     if !is_reachable(to_machine, 22, to_user) {
-        return Ok(KeyActionResult::Error(format!("Machine {} non joignable", to_machine)));
+        return Ok(KeyActionResult::Error(format!("Machine {} unreachable", to_machine)));
     }
     
     // Check if key already exists
@@ -62,17 +62,17 @@ pub fn install_key_action(
     
     if key_path.exists() {
         return Ok(KeyActionResult::Error(format!(
-            "Une clé existe déjà pour cette connexion ({}). Regroup ne gère qu'une seule clé par connexion.",
+            "Key already exists for this connection ({}). Regroup manages only one key per connection.",
             key_path.display()
         )));
     }
     
     // Generate key pair
     let key_path = generate_key_pair(current_user, to_machine)
-        .map_err(|e| format!("Échec de la génération de clé: {}", e))?;
+        .map_err(|e| format!("Failed to generate key: {}", e))?;
     
     let public_key = get_public_key(&key_path)
-        .map_err(|e| format!("Échec de la lecture de la clé publique: {}", e))?;
+        .map_err(|e| format!("Failed to read public key: {}", e))?;
     
     // Build the command for the remote machine
     let cmd = format!(
@@ -109,7 +109,7 @@ pub fn install_key_action(
                 local_machine,
                 &connection,
                 current_user,
-            ).map_err(|e| format!("Échec de l'enregistrement de la connexion: {}", e))?;
+            ).map_err(|e| format!("Failed to save connection: {}", e))?;
             
             // Commit on source machine
             let connections_dir = config_dir.join("devices").join(local_machine).join("connections");
@@ -119,12 +119,12 @@ pub fn install_key_action(
                 &config_dir_path,
                 &connections_dir,
                 &format!("Add connection: {}->{}@{}", current_user, to_user, to_machine),
-            ).map_err(|e| format!("Échec du commit: {}", e))?;
+            ).map_err(|e| format!("Failed to commit: {}", e))?;
             
-            Ok(KeyActionResult::Success(format!("Clé installée avec succès sur {}", to_machine)))
+            Ok(KeyActionResult::Success(format!("Key installed successfully on {}", to_machine)))
         }
-        Ok(_) => Ok(KeyActionResult::Error(format!("Échec de l'installation sur {}", to_machine))),
-        Err(e) => Ok(KeyActionResult::Error(format!("Erreur SSH: {}", e))),
+        Ok(_) => Ok(KeyActionResult::Error(format!("Failed to install on {}", to_machine))),
+        Err(e) => Ok(KeyActionResult::Error(format!("SSH error: {}", e))),
     }
 }
 
@@ -141,7 +141,7 @@ pub fn remove_key_action(
 ) -> Result<KeyActionResult, String> {
     // Check if machine is reachable
     if !is_reachable(to_machine, 22, to_user) {
-        return Ok(KeyActionResult::Error(format!("Machine {} non joignable", to_machine)));
+        return Ok(KeyActionResult::Error(format!("Machine {} unreachable", to_machine)));
     }
     
     // Check if connection file exists locally
@@ -151,7 +151,7 @@ pub fn remove_key_action(
     
     if !connection_path.exists() {
         return Ok(KeyActionResult::Error(format!(
-            "Aucune connexion trouvée pour {}->{}@{} sur cette machine",
+            "No connection found for {}->{}@{} on this machine",
             current_user, to_user, to_machine
         )));
     }
@@ -182,7 +182,7 @@ pub fn remove_key_action(
             
             if connection_path.exists() {
                 std::fs::remove_file(&connection_path)
-                    .map_err(|e| format!("Échec de la suppression du fichier de connexion: {}", e))?;
+                    .map_err(|e| format!("Failed to remove connection file: {}", e))?;
             }
             
             // Commit on source machine
@@ -192,11 +192,11 @@ pub fn remove_key_action(
                 &config_dir_path,
                 &connections_dir,
                 &format!("Remove connection: {}->{}@{}", current_user, to_user, to_machine),
-            ).map_err(|e| format!("Échec du commit: {}", e))?;
+            ).map_err(|e| format!("Failed to commit: {}", e))?;
             
-            Ok(KeyActionResult::Success(format!("Clé supprimée avec succès de {}", to_machine)))
+            Ok(KeyActionResult::Success(format!("Key removed successfully from {}", to_machine)))
         }
-        Ok(_) => Ok(KeyActionResult::Error(format!("Échec de la suppression sur {}", to_machine))),
-        Err(e) => Ok(KeyActionResult::Error(format!("Erreur SSH: {}", e))),
+        Ok(_) => Ok(KeyActionResult::Error(format!("Failed to remove from {}", to_machine))),
+        Err(e) => Ok(KeyActionResult::Error(format!("SSH error: {}", e))),
     }
 }
