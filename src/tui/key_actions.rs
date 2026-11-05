@@ -144,6 +144,18 @@ pub fn remove_key_action(
         return Ok(KeyActionResult::Error(format!("Machine {} non joignable", to_machine)));
     }
     
+    // Check if connection file exists locally
+    let connections_dir = config_dir.join("devices").join(local_machine).join("connections");
+    let connection_file_name = format!("{}->{}@{}.json", current_user, to_user, to_machine);
+    let connection_path = connections_dir.join(connection_file_name);
+    
+    if !connection_path.exists() {
+        return Ok(KeyActionResult::Error(format!(
+            "Aucune connexion trouvée pour {}->{}@{} sur cette machine",
+            current_user, to_user, to_machine
+        )));
+    }
+    
     // Build the command for the remote machine
     let cmd = format!(
         "regroup receive-remove-key --connection-id {}",
