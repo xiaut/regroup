@@ -75,15 +75,20 @@ pub fn install_key_action(
         .map_err(|e| format!("Failed to read public key: {}", e))?;
     
     // Build the command for the remote machine
-    let cmd = format!(
-        "regroup receive-install-key --source-user {} --source-machine {} --public-key '{}' --connection-id {}",
-        current_user, local_machine, public_key, connection_id
-    );
-    
-    // Execute SSH command to install key on remote
-    let ssh_cmd = format!("ssh {}@{} '{}'", to_user, to_machine, cmd);
-    
-    let status = Command::new("sh").arg("-c").arg(&ssh_cmd).status();
+    // Use separate arguments to avoid shell quoting issues
+    let status = Command::new("ssh")
+        .arg(format!("{}@{}", to_user, to_machine))
+        .arg("regroup")
+        .arg("receive-install-key")
+        .arg("--source-user")
+        .arg(current_user)
+        .arg("--source-machine")
+        .arg(local_machine)
+        .arg("--public-key")
+        .arg(&public_key)
+        .arg("--connection-id")
+        .arg(connection_id)
+        .status();
     
     match status {
         Ok(exit_status) if exit_status.success() => {
@@ -151,15 +156,14 @@ pub fn remove_key_action(
     }
     
     // Build the command for the remote machine
-    let cmd = format!(
-        "regroup receive-remove-key --connection-id {}",
-        connection_id
-    );
-    
-    // Execute SSH command to remove key on remote
-    let ssh_cmd = format!("ssh {}@{} '{}'", to_user, to_machine, cmd);
-    
-    let status = Command::new("sh").arg("-c").arg(&ssh_cmd).status();
+    // Use separate arguments to avoid shell quoting issues
+    let status = Command::new("ssh")
+        .arg(format!("{}@{}", to_user, to_machine))
+        .arg("regroup")
+        .arg("receive-remove-key")
+        .arg("--connection-id")
+        .arg(connection_id)
+        .status();
     
     match status {
         Ok(exit_status) if exit_status.success() => {

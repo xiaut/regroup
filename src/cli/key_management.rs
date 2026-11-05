@@ -150,8 +150,17 @@ pub fn remove_authorized_key(public_key: &str) -> Result<(), String> {
 /// Check if a machine is reachable via SSH
 #[allow(dead_code)]
 pub fn is_reachable(host: &str, port: u16, user: &str) -> bool {
-    let cmd = format!("ssh -o ConnectTimeout=5 -o BatchMode=yes {}@{}:{} true", user, host, port);
-    Command::new("sh").arg("-c").arg(&cmd).status().is_ok()
+    Command::new("ssh")
+        .arg("-o")
+        .arg("ConnectTimeout=5")
+        .arg("-o")
+        .arg("BatchMode=yes")
+        .arg(format!("{}@{}", user, host))
+        .arg("-p")
+        .arg(port.to_string())
+        .arg("true")
+        .status()
+        .is_ok()
 }
 
 /// Get the config directory path
