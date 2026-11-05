@@ -83,13 +83,7 @@ pub fn install_key_action(
     // Execute SSH command to install key on remote
     let ssh_cmd = format!("ssh {}@{} '{}'", to_user, to_machine, cmd);
     
-    // Temporarily disable raw mode for SSH
-    crossterm::terminal::disable_raw_mode().map_err(|e| format!("Cannot disable raw mode: {}", e))?;
-    
     let status = Command::new("sh").arg("-c").arg(&ssh_cmd).status();
-    
-    // Re-enable raw mode
-    let _ = crossterm::terminal::enable_raw_mode();
     
     match status {
         Ok(exit_status) if exit_status.success() => {
@@ -165,13 +159,7 @@ pub fn remove_key_action(
     // Execute SSH command to remove key on remote
     let ssh_cmd = format!("ssh {}@{} '{}'", to_user, to_machine, cmd);
     
-    // Temporarily disable raw mode for SSH
-    crossterm::terminal::disable_raw_mode().map_err(|e| format!("Cannot disable raw mode: {}", e))?;
-    
     let status = Command::new("sh").arg("-c").arg(&ssh_cmd).status();
-    
-    // Re-enable raw mode
-    let _ = crossterm::terminal::enable_raw_mode();
     
     match status {
         Ok(exit_status) if exit_status.success() => {

@@ -54,7 +54,7 @@ pub struct Context<'a> {
 /// signature-verified and age-checked by the listener). Returns the number
 /// of devices accepted this run.
 pub fn run(ctx: &Context, udp_port: u16, beacons: &Receiver<BeaconDevice>) -> usize {
-    let mut ui = ui::Ui::start();
+    let mut tui = ui::Ui::start();
     let mut state = InteractiveState::new(ctx);
     ui::log(&format!("Listening for devices on UDP port {udp_port}..."));
     // Verbose identity line: through ui::log so the full-screen ui shows it
@@ -92,15 +92,15 @@ pub fn run(ctx: &Context, udp_port: u16, beacons: &Receiver<BeaconDevice>) -> us
             Err(TryRecvError::Disconnected) => break,
         }
 
-        if let Some(action) = ui.poll_action(POLL_INTERVAL)
-            && state.handle_action(ctx, action)
+        if let Some(action) = tui.poll_action(POLL_INTERVAL)
+            && state.handle_action(ctx, &mut tui, action)
         {
             break;
         }
 
         // The display always reflects the state after processing.
-        let plain = !matches!(ui, ui::Ui::Tty(_));
-        ui.set_question(state.current_question(ctx, plain));
+        let plain = !matches!(tui, ui::Ui::Tty(_));
+        tui.set_question(state.current_question(ctx, plain));
         let detected = state.detected_view();
         let added = state.added_view();
         let selected = state
@@ -111,11 +111,11 @@ pub fn run(ctx: &Context, udp_port: u16, beacons: &Receiver<BeaconDevice>) -> us
             .delete_selection
             .as_ref()
             .and_then(|name| added.iter().position(|d| &d.name == name));
-        ui.set_devices(detected, added);
-        ui.set_selected(selected);
-        ui.set_delete_selected(delete_selected);
-        ui.set_verbose(state.verbose);
-        ui.draw();
+        tui.set_devices(detected, added);
+        tui.set_selected(selected);
+        tui.set_delete_selected(delete_selected);
+        tui.set_verbose(state.verbose);
+        tui.draw();
     }
     state.new_count
 }
@@ -563,7 +563,7 @@ impl InteractiveState {
     }
 
     /// Apply a user decision. Returns true when the user asked to quit.
-    fn handle_action(&mut self, ctx: &Context, action: Action) -> bool {
+    fn handle_action(&mut self, ctx: &Context, tui: &mut ui::Ui, action: Action) -> bool {
         match action {
             Action::Quit => return true,
             Action::Sync => {
@@ -718,7 +718,7 @@ impl InteractiveState {
                 if ctx.dry_run {
                     ui::log("  (dry run - key installation skipped)");
                 } else {
-                    self.execute_install_key(ctx);
+                    self.execute_install_key(ctx, tui);
                 }
             }
             Action::InstallKeyConfirm => {
@@ -731,7 +731,7 @@ impl InteractiveState {
                 if ctx.dry_run {
                     ui::log("  (dry run - key removal skipped)");
                 } else {
-                    self.execute_remove_key(ctx);
+                    self.execute_remove_key(ctx, tui);
                 }
             }
             Action::RemoveKeyConfirm => {
@@ -972,7 +972,7 @@ impl InteractiveState {
     }
     
     /// Execute key installation on the first known machine
-    fn execute_install_key(&mut self, ctx: &Context) {
+    fn execute_install_key(&mut self, ctx: &Context, ui: &mut ui::Ui) {
         let config_dir = Path::new(ctx.home).join(CONFIG_DIR).join(GIT_DIR);
         let current_user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
         
@@ -992,14 +992,16 @@ impl InteractiveState {
         
         ui::log(&format!("Installing key to {}@{}", target_user, target_machine));
         
-        let result = crate::tui::key_actions::install_key_action(
-            ctx.home,
-            &config_dir,
-            ctx.local_name,
-            &current_user,
-            target_machine,
-            &target_user,
-        );
+        let result = ui.with_clean_terminal(|| {
+            crate::tui::key_actions::install_key_action(
+                ctx.home,
+                &config_dir,
+                ctx.local_name,
+                &current_user,
+                target_machine,
+                &target_user,
+            )
+        });
         
         match result {
             Ok(crate::tui::key_actions::KeyActionResult::Success(msg)) => {
@@ -1018,7 +1020,7 @@ impl InteractiveState {
     }
     
     /// Execute key removal from the first known machine
-    fn execute_remove_key(&mut self, ctx: &Context) {
+    fn execute_remove_key(&mut self, ctx: &Context, ui: &mut ui::Ui) {
         let config_dir = Path::new(ctx.home).join(CONFIG_DIR).join(GIT_DIR);
         let current_user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
         
@@ -1043,16 +1045,18 @@ impl InteractiveState {
                         
                         ui::log(&format!("Removing connection: {}", connection_id));
                         
-                        let result = crate::tui::key_actions::remove_key_action(
-                            ctx.home,
-                            &config_dir,
-                            ctx.local_name,
-                            &current_user,
-                            &from_user,
-                            &to_machine,
-                            &to_user,
-                            &connection_id,
-                        );
+                        let result = ui.with_clean_terminal(|| {
+                            crate::tui::key_actions::remove_key_action(
+                                ctx.home,
+                                &config_dir,
+                                ctx.local_name,
+                                &current_user,
+                                &from_user,
+                                &to_machine,
+                                &to_user,
+                                &connection_id,
+                            )
+                        });
                         
                         match result {
                             Ok(crate::tui::key_actions::KeyActionResult::Success(msg)) => {

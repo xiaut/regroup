@@ -329,11 +329,41 @@ impl Ui {
             let _ = ui.draw();
         }
     }
+
+    /// Execute a function with a clean terminal (restored to normal mode),
+    /// then reinitialize the TUI terminal afterwards. This is useful when
+    /// running CLI commands from within the TUI that need a clean terminal.
+    pub fn with_clean_terminal<F, R>(&mut self, f: F) -> R
+    where
+        F: FnOnce() -> R,
+    {
+        // Check if we're in Tty mode
+        match self {
+            Ui::Tty(ui_box) => {
+                // Restore the terminal (leave alternate screen, disable raw mode)
+                ratatui::restore();
+                
+                // Execute the function
+                let result = f();
+                
+                // Reinitialize the terminal
+                // Note: ratatui::init() panics on failure, which is acceptable here
+                // as it indicates a terminal initialization error
+                ui_box.terminal = ratatui::init();
+                
+                result
+            }
+            Ui::Plain(_) => {
+                // In plain mode, no terminal manipulation needed
+                f()
+            }
+        }
+    }
 }
 
 /// Full-screen ratatui interface.
 pub struct TtyUi {
-    terminal: DefaultTerminal,
+    pub terminal: DefaultTerminal,
     log_rx: Receiver<UiEvent>,
     log: Vec<String>,
     /// Lines scrolled up from the bottom of the activity pane; 0 follows it.
