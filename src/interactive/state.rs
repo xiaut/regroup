@@ -121,7 +121,7 @@ pub fn run(ctx: &Context, udp_port: u16, beacons: &Receiver<BeaconDevice>) -> us
 }
 
 /// All mutable state of the interactive loop.
-struct InteractiveState {
+pub struct InteractiveState {
     /// SSH public keys of accepted devices.
     known_keys: HashSet<SshPublicKey>,
     /// Machine info by SSH public key for known devices.
@@ -537,7 +537,7 @@ impl InteractiveState {
                 "[DRY RUN] New device: {} ({}) - key: {}",
                 device.name,
                 device.ip,
-                key_preview(&device.ssh_public_key)
+                crate::interactive::utils::key_preview(&device.ssh_public_key)
             ));
             return false;
         }
@@ -556,7 +556,7 @@ impl InteractiveState {
                 "[!] New device: {} ({}) - key: {}",
                 added_device.name,
                 added_device.ip,
-                key_preview(&added_device.ssh_public_key)
+                crate::interactive::utils::key_preview(&added_device.ssh_public_key)
             )),
         );
         false
@@ -1085,12 +1085,3 @@ impl InteractiveState {
     }
 }
 
-/// Short preview of an SSH public key for display, e.g. "ssh-ed25519 AA...".
-fn key_preview(key: &SshPublicKey) -> String {
-    let s = key.as_str();
-    if s.len() > 16 {
-        format!("{}...", &s[..13])
-    } else {
-        s.to_string()
-    }
-}
