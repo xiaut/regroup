@@ -38,7 +38,9 @@ done
 
 ### 3. Show Module Dependencies
 
-Shows all cross-module usage patterns, grouped by source module with module path as header and blank line between each module. Filters out comments, code, and empty lines.
+Shows **explicit** cross-module usage patterns (via `use crate::`), grouped by source module with module path as header and blank line between each module. Filters out comments, code, and empty lines.
+
+**Note:** This only captures dependencies declared with `use crate::`. Module children declared in `mod.rs` can be used directly without `use` statements, so the actual dependency graph may include additional implicit edges.
 
 ```bash
 for file in src/**/*.rs; do
