@@ -1,8 +1,17 @@
 # regroup — developer notes
 
-User-facing documentation lives in the [root README](../README.md). This
-document describes the code: module map, data flow, storage rules and the
-invariants you must not break.
+**Note**: This document has been moved to the [`docs/`](../docs/) directory for better organization.
+Please see the following documentation files:
+
+- [docs/README.md](../docs/README.md) — Documentation overview and table of contents
+- [docs/architecture.md](../docs/architecture.md) — Big picture, data flow, and how regroup works
+- [docs/storage.md](../docs/storage.md) — Storage rules, write ownership, and conflict resolution
+- [docs/modules/](../docs/modules/) — Module-specific documentation
+- [docs/development.md](../docs/development.md) — Coding rules and development guide
+
+User-facing documentation lives in the [root README](../README.md).
+
+This document is kept for backwards compatibility but may be removed in a future version.
 
 ## Big picture
 
