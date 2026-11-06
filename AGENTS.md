@@ -38,24 +38,29 @@ done
 
 ### 3. Show Module Dependencies
 
-Shows all cross-module usage patterns, grouped by source module with module path as header and blank line between each module.
+Shows all cross-module usage patterns, grouped by source module with module path as header and blank line between each module. Filters out comments, code, and empty lines.
 
 ```bash
-grep -rn "use crate::" src/ --include="*.rs" | awk -F'use crate::' '{
-    gsub(/:.*$/, "", $1);
-    gsub(/\.rs$/, "", $1);
-    module = $1;
-    sub(/.*\//, "", module);
-    deps[module] = deps[module] ? deps[module] "\n  " $2 : "  " $2;
+for file in src/**/*.rs; do
+  [ -f "$file" ] && \
+  module=$(echo "$file" | sed -E 's|^src/||; s|\.rs$||; s|/mod$||') && \
+  deps=$(awk '/^use crate::/ {
+    flag=1
+    print
+    next
   }
-  END {
-    n = asorti(deps, sorted);
-    for (i = 1; i <= n; i++) {
-      print sorted[i];
-      print deps[sorted[i]];
-      print "";
+  flag {
+    if (/^[^ \t]/ && !/^\/\// && !/^$/) {
+      flag=0
+      next
     }
-  }'
+    print
+  }' "$file" | sed -E 's|^ *use crate::||; s|;||; /^ *$/d; /^\/\//d') && \
+  [ -n "$deps" ] && \
+  echo "$module:" && \
+  echo "$deps" | sed 's|^|  └── |' && \
+  echo ""
+done
 ```
 
 ---
