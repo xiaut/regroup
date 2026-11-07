@@ -10,16 +10,12 @@ use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event, KeyEvent, KeyEventKind};
 use ratatui::layout::{Constraint, Layout};
-use ratatui::prelude::Stylize;
-use ratatui::style::{Color, Style};
-use ratatui::text::{Line, Text};
-use ratatui::widgets::{Block, Paragraph};
 use ratatui::DefaultTerminal;
 
 
 use super::render::{
-    key_label, render_help, render_log, render_machines, render_question,
-    KeyFlash, PanelTheme, QuestionCtx, RowFlash,
+    key_label, render_all_panes, render_help, render_question,
+    KeyFlash, QuestionCtx, RowFlash,
 };
 use super::types::{ActivePane, Action, Device, Question, UiEvent};
 use crate::cli::usage_text;
@@ -326,8 +322,9 @@ impl TtyUi {
         
         // From this point on, we're in Idle mode with no modal questions
         
-        // Main Menu: navigation to panes
-        if self.active_pane == ActivePane::MainMenu {
+        // Pane navigation by letters only (NO TAB)
+        // Esc returns to no active pane (MainMenu)
+        if !in_modal {
             match key.code {
                 crossterm::event::KeyCode::Char('d') => {
                     self.active_pane = ActivePane::Detected;
@@ -336,7 +333,9 @@ impl TtyUi {
                     } else {
                         self.detected_selected = Some(0);
                     }
-                    return Some(Action::BackToMainMenu);
+                    self.added_selected = None;
+                    self.log_scroll = 0;
+                    return None;
                 }
                 crossterm::event::KeyCode::Char('a') => {
                     self.active_pane = ActivePane::Added;
@@ -345,27 +344,23 @@ impl TtyUi {
                     } else {
                         self.added_selected = Some(0);
                     }
-                    return Some(Action::BackToMainMenu);
+                    self.detected_selected = None;
+                    self.log_scroll = 0;
+                    return None;
                 }
                 crossterm::event::KeyCode::Char('l') => {
                     self.active_pane = ActivePane::Logs;
                     self.log_scroll = 0;
-                    return Some(Action::BackToMainMenu);
-                }
-                crossterm::event::KeyCode::Char('?') => {
-                    self.show_help = true;
-                    self.help_scroll = 0;
+                    self.detected_selected = None;
+                    self.added_selected = None;
                     return None;
                 }
-                crossterm::event::KeyCode::Char('q') => {
-                    return Some(Action::Quit);
-                }
-                _ => return None,
+                _ => {}
             }
         }
         
         // Detected pane: navigate detected devices and add them
-        if self.active_pane == ActivePane::Detected {
+        if self.active_pane == ActivePane::Detected && !in_modal {
             match key.code {
                 crossterm::event::KeyCode::Up => {
                     if !self.detected.is_empty() {
@@ -394,7 +389,7 @@ impl TtyUi {
         }
         
         // Added pane: navigate added devices and perform actions
-        if self.active_pane == ActivePane::Added {
+        if self.active_pane == ActivePane::Added && !in_modal {
             match key.code {
                 crossterm::event::KeyCode::Up => {
                     if !self.added.is_empty() {
@@ -435,7 +430,7 @@ impl TtyUi {
         }
         
         // Logs pane: scroll and toggle verbose
-        if self.active_pane == ActivePane::Logs {
+        if self.active_pane == ActivePane::Logs && !in_modal {
             match key.code {
                 crossterm::event::KeyCode::Up => {
                     self.log_scroll = self.log_scroll.saturating_add(1);
@@ -513,50 +508,22 @@ impl TtyUi {
                 let help_scroll_bounded = (*help_scroll).min(max_scroll);
                 render_help(frame, main_area, help_scroll_bounded);
             } else {
-                // Show only the active pane
-                match *active_pane {
-                    ActivePane::MainMenu => {
-                        // Main Menu - show a simple menu with instructions
-                        let menu_text = vec![
-                            Line::from("MAIN MENU".to_string()).style(Style::new().bold()),
-                            Line::from(""),
-                            Line::from("  d - Detected pane".to_string()),
-                            Line::from("  a - Added pane".to_string()),
-                            Line::from("  l - Logs pane".to_string()),
-                            Line::from(""),
-                            Line::from("  ? - Help".to_string()),
-                            Line::from("  q - Quit".to_string()),
-                        ];
-                        let paragraph = Paragraph::new(Text::from(menu_text))
-                            .block(Block::bordered().title("Regroup"));
-                        frame.render_widget(paragraph, main_area);
-                    }
-                    ActivePane::Detected => {
-                        render_machines(
-                            frame,
-                            main_area,
-                            PanelTheme::new("Detected", Color::Yellow, "detected"),
-                            detected,
-                            *detected_selected,
-                            flashes,
-                            pulses,
-                        );
-                    }
-                    ActivePane::Added => {
-                        render_machines(
-                            frame,
-                            main_area,
-                            PanelTheme::new("Added", Color::Green, "known"),
-                            added,
-                            *added_selected,
-                            flashes,
-                            pulses,
-                        );
-                    }
-                    ActivePane::Logs => {
-                        render_log(frame, main_area, log, *log_scroll, *verbose);
-                    }
-                }
+                // Always show all three panes (Detected, Added, Logs)
+                // The active pane has a bold border
+                render_all_panes(
+                    frame,
+                    main_area,
+                    *active_pane,
+                    detected,
+                    *detected_selected,
+                    added,
+                    *added_selected,
+                    log,
+                    *log_scroll,
+                    *verbose,
+                    flashes,
+                    pulses,
+                );
             }
             cursor = render_question(
                 frame,

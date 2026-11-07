@@ -8,16 +8,16 @@ use std::time::{Duration, Instant};
 
 use crossterm::event::KeyCode;
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Position, Rect};
+use ratatui::layout::{Constraint, Layout, Position, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Cell, Paragraph, Row, Table};
 
 use super::logging::{BLINK_MS, KEY_FLASH_MS, PULSE_MS};
-use super::types::Level;
+use super::types::{ActivePane, Level};
 
 /// Minimum terminal width to display machine panels side-by-side.
-/// Below this, panels stack vertically (detected on top, added below).
+/// Below this, panels stack vertically.
 pub const MIN_WIDTH_FOR_SIDE_BY_SIDE: u16 = 80;
 
 /// Static look of one machine panel: title, border color and the status
@@ -313,6 +313,318 @@ pub fn log_style(msg: &str) -> Style {
     }
 }
 
+/// Render all three panes: Detected and Added side-by-side on top, Logs below.
+/// The active pane gets a bold border. All panes are always visible.
+pub fn render_all_panes(
+    frame: &mut Frame,
+    area: Rect,
+    active_pane: ActivePane,
+    detected: &[super::types::Device],
+    detected_selected: Option<usize>,
+    added: &[super::types::Device],
+    added_selected: Option<usize>,
+    log: &[String],
+    log_scroll: u16,
+    verbose: bool,
+    flashes: &HashMap<String, RowFlash>,
+    pulses: &HashMap<String, Instant>,
+) {
+    let width = area.width;
+    let height = area.height;
+
+    // Minimum width for side-by-side top panes
+    let min_width_for_side_by_side = 80;
+
+    if width >= min_width_for_side_by_side {
+        // Layout: Detected | Added (top row), Logs (bottom row)
+        let top_height = height / 2;
+        let logs_height = height - top_height;
+
+        let [top_area, logs_area] = Layout::vertical([
+            Constraint::Length(top_height),
+            Constraint::Length(logs_height),
+        ])
+        .areas(area);
+
+        // Split top area into Detected (left) and Added (right)
+        let detected_width = width / 2;
+        let added_width = width - detected_width;
+
+        let [detected_area, added_area] = Layout::horizontal([
+            Constraint::Length(detected_width),
+            Constraint::Length(added_width),
+        ])
+        .areas(top_area);
+
+        // Render Detected pane
+        let detected_theme = PanelTheme::new("Detected", Color::Yellow, "detected");
+        let detected_border_style = if matches!(active_pane, ActivePane::Detected) {
+            Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+        } else {
+            Style::new().fg(Color::Yellow)
+        };
+        
+        let detected_rows = detected.iter().enumerate().map(|(i, d)| {
+            let now = Instant::now();
+            let pulse_duration = Duration::from_millis(PULSE_MS);
+            let flash = flashes
+                .get(&d.key)
+                .filter(|f| now.duration_since(f.start) < super::logging::flash_duration(f.level));
+            let pulse = pulses
+                .get(&d.key)
+                .map(|t| now.duration_since(*t))
+                .filter(|e| *e < pulse_duration);
+            let status = if let Some(f) = flash {
+                f.msg.clone()
+            } else if pulse.is_some() {
+                "beacon received".to_string()
+            } else {
+                detected_theme.idle_status.to_string()
+            };
+            let style = row_style(detected_theme.border, detected_selected == Some(i), flash, pulse, now);
+            Row::new([
+                Cell::from(d.name.clone()),
+                Cell::from(d.ip.clone().unwrap_or_else(|| "-".to_string())),
+                Cell::from(d.port.to_string()),
+                Cell::from(status),
+            ])
+            .style(style)
+        });
+        let detected_table = Table::new(
+            detected_rows,
+            [
+                Constraint::Percentage(35),
+                Constraint::Percentage(30),
+                Constraint::Length(5),
+                Constraint::Min(8),
+            ],
+        )
+        .header(Row::new(["Name", "IP", "Port", "Status"]).style(Style::new().bold()))
+        .block(
+            Block::bordered()
+                .title(format!("{} — {}", detected_theme.title, detected.len()))
+                .border_style(detected_border_style),
+        );
+        frame.render_widget(detected_table, detected_area);
+
+        // Render Added pane
+        let added_theme = PanelTheme::new("Added", Color::Green, "known");
+        let added_border_style = if matches!(active_pane, ActivePane::Added) {
+            Style::new().fg(Color::Green).add_modifier(Modifier::BOLD)
+        } else {
+            Style::new().fg(Color::Green)
+        };
+        
+        let added_rows = added.iter().enumerate().map(|(i, d)| {
+            let now = Instant::now();
+            let pulse_duration = Duration::from_millis(PULSE_MS);
+            let flash = flashes
+                .get(&d.key)
+                .filter(|f| now.duration_since(f.start) < super::logging::flash_duration(f.level));
+            let pulse = pulses
+                .get(&d.key)
+                .map(|t| now.duration_since(*t))
+                .filter(|e| *e < pulse_duration);
+            let status = if let Some(f) = flash {
+                f.msg.clone()
+            } else if pulse.is_some() {
+                "beacon received".to_string()
+            } else {
+                added_theme.idle_status.to_string()
+            };
+            let style = row_style(added_theme.border, added_selected == Some(i), flash, pulse, now);
+            Row::new([
+                Cell::from(d.name.clone()),
+                Cell::from(d.ip.clone().unwrap_or_else(|| "-".to_string())),
+                Cell::from(d.port.to_string()),
+                Cell::from(status),
+            ])
+            .style(style)
+        });
+        let added_table = Table::new(
+            added_rows,
+            [
+                Constraint::Percentage(35),
+                Constraint::Percentage(30),
+                Constraint::Length(5),
+                Constraint::Min(8),
+            ],
+        )
+        .header(Row::new(["Name", "IP", "Port", "Status"]).style(Style::new().bold()))
+        .block(
+            Block::bordered()
+                .title(format!("{} — {}", added_theme.title, added.len()))
+                .border_style(added_border_style),
+        );
+        frame.render_widget(added_table, added_area);
+
+        // Render Logs pane
+        let logs_title = if verbose {
+            "Logs — verbose"
+        } else {
+            "Logs"
+        };
+        let logs_border_style = if matches!(active_pane, ActivePane::Logs) {
+            Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        } else {
+            Style::new().fg(Color::Cyan)
+        };
+        let logs_block = Block::bordered()
+            .title(logs_title)
+            .border_style(logs_border_style);
+        
+        let visible = logs_area.height.saturating_sub(2) as usize;
+        let skip = log.len().saturating_sub(visible + log_scroll as usize).min(log.len());
+        let lines: Vec<Line> = log.iter().map(|msg| Line::styled(msg.clone(), log_style(msg))).collect();
+        let logs_paragraph = Paragraph::new(Text::from(lines))
+            .block(logs_block)
+            .scroll((skip as u16, 0));
+        frame.render_widget(logs_paragraph, logs_area);
+    } else {
+        // Stacked layout for narrow terminals: Detected, Added, Logs
+        let detected_height = height / 3;
+        let added_height = height / 3;
+        let logs_height = height - detected_height - added_height;
+
+        let [detected_area, middle_area] = Layout::vertical([
+            Constraint::Length(detected_height),
+            Constraint::Fill(1),
+        ])
+        .areas(area);
+
+        let [added_area, logs_area] = Layout::vertical([
+            Constraint::Length(added_height),
+            Constraint::Length(logs_height),
+        ])
+        .areas(middle_area);
+
+        // Render Detected pane
+        let detected_theme = PanelTheme::new("Detected", Color::Yellow, "detected");
+        let detected_border_style = if matches!(active_pane, ActivePane::Detected) {
+            Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+        } else {
+            Style::new().fg(Color::Yellow)
+        };
+        
+        let detected_rows = detected.iter().enumerate().map(|(i, d)| {
+            let now = Instant::now();
+            let pulse_duration = Duration::from_millis(PULSE_MS);
+            let flash = flashes
+                .get(&d.key)
+                .filter(|f| now.duration_since(f.start) < super::logging::flash_duration(f.level));
+            let pulse = pulses
+                .get(&d.key)
+                .map(|t| now.duration_since(*t))
+                .filter(|e| *e < pulse_duration);
+            let status = if let Some(f) = flash {
+                f.msg.clone()
+            } else if pulse.is_some() {
+                "beacon received".to_string()
+            } else {
+                detected_theme.idle_status.to_string()
+            };
+            let style = row_style(detected_theme.border, detected_selected == Some(i), flash, pulse, now);
+            Row::new([
+                Cell::from(d.name.clone()),
+                Cell::from(d.ip.clone().unwrap_or_else(|| "-".to_string())),
+                Cell::from(d.port.to_string()),
+                Cell::from(status),
+            ])
+            .style(style)
+        });
+        let detected_table = Table::new(
+            detected_rows,
+            [
+                Constraint::Percentage(35),
+                Constraint::Percentage(30),
+                Constraint::Length(5),
+                Constraint::Min(8),
+            ],
+        )
+        .header(Row::new(["Name", "IP", "Port", "Status"]).style(Style::new().bold()))
+        .block(
+            Block::bordered()
+                .title(format!("{} — {}", detected_theme.title, detected.len()))
+                .border_style(detected_border_style),
+        );
+        frame.render_widget(detected_table, detected_area);
+
+        // Render Added pane
+        let added_theme = PanelTheme::new("Added", Color::Green, "known");
+        let added_border_style = if matches!(active_pane, ActivePane::Added) {
+            Style::new().fg(Color::Green).add_modifier(Modifier::BOLD)
+        } else {
+            Style::new().fg(Color::Green)
+        };
+        
+        let added_rows = added.iter().enumerate().map(|(i, d)| {
+            let now = Instant::now();
+            let pulse_duration = Duration::from_millis(PULSE_MS);
+            let flash = flashes
+                .get(&d.key)
+                .filter(|f| now.duration_since(f.start) < super::logging::flash_duration(f.level));
+            let pulse = pulses
+                .get(&d.key)
+                .map(|t| now.duration_since(*t))
+                .filter(|e| *e < pulse_duration);
+            let status = if let Some(f) = flash {
+                f.msg.clone()
+            } else if pulse.is_some() {
+                "beacon received".to_string()
+            } else {
+                added_theme.idle_status.to_string()
+            };
+            let style = row_style(added_theme.border, added_selected == Some(i), flash, pulse, now);
+            Row::new([
+                Cell::from(d.name.clone()),
+                Cell::from(d.ip.clone().unwrap_or_else(|| "-".to_string())),
+                Cell::from(d.port.to_string()),
+                Cell::from(status),
+            ])
+            .style(style)
+        });
+        let added_table = Table::new(
+            added_rows,
+            [
+                Constraint::Percentage(35),
+                Constraint::Percentage(30),
+                Constraint::Length(5),
+                Constraint::Min(8),
+            ],
+        )
+        .header(Row::new(["Name", "IP", "Port", "Status"]).style(Style::new().bold()))
+        .block(
+            Block::bordered()
+                .title(format!("{} — {}", added_theme.title, added.len()))
+                .border_style(added_border_style),
+        );
+        frame.render_widget(added_table, added_area);
+
+        // Render Logs pane
+        let logs_title = if verbose {
+            "Logs — verbose"
+        } else {
+            "Logs"
+        };
+        let logs_border_style = if matches!(active_pane, ActivePane::Logs) {
+            Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        } else {
+            Style::new().fg(Color::Cyan)
+        };
+        let logs_block = Block::bordered()
+            .title(logs_title)
+            .border_style(logs_border_style);
+        
+        let visible = logs_area.height.saturating_sub(2) as usize;
+        let skip = log.len().saturating_sub(visible + log_scroll as usize).min(log.len());
+        let lines: Vec<Line> = log.iter().map(|msg| Line::styled(msg.clone(), log_style(msg))).collect();
+        let logs_paragraph = Paragraph::new(Text::from(lines))
+            .block(logs_block)
+            .scroll((skip as u16, 0));
+        frame.render_widget(logs_paragraph, logs_area);
+    }
+}
+
 /// Question block, always the bottom block of the screen. Returns the text
 /// cursor position when the user is typing a name. While the help panel is
 /// shown (`help`), the block describes the help panel instead.
@@ -347,33 +659,33 @@ pub fn render_question(
                 let (status_line, hint) = match ctx.active_pane {
                     ActivePane::MainMenu => {
                         (
-                            "MAIN MENU - Select pane".to_string(),
+                            "All panes visible".to_string(),
                             "[d] Detected   [a] Added   [l] Logs   [?] help   [q] quit".to_string(),
                         )
                     }
                     ActivePane::Detected => {
                         if ctx.pending > 0 {
                             (
-                                "Detected devices".to_string(),
-                                format!("[Esc] main menu   [Up/Dn] select   [Enter/a] add   [n] ignore   [q] quit"),
+                                "Detected devices (active)".to_string(),
+                                format!("[Esc] no pane   [Up/Dn] select   [Enter/a] add   [n] ignore   [?] help   [q] quit"),
                             )
                         } else {
                             (
-                                "Detected devices".to_string(),
-                                "[Esc] main menu   [q] quit".to_string(),
+                                "Detected devices (active)".to_string(),
+                                "[Esc] no pane   [?] help   [q] quit".to_string(),
                             )
                         }
                     }
                     ActivePane::Added => {
                         (
-                            "Added devices".to_string(),
-                            "[Esc] main menu   [Up/Dn] select   [i] install key   [r] remove key   [d] delete   [s] sync   [w] wipe   [c] setup-cd   [q] quit".to_string(),
+                            "Added devices (active)".to_string(),
+                            "[Esc] no pane   [Up/Dn] select   [i] install key   [r] remove key   [d] delete   [s] sync   [w] wipe   [c] setup-cd   [?] help   [q] quit".to_string(),
                         )
                     }
                     ActivePane::Logs => {
                         (
-                            if ctx.verbose { "Logs - verbose".to_string() } else { "Logs".to_string() },
-                            "[Esc] main menu   [Up/Dn] scroll line   [PgUp/PgDn] scroll page   [v] toggle verbose   [q] quit".to_string(),
+                            if ctx.verbose { "Logs (active) - verbose".to_string() } else { "Logs (active)".to_string() },
+                            "[Esc] no pane   [Up/Dn] scroll line   [PgUp/PgDn] scroll page   [v] toggle verbose   [?] help   [q] quit".to_string(),
                         )
                     }
                 };
