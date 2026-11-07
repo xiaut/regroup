@@ -24,6 +24,15 @@ pub enum UiEvent {
     },
 }
 
+/// Which pane is currently active for navigation and actions.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ActivePane {
+    /// Detected devices panel (left/upper)
+    Detected,
+    /// Added devices panel (right/lower)
+    Added,
+}
+
 /// How important a machine-specific message is; drives the row animation.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Level {
@@ -135,6 +144,12 @@ pub enum Action {
     RemoveKeyCancel,
     /// Toggle verbose mode on/off (key 'v').
     ToggleVerbose,
+    /// Install SSH key to the currently selected device in Added pane.
+    InstallKeyToSelected,
+    /// Remove SSH key from the currently selected device in Added pane.
+    RemoveKeyFromSelected,
+    /// Delete the currently selected device in Added pane.
+    DeleteSelected,
     /// Print the CLI help (plain mode; the full-screen ui shows its help
     /// panel instead, toggled by '?').
     Help,

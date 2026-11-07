@@ -111,9 +111,15 @@ pub fn run(ctx: &Context, udp_port: u16, beacons: &Receiver<BeaconDevice>) -> us
             .delete_selection
             .as_ref()
             .and_then(|name| added.iter().position(|d| &d.name == name));
+        let added_selected = state
+            .added_selected
+            .as_ref()
+            .and_then(|name| added.iter().position(|d| &d.name == name));
+        
         tui.set_devices(detected, added);
         tui.set_selected(selected);
         tui.set_delete_selected(delete_selected);
+        tui.set_added_selected(added_selected);
         tui.set_verbose(state.verbose);
         tui.draw();
     }
@@ -142,6 +148,8 @@ pub struct InteractiveState {
     /// Machine selected in the Detected panel (full-screen ui), by public
     /// key. None when the queue is empty.
     pending_selected: Option<SshPublicKey>,
+    /// Machine selected in the Added panel (full-screen ui), by name.
+    added_selected: Option<String>,
     /// Last known IP for known devices, to avoid redundant notifications.
     known_ip: HashMap<SshPublicKey, String>,
     /// Devices the user rejected, to avoid re-asking.
@@ -188,6 +196,7 @@ impl InteractiveState {
             pending_devices: VecDeque::new(),
             pending_keys: HashSet::new(),
             pending_selected: None,
+            added_selected: None,
             known_ip: HashMap::new(),
             rejected_keys: HashSet::new(),
             rename_state: None,
@@ -716,6 +725,9 @@ impl InteractiveState {
             // Plain mode only: the full-screen ui shows its help panel
             // instead, without going through an action.
             Action::Help => usage(),
+            Action::InstallKeyToSelected => self.install_key_to_selected(ctx, tui),
+            Action::RemoveKeyFromSelected => self.remove_key_from_selected(ctx, tui),
+            Action::DeleteSelected => self.delete_selected_device(ctx),
             Action::InstallKeyMode => {
                 if ctx.dry_run {
                     ui::log("  (dry run - key installation skipped)");
@@ -1094,6 +1106,161 @@ impl InteractiveState {
         }
         
         ui::log("No outgoing connections found for this user");
+    }
+    
+    /// Install SSH key to the currently selected device in Added pane
+    fn install_key_to_selected(&mut self, ctx: &Context, ui: &mut ui::Ui) {
+        let Some(target_name) = &self.added_selected else {
+            ui::log("No device selected in Added pane");
+            return;
+        };
+        
+        let Some(target_machine) = self.key_to_machine.values().find(|m| &m.name == target_name).cloned() else {
+            ui::log(&format!("Device '{}' not found", target_name));
+            return;
+        };
+        
+        let config_dir = Path::new(ctx.home).join(CONFIG_DIR).join(GIT_DIR);
+        let current_user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
+        let target_user = if target_machine.user.is_empty() {
+            current_user.clone()
+        } else {
+            target_machine.user.clone()
+        };
+        let target_port = target_machine.port;
+        
+        ui::log(&format!("Installing key to {}@{}", target_user, target_name));
+        
+        let result = ui.with_clean_terminal(|| {
+            crate::tui::key_actions::install_key_action(
+                ctx.home,
+                &config_dir,
+                ctx.local_name,
+                &current_user,
+                target_name,
+                &target_user,
+                target_port,
+            )
+        });
+        
+        match result {
+            Ok(crate::tui::key_actions::KeyActionResult::Success(msg)) => {
+                ui::log(&format!("Success: {}", msg));
+            }
+            Ok(crate::tui::key_actions::KeyActionResult::Error(msg)) => {
+                ui::log(&format!("Error: {}", msg));
+            }
+            Ok(crate::tui::key_actions::KeyActionResult::Cancelled) => {
+                ui::log("Installation cancelled");
+            }
+            Err(e) => {
+                ui::log(&format!("Error: {}", e));
+            }
+        }
+    }
+    
+    /// Remove SSH key from the currently selected device in Added pane
+    fn remove_key_from_selected(&mut self, ctx: &Context, ui: &mut ui::Ui) {
+        let Some(target_name) = &self.added_selected else {
+            ui::log("No device selected in Added pane");
+            return;
+        };
+        
+        let config_dir = Path::new(ctx.home).join(CONFIG_DIR).join(GIT_DIR);
+        let current_user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
+        
+        // Find first outgoing connection to the selected machine
+        let connections_dir = config_dir.join("devices").join(ctx.local_name).join("connections");
+        if !connections_dir.exists() {
+            ui::log("No outgoing connections found");
+            return;
+        }
+        
+        if let Ok(entries) = std::fs::read_dir(&connections_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("json") {
+                    let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                    // Check if this is an outgoing connection to the selected machine
+                    if filename.contains(&format!("{}@", target_name)) {
+                        let connection_id = filename.trim_end_matches(".json").to_string();
+                        let (from_user, to_user, to_machine) = crate::cli::key_management::parse_connection_id(&connection_id)
+                            .unwrap_or_default();
+                        
+                        // Look up the machine to get its port
+                        let target_port = self.key_to_machine.values()
+                            .find(|m| m.name == to_machine)
+                            .map(|m| m.port)
+                            .unwrap_or(22);
+                        
+                        ui::log(&format!("Removing connection: {}", connection_id));
+                        
+                        let result = ui.with_clean_terminal(|| {
+                            crate::tui::key_actions::remove_key_action(
+                                ctx.home,
+                                &config_dir,
+                                ctx.local_name,
+                                &current_user,
+                                &from_user,
+                                &to_machine,
+                                &to_user,
+                                target_port,
+                                &connection_id,
+                            )
+                        });
+                        
+                        match result {
+                            Ok(crate::tui::key_actions::KeyActionResult::Success(msg)) => {
+                                ui::log(&format!("Success: {}", msg));
+                                return;
+                            }
+                            Ok(crate::tui::key_actions::KeyActionResult::Error(msg)) => {
+                                ui::log(&format!("Error: {}", msg));
+                                return;
+                            }
+                            Ok(crate::tui::key_actions::KeyActionResult::Cancelled) => {
+                                ui::log("Removal cancelled");
+                                return;
+                            }
+                            Err(e) => {
+                                ui::log(&format!("Error: {}", e));
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        ui::log(&format!("No outgoing connections found to {}", target_name));
+    }
+    
+    /// Delete the currently selected device from Added pane
+    fn delete_selected_device(&mut self, ctx: &Context) {
+        let Some(name) = self.added_selected.clone() else {
+            ui::log("No device selected in Added pane");
+            return;
+        };
+        
+        let Some(machine) = self.key_to_machine.values().find(|m| m.name == name).cloned() else {
+            ui::log(&format!("Device '{}' not found", name));
+            return;
+        };
+        
+        let key = machine.ssh_public_key.clone();
+        let last_ip = self.known_ip.get(&key).cloned();
+        
+        if remove_device(ctx.home, ctx.ssh_config, &machine, last_ip.as_deref()) {
+            ui::log(&format!("  - Removed {} (device file, ~/.ssh/config block, git remote)", machine.name));
+        } else {
+            ui::log(&format!("  ! Could not fully remove {} — see warnings", machine.name));
+        }
+        
+        self.known_keys.remove(&key);
+        self.key_to_machine.remove(&key);
+        self.pinned_signing_keys.remove(&key);
+        self.known_ip.remove(&key);
+        self.added_selected = None;
     }
 }
 

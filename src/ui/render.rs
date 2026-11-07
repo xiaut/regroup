@@ -343,14 +343,11 @@ pub fn render_question(
                 if ctx.pending > 0 {
                     (
                         "Status",
-                        Color::Yellow,
-                        format!(
-                            "{} machine(s) detected — add them to your configuration",
-                            ctx.pending
-                        ),
+                        Color::Blue,
+                        "Devices available in Detected panel".to_string(),
                         hint_spans(
                             &format!(
-                                "[Up/Dn] select   [Enter/y] add   [n] ignore   [s] sync git   [d] delete   [w] wipe   [c] setup-cd   {verbose_hint}   [?] help   [q] quit"
+                                "[Tab] switch panes   [Up/Dn] select   [Enter] add   [n] ignore   [s] sync git   [d] delete   [w] wipe   [c] setup-cd   {verbose_hint}   [?] help   [q] quit"
                             ),
                             ctx.key_flash,
                         ),

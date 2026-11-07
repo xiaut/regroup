@@ -18,7 +18,7 @@ use super::render::{
     key_label, render_help, render_log, render_machines, render_question,
     KeyFlash, PanelTheme, QuestionCtx, RowFlash,
 };
-use super::types::{Action, Device, Question, UiEvent};
+use super::types::{ActivePane, Action, Device, Question, UiEvent};
 use crate::cli::usage_text;
 
 /// Full-screen ratatui interface.
@@ -37,8 +37,12 @@ pub struct TtyUi {
     pub added: Vec<Device>,
     /// Row of the Detected panel highlighted by the selection.
     pub selected: Option<usize>,
+    /// Row of the Added panel highlighted by the selection.
+    pub added_selected: Option<usize>,
     /// Row of the Added panel highlighted in delete mode.
     pub delete_selected: Option<usize>,
+    /// Which pane is currently active for navigation and actions.
+    pub active_pane: ActivePane,
     /// Whether the help panel is shown (key '?'): it replaces the machine
     /// panels and the activity pane; the question block stays interactive.
     pub show_help: bool,
@@ -76,28 +80,6 @@ impl Drop for TtyUi {
 }
 
 impl TtyUi {
-    /// Create a new TtyUi instance.
-    pub fn new(log_rx: Receiver<UiEvent>) -> Self {
-        Self {
-            terminal: ratatui::init(),
-            log_rx,
-            log: Vec::new(),
-            scroll: 0,
-            question: Question::Idle,
-            input: String::new(),
-            detected: Vec::new(),
-            added: Vec::new(),
-            selected: None,
-            delete_selected: None,
-            show_help: false,
-            help_scroll: 0,
-            verbose: false,
-            flashes: HashMap::new(),
-            pulses: HashMap::new(),
-            key_flash: None,
-        }
-    }
-
     /// Set the current question. The full-screen ui clears the typed input
     /// and resets the activity scroll whenever the question changes.
     pub fn set_question(&mut self, question: Question) {
@@ -186,8 +168,8 @@ impl TtyUi {
 
     /// Translate one key press into an action. Scroll keys are handled here
     /// and do not produce actions. Up/Down select a machine in the active
-    /// panel (Detected, or Added in delete mode) instead of scrolling.
-    /// Every press is recorded so the hint line can highlight the key.
+    /// panel. Tab switches between panes. Every press is recorded so the hint
+    /// line can highlight the key.
     pub fn key_action(&mut self, key: KeyEvent) -> Option<Action> {
         if let Some(label) = key_label(key.code) {
             self.key_flash = Some(KeyFlash {
@@ -203,124 +185,248 @@ impl TtyUi {
         let in_delete = matches!(self.question, Question::Delete { .. });
         let in_wipe = matches!(self.question, Question::Wipe { .. });
         let in_setup = matches!(self.question, Question::SetupCd { .. });
-        let typing = matches!(self.question, Question::Rename { .. });
-        // Machines can be selected (and added) only when the Detected
-        // panel has content and no other question has the keyboard.
-        let selectable = self.question == Question::Idle && !self.detected.is_empty();
-        match key.code {
-            crossterm::event::KeyCode::Enter if in_wipe => Some(Action::WipeConfirm),
-            crossterm::event::KeyCode::Esc if in_wipe => Some(Action::WipeCancel),
-            crossterm::event::KeyCode::Char('y') if in_wipe => Some(Action::WipeConfirm),
-            // In wipe mode, any other command key cancels.
-            crossterm::event::KeyCode::Char(c) if in_wipe => {
-                (c == 'w' || c == 'q').then_some(Action::WipeCancel)
-            }
-            crossterm::event::KeyCode::Enter if in_setup => Some(Action::SetupCdConfirm),
-            crossterm::event::KeyCode::Esc if in_setup => Some(Action::SetupCdCancel),
-            crossterm::event::KeyCode::Char('y') if in_setup => Some(Action::SetupCdConfirm),
-            // In setup-cd mode, any other command key cancels.
-            crossterm::event::KeyCode::Char(c) if in_setup => {
-                (c == 'c' || c == 'q').then_some(Action::SetupCdCancel)
-            }
-            crossterm::event::KeyCode::Up if in_delete => Some(Action::SelectPrev),
-            crossterm::event::KeyCode::Down if in_delete => Some(Action::SelectNext),
-            crossterm::event::KeyCode::Enter if in_delete => Some(Action::DeleteConfirm),
-            crossterm::event::KeyCode::Esc if in_delete => Some(Action::DeleteCancel),
-            // In delete mode, any other command key cancels.
-            crossterm::event::KeyCode::Char(c) if in_delete => {
-                (c == 'd' || c == 'q').then_some(Action::DeleteCancel)
-            }
-            // While the help panel is shown, the arrow keys scroll it
-            // (the machine panels and the activity pane are hidden).
-            crossterm::event::KeyCode::Up if self.show_help => {
-                self.help_scroll = self.help_scroll.saturating_add(1);
-                None
-            }
-            crossterm::event::KeyCode::Down if self.show_help => {
-                self.help_scroll = self.help_scroll.saturating_sub(1);
-                None
-            }
-            crossterm::event::KeyCode::PageUp if self.show_help => {
-                self.help_scroll = self.help_scroll.saturating_add(10);
-                None
-            }
-            crossterm::event::KeyCode::PageDown if self.show_help => {
-                self.help_scroll = self.help_scroll.saturating_sub(10);
-                None
-            }
-            crossterm::event::KeyCode::Up if selectable => Some(Action::SelectPrev),
-            crossterm::event::KeyCode::Down if selectable => Some(Action::SelectNext),
-            crossterm::event::KeyCode::Enter if selectable => Some(Action::Add),
-            crossterm::event::KeyCode::Up => {
-                self.scroll = self.scroll.saturating_add(1);
-                None
-            }
-            crossterm::event::KeyCode::Down => {
-                self.scroll = self.scroll.saturating_sub(1);
-                None
-            }
-            crossterm::event::KeyCode::PageUp => {
-                self.scroll = self.scroll.saturating_add(10);
-                None
-            }
-            crossterm::event::KeyCode::PageDown => {
-                self.scroll = self.scroll.saturating_sub(10);
-                None
-            }
-            crossterm::event::KeyCode::Char(c) => match (&self.question, c) {
-                (Question::Idle, 'q') => Some(Action::Quit),
-                (Question::Idle, 's') => Some(Action::Sync),
-                (Question::Idle, 'd') => Some(Action::DeleteMode),
-                (Question::Idle, 'w') => Some(Action::WipeMode),
-                (Question::Idle, 'c') => Some(Action::SetupCdMode),
-                (Question::Idle, 'k') => Some(Action::ConnectionsMode),
-                (Question::Idle, 'i') => Some(Action::InstallKeyMode),
-                (Question::Idle, 'r') => Some(Action::RemoveKeyMode),
-                (Question::Idle, 'v') => Some(Action::ToggleVerbose),
-                (Question::Idle, '?') => {
-                    self.show_help = !self.show_help;
-                    self.help_scroll = 0;
-                    None
+        let in_rename = matches!(self.question, Question::Rename { .. });
+        
+        // Check if we're in a modal question (not Idle)
+        let in_modal = in_delete || in_wipe || in_setup || in_rename || self.show_help;
+        
+        // Handle pane switching with Tab
+        if !in_modal && matches!(key.code, crossterm::event::KeyCode::Tab) {
+            self.active_pane = match self.active_pane {
+                ActivePane::Detected => ActivePane::Added,
+                ActivePane::Added => ActivePane::Detected,
+            };
+            // Reset selection when switching panes
+            self.selected = None;
+            self.added_selected = None;
+            return None;
+        }
+        
+        // Handle help panel scrolling
+        if self.show_help {
+            match key.code {
+                crossterm::event::KeyCode::Up => {
+                    self.help_scroll = self.help_scroll.saturating_add(1);
+                    return None;
                 }
-                (Question::Idle, 'y') if selectable => Some(Action::Add),
-                (Question::Idle, 'n') if selectable => Some(Action::Ignore),
-                (Question::AddDevice { .. }, 'y') => Some(Action::AddCurrent),
-                (Question::AddDevice { .. }, 'n') => Some(Action::SkipCurrent),
-                (Question::AddDevice { .. }, 's') => Some(Action::Sync),
-                (Question::AddDevice { .. }, 'd') => Some(Action::DeleteMode),
-                (Question::AddDevice { .. }, 'w') => Some(Action::WipeMode),
-                (Question::AddDevice { .. }, 'c') => Some(Action::SetupCdMode),
-                (Question::AddDevice { .. }, 'k') => Some(Action::ConnectionsMode),
-                (Question::AddDevice { .. }, 'i') => Some(Action::InstallKeyMode),
-                (Question::AddDevice { .. }, 'r') => Some(Action::RemoveKeyMode),
-                (Question::AddDevice { .. }, 'v') => Some(Action::ToggleVerbose),
-                (Question::AddDevice { .. }, 'q') => Some(Action::Quit),
-                (Question::TrustKey { .. }, 'y') => Some(Action::TrustKey),
-                (Question::TrustKey { .. }, 'n') => Some(Action::RejectKey),
-                (Question::Rename { .. }, c) => {
-                    self.input.push(c);
-                    None
+                crossterm::event::KeyCode::Down => {
+                    self.help_scroll = self.help_scroll.saturating_sub(1);
+                    return None;
                 }
-                _ => None,
-            },
-            crossterm::event::KeyCode::Esc => match &self.question {
-                Question::TrustKey { .. } => Some(Action::RejectKey),
-                Question::Rename { .. } => Some(Action::SkipRename),
-                _ if self.show_help => {
+                crossterm::event::KeyCode::PageUp => {
+                    self.help_scroll = self.help_scroll.saturating_add(10);
+                    return None;
+                }
+                crossterm::event::KeyCode::PageDown => {
+                    self.help_scroll = self.help_scroll.saturating_sub(10);
+                    return None;
+                }
+                crossterm::event::KeyCode::Esc | crossterm::event::KeyCode::Char('?') => {
                     self.show_help = false;
                     self.help_scroll = 0;
-                    None
+                    return None;
                 }
-                _ if selectable => Some(Action::Ignore),
-                _ => None,
-            },
-            crossterm::event::KeyCode::Backspace if typing => {
-                self.input.pop();
-                None
+                _ => {}
             }
-            crossterm::event::KeyCode::Enter if typing => {
-                let name = std::mem::take(&mut self.input);
-                Some(Action::Rename(name))
+        }
+        
+        // Handle modal questions (wipe, setup-cd, delete, trust key, rename)
+        if in_wipe {
+            match key.code {
+                crossterm::event::KeyCode::Enter | crossterm::event::KeyCode::Char('y') => {
+                    return Some(Action::WipeConfirm);
+                }
+                crossterm::event::KeyCode::Esc | crossterm::event::KeyCode::Char('n') => {
+                    return Some(Action::WipeCancel);
+                }
+                crossterm::event::KeyCode::Char(c) => {
+                    return (c == 'w' || c == 'q').then_some(Action::WipeCancel);
+                }
+                _ => return None,
+            }
+        }
+        
+        if in_setup {
+            match key.code {
+                crossterm::event::KeyCode::Enter | crossterm::event::KeyCode::Char('y') => {
+                    return Some(Action::SetupCdConfirm);
+                }
+                crossterm::event::KeyCode::Esc | crossterm::event::KeyCode::Char('n') => {
+                    return Some(Action::SetupCdCancel);
+                }
+                crossterm::event::KeyCode::Char(c) => {
+                    return (c == 'c' || c == 'q').then_some(Action::SetupCdCancel);
+                }
+                _ => return None,
+            }
+        }
+        
+        if in_delete {
+            match key.code {
+                crossterm::event::KeyCode::Up => return Some(Action::SelectPrev),
+                crossterm::event::KeyCode::Down => return Some(Action::SelectNext),
+                crossterm::event::KeyCode::Enter => return Some(Action::DeleteConfirm),
+                crossterm::event::KeyCode::Esc => return Some(Action::DeleteCancel),
+                crossterm::event::KeyCode::Char(c) => {
+                    return (c == 'd' || c == 'q').then_some(Action::DeleteCancel);
+                }
+                _ => return None,
+            }
+        }
+        
+        if in_rename {
+            match key.code {
+                crossterm::event::KeyCode::Char(c) => {
+                    self.input.push(c);
+                    return None;
+                }
+                crossterm::event::KeyCode::Backspace => {
+                    self.input.pop();
+                    return None;
+                }
+                crossterm::event::KeyCode::Enter => {
+                    let name = std::mem::take(&mut self.input);
+                    return Some(Action::Rename(name));
+                }
+                crossterm::event::KeyCode::Esc => return Some(Action::SkipRename),
+                _ => return None,
+            }
+        }
+        
+        // Handle TrustKey question
+        if matches!(self.question, Question::TrustKey { .. }) {
+            match key.code {
+                crossterm::event::KeyCode::Char('y') => return Some(Action::TrustKey),
+                crossterm::event::KeyCode::Char('n') | crossterm::event::KeyCode::Esc => {
+                    return Some(Action::RejectKey);
+                }
+                _ => return None,
+            }
+        }
+        
+        // Handle AddDevice question (plain mode)
+        if matches!(self.question, Question::AddDevice { .. }) {
+            match key.code {
+                crossterm::event::KeyCode::Char('y') => return Some(Action::AddCurrent),
+                crossterm::event::KeyCode::Char('n') => return Some(Action::SkipCurrent),
+                crossterm::event::KeyCode::Char('s') => return Some(Action::Sync),
+                crossterm::event::KeyCode::Char('d') => return Some(Action::DeleteMode),
+                crossterm::event::KeyCode::Char('w') => return Some(Action::WipeMode),
+                crossterm::event::KeyCode::Char('c') => return Some(Action::SetupCdMode),
+                crossterm::event::KeyCode::Char('k') => return Some(Action::ConnectionsMode),
+                crossterm::event::KeyCode::Char('v') => return Some(Action::ToggleVerbose),
+                crossterm::event::KeyCode::Char('q') => return Some(Action::Quit),
+                crossterm::event::KeyCode::Char('?') => {
+                    self.show_help = true;
+                    self.help_scroll = 0;
+                    return None;
+                }
+                _ => return None,
+            }
+        }
+        
+        // From this point on, we're in Idle mode with no modal questions
+        // Handle pane-specific actions
+        
+        // Detected pane: navigate detected devices and add them
+        if self.active_pane == ActivePane::Detected {
+            match key.code {
+                crossterm::event::KeyCode::Up => {
+                    if !self.detected.is_empty() {
+                        self.selected = Some(self.selected.map_or(0, |s| s.saturating_sub(1)));
+                        return None;
+                    }
+                    self.scroll = self.scroll.saturating_add(1);
+                    return None;
+                }
+                crossterm::event::KeyCode::Down => {
+                    if !self.detected.is_empty() {
+                        self.selected = Some(self.selected.map_or(0, |s| {
+                            (s + 1).min(self.detected.len() - 1)
+                        }));
+                        return None;
+                    }
+                    self.scroll = self.scroll.saturating_sub(1);
+                    return None;
+                }
+                crossterm::event::KeyCode::PageUp => {
+                    self.scroll = self.scroll.saturating_add(10);
+                    return None;
+                }
+                crossterm::event::KeyCode::PageDown => {
+                    self.scroll = self.scroll.saturating_sub(10);
+                    return None;
+                }
+                crossterm::event::KeyCode::Enter => {
+                    return self.selected.map(|_| Action::Add);
+                }
+                crossterm::event::KeyCode::Char('a') => {
+                    return self.selected.map(|_| Action::Add);
+                }
+                crossterm::event::KeyCode::Char('n') | crossterm::event::KeyCode::Char('x') => {
+                    return self.selected.map(|_| Action::Ignore);
+                }
+                _ => {}
+            }
+        }
+        
+        // Added pane: navigate added devices and perform actions on them
+        if self.active_pane == ActivePane::Added {
+            match key.code {
+                crossterm::event::KeyCode::Up => {
+                    if !self.added.is_empty() {
+                        self.added_selected = Some(self.added_selected.map_or(0, |s| s.saturating_sub(1)));
+                        return None;
+                    }
+                    self.scroll = self.scroll.saturating_add(1);
+                    return None;
+                }
+                crossterm::event::KeyCode::Down => {
+                    if !self.added.is_empty() {
+                        self.added_selected = Some(self.added_selected.map_or(0, |s| {
+                            (s + 1).min(self.added.len() - 1)
+                        }));
+                        return None;
+                    }
+                    self.scroll = self.scroll.saturating_sub(1);
+                    return None;
+                }
+                crossterm::event::KeyCode::PageUp => {
+                    self.scroll = self.scroll.saturating_add(10);
+                    return None;
+                }
+                crossterm::event::KeyCode::PageDown => {
+                    self.scroll = self.scroll.saturating_sub(10);
+                    return None;
+                }
+                crossterm::event::KeyCode::Enter => {
+                    return self.added_selected.map(|_| Action::InstallKeyToSelected);
+                }
+                crossterm::event::KeyCode::Char('i') => {
+                    return self.added_selected.map(|_| Action::InstallKeyToSelected);
+                }
+                crossterm::event::KeyCode::Char('d') => {
+                    return self.added_selected.map(|_| Action::DeleteSelected);
+                }
+                crossterm::event::KeyCode::Char('r') => {
+                    return self.added_selected.map(|_| Action::RemoveKeyFromSelected);
+                }
+                _ => {}
+            }
+        }
+        
+        // Global actions (available regardless of active pane)
+        match key.code {
+            crossterm::event::KeyCode::Char('q') => Some(Action::Quit),
+            crossterm::event::KeyCode::Char('s') => Some(Action::Sync),
+            crossterm::event::KeyCode::Char('w') => Some(Action::WipeMode),
+            crossterm::event::KeyCode::Char('c') => Some(Action::SetupCdMode),
+            crossterm::event::KeyCode::Char('k') => Some(Action::ConnectionsMode),
+            crossterm::event::KeyCode::Char('v') => Some(Action::ToggleVerbose),
+            crossterm::event::KeyCode::Char('?') => {
+                self.show_help = !self.show_help;
+                self.help_scroll = 0;
+                None
             }
             _ => None,
         }

@@ -10,7 +10,7 @@ use std::time::Duration;
 use super::logging::LOG_TX;
 use super::plain::PlainUi;
 use super::tty::TtyUi;
-use super::types::{Action, Device, Question};
+use super::types::{ActivePane, Action, Device, Question};
 
 /// The interface used by the interactive loop.
 pub enum Ui {
@@ -36,7 +36,9 @@ impl Ui {
                 detected: Vec::new(),
                 added: Vec::new(),
                 selected: None,
+                added_selected: None,
                 delete_selected: None,
+                active_pane: ActivePane::Detected,
                 show_help: false,
                 help_scroll: 0,
                 verbose: false,
@@ -77,6 +79,13 @@ impl Ui {
     pub fn set_delete_selected(&mut self, selected: Option<usize>) {
         if let Ui::Tty(ui) = self {
             ui.delete_selected = selected;
+        }
+    }
+
+    /// Highlight the selected row of the Added panel (normal mode).
+    pub fn set_added_selected(&mut self, selected: Option<usize>) {
+        if let Ui::Tty(ui) = self {
+            ui.added_selected = selected;
         }
     }
 
