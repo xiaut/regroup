@@ -36,6 +36,7 @@ pub fn install_key_action(
     current_user: &str,
     to_machine: &str,
     to_user: &str,
+    to_port: u16,
 ) -> Result<KeyActionResult, String> {
     let connection_id = build_connection_id(current_user, to_user, to_machine);
     
@@ -52,7 +53,7 @@ pub fn install_key_action(
     }
     
     // Check if machine is reachable
-    if !is_reachable(to_machine, 22, to_user) {
+    if !is_reachable(to_machine, to_port, to_user) {
         return Ok(KeyActionResult::Error(format!("Machine {} unreachable", to_machine)));
     }
     
@@ -76,8 +77,12 @@ pub fn install_key_action(
     
     // Build the command for the remote machine
     // Use separate arguments to avoid shell quoting issues
-    let status = Command::new("ssh")
-        .arg(format!("{}@{}", to_user, to_machine))
+    let mut ssh_cmd = Command::new("ssh");
+    ssh_cmd.arg(format!("{}@{}", to_user, to_machine));
+    if to_port != 22 {
+        ssh_cmd.arg("-p").arg(to_port.to_string());
+    }
+    let status = ssh_cmd
         .arg("regroup")
         .arg("receive-install-key")
         .arg("--source-user")
@@ -136,10 +141,11 @@ pub fn remove_key_action(
     _from_user: &str,
     to_machine: &str,
     to_user: &str,
+    to_port: u16,
     connection_id: &str,
 ) -> Result<KeyActionResult, String> {
     // Check if machine is reachable
-    if !is_reachable(to_machine, 22, to_user) {
+    if !is_reachable(to_machine, to_port, to_user) {
         return Ok(KeyActionResult::Error(format!("Machine {} unreachable", to_machine)));
     }
     
@@ -157,8 +163,12 @@ pub fn remove_key_action(
     
     // Build the command for the remote machine
     // Use separate arguments to avoid shell quoting issues
-    let status = Command::new("ssh")
-        .arg(format!("{}@{}", to_user, to_machine))
+    let mut ssh_cmd = Command::new("ssh");
+    ssh_cmd.arg(format!("{}@{}", to_user, to_machine));
+    if to_port != 22 {
+        ssh_cmd.arg("-p").arg(to_port.to_string());
+    }
+    let status = ssh_cmd
         .arg("regroup")
         .arg("receive-remove-key")
         .arg("--connection-id")

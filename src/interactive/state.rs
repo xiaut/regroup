@@ -985,12 +985,14 @@ impl InteractiveState {
             return;
         }
         
-        let target_machine = &machines[0].name;
-        let target_user = if machines[0].user.is_empty() {
+        let target_machine_obj = &machines[0];
+        let target_machine = &target_machine_obj.name;
+        let target_user = if target_machine_obj.user.is_empty() {
             current_user.clone()
         } else {
-            machines[0].user.clone()
+            target_machine_obj.user.clone()
         };
+        let target_port = target_machine_obj.port;
         
         ui::log(&format!("Installing key to {}@{}", target_user, target_machine));
         
@@ -1002,6 +1004,7 @@ impl InteractiveState {
                 &current_user,
                 target_machine,
                 &target_user,
+                target_port,
             )
         });
         
@@ -1045,6 +1048,12 @@ impl InteractiveState {
                         let (from_user, to_user, to_machine) = crate::cli::key_management::parse_connection_id(&connection_id)
                             .unwrap_or_default();
                         
+                        // Look up the machine to get its port
+                        let target_port = self.key_to_machine.values()
+                            .find(|m| m.name == to_machine)
+                            .map(|m| m.port)
+                            .unwrap_or(22);
+                        
                         ui::log(&format!("Removing connection: {}", connection_id));
                         
                         let result = ui.with_clean_terminal(|| {
@@ -1056,6 +1065,7 @@ impl InteractiveState {
                                 &from_user,
                                 &to_machine,
                                 &to_user,
+                                target_port,
                                 &connection_id,
                             )
                         });

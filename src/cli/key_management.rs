@@ -160,7 +160,8 @@ pub fn is_reachable(host: &str, port: u16, user: &str) -> bool {
         .arg(port.to_string())
         .arg("true")
         .status()
-        .is_ok()
+        .map(|status| status.success())
+        .unwrap_or(false)
 }
 
 /// Get the config directory path
