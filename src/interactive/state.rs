@@ -571,7 +571,9 @@ impl InteractiveState {
                 if ctx.dry_run {
                     ui::log("  (dry run - git sync skipped)");
                 } else {
-                    sync_git(ctx.home, self.verbose);
+                    tui.with_clean_terminal(|| {
+                        sync_git(ctx.home, self.verbose);
+                    });
                     // A pull may have brought new device configs: reload
                     self.reload(ctx);
                 }
