@@ -575,6 +575,10 @@ impl InteractiveState {
     fn handle_action(&mut self, ctx: &Context, tui: &mut ui::Ui, action: Action) -> bool {
         match action {
             Action::Quit => return true,
+            Action::BackToMainMenu => {
+                // Navigation action, no state change needed
+                return false;
+            }
             Action::Sync => {
                 // Dry run must not modify anything: skip git sync
                 if ctx.dry_run {

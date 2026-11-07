@@ -30,15 +30,15 @@ impl Ui {
                 terminal,
                 log_rx,
                 log: Vec::new(),
-                scroll: 0,
+                log_scroll: 0,
                 question: Question::Idle,
                 input: String::new(),
                 detected: Vec::new(),
                 added: Vec::new(),
-                selected: None,
+                detected_selected: None,
                 added_selected: None,
                 delete_selected: None,
-                active_pane: ActivePane::Detected,
+                active_pane: ActivePane::MainMenu,
                 show_help: false,
                 help_scroll: 0,
                 verbose: false,
@@ -71,7 +71,7 @@ impl Ui {
     /// Highlight the selected row of the Detected panel.
     pub fn set_selected(&mut self, selected: Option<usize>) {
         if let Ui::Tty(ui) = self {
-            ui.selected = selected;
+            ui.detected_selected = selected;
         }
     }
 
@@ -89,7 +89,7 @@ impl Ui {
         }
     }
 
-    /// Show the current verbose state: the activity pane title and the
+    /// Show the current verbose state: the logs pane title and the
     /// status hints mention it (ignored in plain mode, where toggling is
     /// reported through the log).
     pub fn set_verbose(&mut self, verbose: bool) {

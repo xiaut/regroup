@@ -62,6 +62,8 @@ pub struct QuestionCtx<'a> {
     pub help: bool,
     /// Verbose mode: mentioned in the hints.
     pub verbose: bool,
+    /// Which pane is currently active.
+    pub active_pane: super::types::ActivePane,
     /// Last key press, highlighted in the hint line while recent.
     pub key_flash: Option<&'a KeyFlash>,
 }
@@ -248,7 +250,7 @@ pub fn hint_spans(text: &str, key_flash: Option<&KeyFlash>) -> Line<'static> {
     Line::from(spans)
 }
 
-/// Activity pane: bottom-anchored log, shifted up by `scroll` lines. While
+/// Logs pane: bottom-anchored log, shifted up by `scroll` lines. While
 /// verbose mode is on, the pane's title says so.
 pub fn render_log(frame: &mut Frame, area: Rect, log: &[String], scroll: u16, verbose: bool) {
     let visible = area.height.saturating_sub(2) as usize;
@@ -261,9 +263,9 @@ pub fn render_log(frame: &mut Frame, area: Rect, log: &[String], scroll: u16, ve
         .map(|msg| Line::styled(msg.clone(), log_style(msg)))
         .collect();
     let title = if verbose {
-        "Activity — verbose"
+        "Logs — verbose"
     } else {
-        "Activity"
+        "Logs"
     };
     let paragraph = Paragraph::new(Text::from(lines))
         .block(Block::bordered().title(title))
@@ -340,31 +342,47 @@ pub fn render_question(
     } else {
         match question {
             super::types::Question::Idle => {
-                if ctx.pending > 0 {
-                    (
-                        "Status",
-                        Color::Blue,
-                        "Devices available in Detected panel".to_string(),
-                        hint_spans(
-                            &format!(
-                                "[Tab] switch panes   [Up/Dn] select   [Enter] add   [n] ignore   [s] sync git   [d] delete   [w] wipe   [c] setup-cd   {verbose_hint}   [?] help   [q] quit"
-                            ),
-                            ctx.key_flash,
-                        ),
-                    )
-                } else {
-                    (
-                        "Status",
-                        Color::Blue,
-                        "Waiting for devices…".to_string(),
-                        hint_spans(
-                            &format!(
-                                "[s] sync git   [d] delete   [w] wipe   [c] setup-cd   {verbose_hint}   [?] help   [PgUp/PgDn] scroll activity   [q] quit"
-                            ),
-                            ctx.key_flash,
-                        ),
-                    )
-                }
+                use super::types::ActivePane;
+                // Hint lines depend on the active pane
+                let (status_line, hint) = match ctx.active_pane {
+                    ActivePane::MainMenu => {
+                        (
+                            "MAIN MENU - Select pane".to_string(),
+                            "[d] Detected   [a] Added   [l] Logs   [?] help   [q] quit".to_string(),
+                        )
+                    }
+                    ActivePane::Detected => {
+                        if ctx.pending > 0 {
+                            (
+                                "Detected devices".to_string(),
+                                format!("[Esc] main menu   [Up/Dn] select   [Enter/a] add   [n] ignore   [q] quit"),
+                            )
+                        } else {
+                            (
+                                "Detected devices".to_string(),
+                                "[Esc] main menu   [q] quit".to_string(),
+                            )
+                        }
+                    }
+                    ActivePane::Added => {
+                        (
+                            "Added devices".to_string(),
+                            "[Esc] main menu   [Up/Dn] select   [i] install key   [r] remove key   [d] delete   [s] sync   [w] wipe   [c] setup-cd   [q] quit".to_string(),
+                        )
+                    }
+                    ActivePane::Logs => {
+                        (
+                            if ctx.verbose { "Logs - verbose".to_string() } else { "Logs".to_string() },
+                            "[Esc] main menu   [Up/Dn] scroll line   [PgUp/PgDn] scroll page   [v] toggle verbose   [q] quit".to_string(),
+                        )
+                    }
+                };
+                (
+                    "Status",
+                    Color::Blue,
+                    status_line,
+                    hint_spans(&hint, ctx.key_flash),
+                )
             }
             super::types::Question::AddDevice { name, ip } => (
                 "New device",

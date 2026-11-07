@@ -9,8 +9,11 @@ use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event, KeyEvent, KeyEventKind};
-use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::Color;
+use ratatui::layout::{Constraint, Layout};
+use ratatui::prelude::Stylize;
+use ratatui::style::{Color, Style};
+use ratatui::text::{Line, Text};
+use ratatui::widgets::{Block, Paragraph};
 use ratatui::DefaultTerminal;
 
 
@@ -26,8 +29,8 @@ pub struct TtyUi {
     pub terminal: DefaultTerminal,
     pub log_rx: Receiver<UiEvent>,
     pub log: Vec<String>,
-    /// Lines scrolled up from the bottom of the activity pane; 0 follows it.
-    pub scroll: u16,
+    /// Lines scrolled up from the bottom of the logs pane; 0 follows it.
+    pub log_scroll: u16,
     pub question: Question,
     /// Text typed for the rename question.
     pub input: String,
@@ -36,7 +39,7 @@ pub struct TtyUi {
     /// Machines in the configuration (Added panel).
     pub added: Vec<Device>,
     /// Row of the Detected panel highlighted by the selection.
-    pub selected: Option<usize>,
+    pub detected_selected: Option<usize>,
     /// Row of the Added panel highlighted by the selection.
     pub added_selected: Option<usize>,
     /// Row of the Added panel highlighted in delete mode.
@@ -44,11 +47,11 @@ pub struct TtyUi {
     /// Which pane is currently active for navigation and actions.
     pub active_pane: ActivePane,
     /// Whether the help panel is shown (key '?'): it replaces the machine
-    /// panels and the activity pane; the question block stays interactive.
+    /// panels and the logs pane; the question block stays interactive.
     pub show_help: bool,
     /// Lines scrolled up from the bottom of the help panel; 0 follows it.
     pub help_scroll: u16,
-    /// Verbose mode: reported in the activity pane title and the status
+    /// Verbose mode: reported in the logs pane title and the status
     /// hints. The interactive loop keeps it in sync with its own state.
     pub verbose: bool,
     /// Animated per-machine statuses, by SSH public key.
@@ -81,12 +84,12 @@ impl Drop for TtyUi {
 
 impl TtyUi {
     /// Set the current question. The full-screen ui clears the typed input
-    /// and resets the activity scroll whenever the question changes.
+    /// and resets the logs scroll whenever the question changes.
     pub fn set_question(&mut self, question: Question) {
         if question != self.question {
             self.question = question;
             self.input.clear();
-            self.scroll = 0;
+            self.log_scroll = 0;
             // An urgent question takes precedence over the help panel:
             // close it so the question gets the full screen back.
             if self.question != Question::Idle {
@@ -190,16 +193,12 @@ impl TtyUi {
         // Check if we're in a modal question (not Idle)
         let in_modal = in_delete || in_wipe || in_setup || in_rename || self.show_help;
         
-        // Handle pane switching with Tab
-        if !in_modal && matches!(key.code, crossterm::event::KeyCode::Tab) {
-            self.active_pane = match self.active_pane {
-                ActivePane::Detected => ActivePane::Added,
-                ActivePane::Added => ActivePane::Detected,
-            };
-            // Reset selection when switching panes
-            self.selected = None;
+        // Escape returns to Main Menu from any pane (unless in modal)
+        if !in_modal && matches!(key.code, crossterm::event::KeyCode::Esc) {
+            self.active_pane = ActivePane::MainMenu;
+            self.detected_selected = None;
             self.added_selected = None;
-            return None;
+            return Some(Action::BackToMainMenu);
         }
         
         // Handle help panel scrolling
@@ -326,51 +325,75 @@ impl TtyUi {
         }
         
         // From this point on, we're in Idle mode with no modal questions
-        // Handle pane-specific actions
+        
+        // Main Menu: navigation to panes
+        if self.active_pane == ActivePane::MainMenu {
+            match key.code {
+                crossterm::event::KeyCode::Char('d') => {
+                    self.active_pane = ActivePane::Detected;
+                    if self.detected.is_empty() {
+                        self.detected_selected = None;
+                    } else {
+                        self.detected_selected = Some(0);
+                    }
+                    return Some(Action::BackToMainMenu);
+                }
+                crossterm::event::KeyCode::Char('a') => {
+                    self.active_pane = ActivePane::Added;
+                    if self.added.is_empty() {
+                        self.added_selected = None;
+                    } else {
+                        self.added_selected = Some(0);
+                    }
+                    return Some(Action::BackToMainMenu);
+                }
+                crossterm::event::KeyCode::Char('l') => {
+                    self.active_pane = ActivePane::Logs;
+                    self.log_scroll = 0;
+                    return Some(Action::BackToMainMenu);
+                }
+                crossterm::event::KeyCode::Char('?') => {
+                    self.show_help = true;
+                    self.help_scroll = 0;
+                    return None;
+                }
+                crossterm::event::KeyCode::Char('q') => {
+                    return Some(Action::Quit);
+                }
+                _ => return None,
+            }
+        }
         
         // Detected pane: navigate detected devices and add them
         if self.active_pane == ActivePane::Detected {
             match key.code {
                 crossterm::event::KeyCode::Up => {
                     if !self.detected.is_empty() {
-                        self.selected = Some(self.selected.map_or(0, |s| s.saturating_sub(1)));
+                        self.detected_selected = Some(self.detected_selected.map_or(0, |s| s.saturating_sub(1)));
                         return None;
                     }
-                    self.scroll = self.scroll.saturating_add(1);
                     return None;
                 }
                 crossterm::event::KeyCode::Down => {
                     if !self.detected.is_empty() {
-                        self.selected = Some(self.selected.map_or(0, |s| {
+                        self.detected_selected = Some(self.detected_selected.map_or(0, |s| {
                             (s + 1).min(self.detected.len() - 1)
                         }));
                         return None;
                     }
-                    self.scroll = self.scroll.saturating_sub(1);
                     return None;
                 }
-                crossterm::event::KeyCode::PageUp => {
-                    self.scroll = self.scroll.saturating_add(10);
-                    return None;
+                crossterm::event::KeyCode::Enter | crossterm::event::KeyCode::Char('a') => {
+                    return self.detected_selected.map(|_| Action::Add);
                 }
-                crossterm::event::KeyCode::PageDown => {
-                    self.scroll = self.scroll.saturating_sub(10);
-                    return None;
-                }
-                crossterm::event::KeyCode::Enter => {
-                    return self.selected.map(|_| Action::Add);
-                }
-                crossterm::event::KeyCode::Char('a') => {
-                    return self.selected.map(|_| Action::Add);
-                }
-                crossterm::event::KeyCode::Char('n') | crossterm::event::KeyCode::Char('x') => {
-                    return self.selected.map(|_| Action::Ignore);
+                crossterm::event::KeyCode::Char('n') => {
+                    return self.detected_selected.map(|_| Action::Ignore);
                 }
                 _ => {}
             }
         }
         
-        // Added pane: navigate added devices and perform actions on them
+        // Added pane: navigate added devices and perform actions
         if self.active_pane == ActivePane::Added {
             match key.code {
                 crossterm::event::KeyCode::Up => {
@@ -378,7 +401,6 @@ impl TtyUi {
                         self.added_selected = Some(self.added_selected.map_or(0, |s| s.saturating_sub(1)));
                         return None;
                     }
-                    self.scroll = self.scroll.saturating_add(1);
                     return None;
                 }
                 crossterm::event::KeyCode::Down => {
@@ -388,46 +410,64 @@ impl TtyUi {
                         }));
                         return None;
                     }
-                    self.scroll = self.scroll.saturating_sub(1);
                     return None;
-                }
-                crossterm::event::KeyCode::PageUp => {
-                    self.scroll = self.scroll.saturating_add(10);
-                    return None;
-                }
-                crossterm::event::KeyCode::PageDown => {
-                    self.scroll = self.scroll.saturating_sub(10);
-                    return None;
-                }
-                crossterm::event::KeyCode::Enter => {
-                    return self.added_selected.map(|_| Action::InstallKeyToSelected);
                 }
                 crossterm::event::KeyCode::Char('i') => {
                     return self.added_selected.map(|_| Action::InstallKeyToSelected);
                 }
+                crossterm::event::KeyCode::Char('r') => {
+                    return self.added_selected.map(|_| Action::RemoveKeyFromSelected);
+                }
                 crossterm::event::KeyCode::Char('d') => {
                     return self.added_selected.map(|_| Action::DeleteSelected);
                 }
-                crossterm::event::KeyCode::Char('r') => {
-                    return self.added_selected.map(|_| Action::RemoveKeyFromSelected);
+                crossterm::event::KeyCode::Char('s') => {
+                    return Some(Action::Sync);
+                }
+                crossterm::event::KeyCode::Char('w') => {
+                    return Some(Action::WipeMode);
+                }
+                crossterm::event::KeyCode::Char('c') => {
+                    return Some(Action::SetupCdMode);
                 }
                 _ => {}
             }
         }
         
-        // Global actions (available regardless of active pane)
+        // Logs pane: scroll and toggle verbose
+        if self.active_pane == ActivePane::Logs {
+            match key.code {
+                crossterm::event::KeyCode::Up => {
+                    self.log_scroll = self.log_scroll.saturating_add(1);
+                    return None;
+                }
+                crossterm::event::KeyCode::Down => {
+                    self.log_scroll = self.log_scroll.saturating_sub(1);
+                    return None;
+                }
+                crossterm::event::KeyCode::PageUp => {
+                    self.log_scroll = self.log_scroll.saturating_add(10);
+                    return None;
+                }
+                crossterm::event::KeyCode::PageDown => {
+                    self.log_scroll = self.log_scroll.saturating_sub(10);
+                    return None;
+                }
+                crossterm::event::KeyCode::Char('v') => {
+                    return Some(Action::ToggleVerbose);
+                }
+                _ => {}
+            }
+        }
+        
+        // Global actions (available from any pane)
         match key.code {
-            crossterm::event::KeyCode::Char('q') => Some(Action::Quit),
-            crossterm::event::KeyCode::Char('s') => Some(Action::Sync),
-            crossterm::event::KeyCode::Char('w') => Some(Action::WipeMode),
-            crossterm::event::KeyCode::Char('c') => Some(Action::SetupCdMode),
-            crossterm::event::KeyCode::Char('k') => Some(Action::ConnectionsMode),
-            crossterm::event::KeyCode::Char('v') => Some(Action::ToggleVerbose),
             crossterm::event::KeyCode::Char('?') => {
                 self.show_help = !self.show_help;
                 self.help_scroll = 0;
                 None
             }
+            crossterm::event::KeyCode::Char('q') => Some(Action::Quit),
             _ => None,
         }
     }
@@ -440,16 +480,17 @@ impl TtyUi {
         let Self {
             terminal,
             log,
-            scroll,
+            log_scroll,
             question,
             input,
             detected,
             added,
-            selected,
-            delete_selected,
+            detected_selected,
+            added_selected,
             show_help,
             help_scroll,
             verbose,
+            active_pane,
             flashes,
             pulses,
             key_flash,
@@ -457,84 +498,65 @@ impl TtyUi {
         } = self;
         let mut cursor = None;
         terminal.draw(|frame| {
-            let [machines_area, log_area, question_area] = Layout::vertical([
-                Constraint::Percentage(35),
-                Constraint::Min(1),
+            let [main_area, question_area] = Layout::vertical([
+                Constraint::Fill(1),
                 Constraint::Length(4),
             ])
             .areas(frame.area());
             if *show_help {
-                // The help panel replaces the machine panels and the
-                // activity pane; the question block stays interactive.
-                let help_area = Rect {
-                    x: machines_area.x,
-                    y: machines_area.y,
-                    width: machines_area.width,
-                    height: machines_area.height + log_area.height,
-                };
-                let visible = help_area.height.saturating_sub(2) as usize;
+                // The help panel replaces the main area; the question block stays interactive.
+                let visible = main_area.height.saturating_sub(2) as usize;
                 let max_scroll = usage_text()
                     .lines()
                     .count()
                     .saturating_sub(visible) as u16;
                 let help_scroll_bounded = (*help_scroll).min(max_scroll);
-                render_help(frame, help_area, help_scroll_bounded);
+                render_help(frame, main_area, help_scroll_bounded);
             } else {
-                let narrow = frame.area().width < super::render::MIN_WIDTH_FOR_SIDE_BY_SIDE;
-                if narrow {
-                    // Narrow screen: stack machine panels vertically
-                    // (detected on top, added below)
-                    let [detected_area, added_area] = Layout::vertical([
-                        Constraint::Percentage(50),
-                        Constraint::Percentage(50),
-                    ])
-                    .areas(machines_area);
-                    render_machines(
-                        frame,
-                        detected_area,
-                        PanelTheme::new("Detected", Color::Yellow, "detected"),
-                        detected,
-                        *selected,
-                        flashes,
-                        pulses,
-                    );
-                    render_machines(
-                        frame,
-                        added_area,
-                        PanelTheme::new("Added", Color::Green, "known"),
-                        added,
-                        *delete_selected,
-                        flashes,
-                        pulses,
-                    );
-                } else {
-                    // Wide screen: side-by-side panels
-                    let [detected_area, _gap, added_area] = Layout::horizontal([
-                        Constraint::Fill(1),
-                        Constraint::Length(1),
-                        Constraint::Fill(1),
-                    ])
-                    .areas(machines_area);
-                    render_machines(
-                        frame,
-                        detected_area,
-                        PanelTheme::new("Detected", Color::Yellow, "detected"),
-                        detected,
-                        *selected,
-                        flashes,
-                        pulses,
-                    );
-                    render_machines(
-                        frame,
-                        added_area,
-                        PanelTheme::new("Added", Color::Green, "known"),
-                        added,
-                        *delete_selected,
-                        flashes,
-                        pulses,
-                    );
+                // Show only the active pane
+                match *active_pane {
+                    ActivePane::MainMenu => {
+                        // Main Menu - show a simple menu with instructions
+                        let menu_text = vec![
+                            Line::from("MAIN MENU".to_string()).style(Style::new().bold()),
+                            Line::from(""),
+                            Line::from("  d - Detected pane".to_string()),
+                            Line::from("  a - Added pane".to_string()),
+                            Line::from("  l - Logs pane".to_string()),
+                            Line::from(""),
+                            Line::from("  ? - Help".to_string()),
+                            Line::from("  q - Quit".to_string()),
+                        ];
+                        let paragraph = Paragraph::new(Text::from(menu_text))
+                            .block(Block::bordered().title("Regroup"));
+                        frame.render_widget(paragraph, main_area);
+                    }
+                    ActivePane::Detected => {
+                        render_machines(
+                            frame,
+                            main_area,
+                            PanelTheme::new("Detected", Color::Yellow, "detected"),
+                            detected,
+                            *detected_selected,
+                            flashes,
+                            pulses,
+                        );
+                    }
+                    ActivePane::Added => {
+                        render_machines(
+                            frame,
+                            main_area,
+                            PanelTheme::new("Added", Color::Green, "known"),
+                            added,
+                            *added_selected,
+                            flashes,
+                            pulses,
+                        );
+                    }
+                    ActivePane::Logs => {
+                        render_log(frame, main_area, log, *log_scroll, *verbose);
+                    }
                 }
-                render_log(frame, log_area, log, *scroll, *verbose);
             }
             cursor = render_question(
                 frame,
@@ -545,6 +567,7 @@ impl TtyUi {
                     pending: detected.len(),
                     help: *show_help,
                     verbose: *verbose,
+                    active_pane: *active_pane,
                     key_flash: key_flash.as_ref(),
                 },
             );

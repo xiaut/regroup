@@ -27,10 +27,14 @@ pub enum UiEvent {
 /// Which pane is currently active for navigation and actions.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ActivePane {
-    /// Detected devices panel (left/upper)
+    /// No pane active - in Main Menu
+    MainMenu,
+    /// Detected devices panel
     Detected,
-    /// Added devices panel (right/lower)
+    /// Added devices panel
     Added,
+    /// Logs pane (formerly Activity)
+    Logs,
 }
 
 /// How important a machine-specific message is; drives the row animation.
@@ -150,6 +154,8 @@ pub enum Action {
     RemoveKeyFromSelected,
     /// Delete the currently selected device in Added pane.
     DeleteSelected,
+    /// Return to Main Menu from any pane (key 'Esc').
+    BackToMainMenu,
     /// Print the CLI help (plain mode; the full-screen ui shows its help
     /// panel instead, toggled by '?').
     Help,
