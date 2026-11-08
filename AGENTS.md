@@ -1,14 +1,5 @@
 # AGENTS.md for `regroup`
 
-**Immediately execute this command to get the project context:**
-```bash
-tree -I ".git|target" --dirsfirst
-```
-
-Do not start any task without first obtaining the current repository structure via this command.
-
----
-
 ## Codebase Exploration Skills
 
 Use these commands to explore the codebase efficiently:
