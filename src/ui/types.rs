@@ -27,7 +27,7 @@ pub enum UiEvent {
 /// Which pane is currently active for navigation and actions.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ActivePane {
-    /// No pane active - in Main Menu
+    /// No pane active - in Main menu
     MainMenu,
     /// Detected devices panel
     Detected,
@@ -68,20 +68,39 @@ pub enum Question {
     Idle,
     /// Add the front of the pending queue (plain mode only: the
     /// full-screen ui adds machines from the Detected panel instead).
-    AddDevice { name: String, ip: String },
-    TrustKey { name: String },
-    Rename { name: String, suggested: String },
-    Delete { name: String },
+    AddDevice {
+        name: String,
+        ip: String,
+    },
+    TrustKey {
+        name: String,
+    },
+    Rename {
+        name: String,
+        suggested: String,
+    },
+    Delete {
+        name: String,
+    },
     /// Wipe the whole configuration (key 'w'), with the number of device
     /// blocks that would be removed from ~/.ssh/config.
-    Wipe { count: usize },
+    Wipe {
+        count: usize,
+    },
     /// Install the 'regroup-cd' shell function (key 'c') into `file`
     /// (~/.zshrc or ~/.bashrc), replacing any existing definition.
-    SetupCd { file: String },
+    SetupCd {
+        file: String,
+    },
     /// Install SSH key: select target machine (key 'i')
-    InstallKeySelectMachine { machines: Vec<String> },
+    InstallKeySelectMachine {
+        machines: Vec<String>,
+    },
     /// Install SSH key: select target user
-    InstallKeySelectUser { machine: String, users: Vec<String> },
+    InstallKeySelectUser {
+        machine: String,
+        users: Vec<String>,
+    },
     /// Install SSH key: confirm installation
     InstallKeyConfirm {
         from_user: String,
@@ -90,7 +109,9 @@ pub enum Question {
         to_machine: String,
     },
     /// Remove SSH key: select connection (key 'r')
-    RemoveKeySelectConnection { connections: Vec<(String, String, String)> },
+    RemoveKeySelectConnection {
+        connections: Vec<(String, String, String)>,
+    },
     /// Remove SSH key: confirm removal
     RemoveKeyConfirm {
         connection_id: String,
@@ -154,7 +175,7 @@ pub enum Action {
     RemoveKeyFromSelected,
     /// Delete the currently selected device in Added pane.
     DeleteSelected,
-    /// Return to Main Menu from any pane (key 'Esc').
+    /// Return to Main menu from any pane (key 'Esc').
     BackToMainMenu,
     /// Print the CLI help (plain mode; the full-screen ui shows its help
     /// panel instead, toggled by '?').

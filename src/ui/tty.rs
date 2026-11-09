@@ -189,7 +189,7 @@ impl TtyUi {
         // Check if we're in a modal question (not Idle)
         let in_modal = in_delete || in_wipe || in_setup || in_rename || self.show_help;
         
-        // Escape returns to Main Menu from any pane (unless in modal)
+        // Escape returns to Main menu from any pane (unless in modal)
         if !in_modal && matches!(key.code, crossterm::event::KeyCode::Esc) {
             self.active_pane = ActivePane::MainMenu;
             self.detected_selected = None;

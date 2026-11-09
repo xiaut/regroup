@@ -262,11 +262,7 @@ pub fn render_log(frame: &mut Frame, area: Rect, log: &[String], scroll: u16, ve
         .iter()
         .map(|msg| Line::styled(msg.clone(), log_style(msg)))
         .collect();
-    let title = if verbose {
-        "Logs — verbose"
-    } else {
-        "Logs"
-    };
+    let title = if verbose { "Logs — verbose" } else { "Logs" };
     let paragraph = Paragraph::new(Text::from(lines))
         .block(Block::bordered().title(title))
         .scroll((skip as u16, 0));
@@ -363,7 +359,7 @@ pub fn render_all_panes(
         } else {
             Style::new().fg(Color::Yellow)
         };
-        
+
         let detected_rows = detected.iter().enumerate().map(|(i, d)| {
             let now = Instant::now();
             let pulse_duration = Duration::from_millis(PULSE_MS);
@@ -381,7 +377,13 @@ pub fn render_all_panes(
             } else {
                 detected_theme.idle_status.to_string()
             };
-            let style = row_style(detected_theme.border, detected_selected == Some(i), flash, pulse, now);
+            let style = row_style(
+                detected_theme.border,
+                detected_selected == Some(i),
+                flash,
+                pulse,
+                now,
+            );
             Row::new([
                 Cell::from(d.name.clone()),
                 Cell::from(d.ip.clone().unwrap_or_else(|| "-".to_string())),
@@ -414,7 +416,7 @@ pub fn render_all_panes(
         } else {
             Style::new().fg(Color::Green)
         };
-        
+
         let added_rows = added.iter().enumerate().map(|(i, d)| {
             let now = Instant::now();
             let pulse_duration = Duration::from_millis(PULSE_MS);
@@ -432,7 +434,13 @@ pub fn render_all_panes(
             } else {
                 added_theme.idle_status.to_string()
             };
-            let style = row_style(added_theme.border, added_selected == Some(i), flash, pulse, now);
+            let style = row_style(
+                added_theme.border,
+                added_selected == Some(i),
+                flash,
+                pulse,
+                now,
+            );
             Row::new([
                 Cell::from(d.name.clone()),
                 Cell::from(d.ip.clone().unwrap_or_else(|| "-".to_string())),
@@ -459,11 +467,7 @@ pub fn render_all_panes(
         frame.render_widget(added_table, added_area);
 
         // Render Logs pane
-        let logs_title = if verbose {
-            "Logs — verbose"
-        } else {
-            "Logs"
-        };
+        let logs_title = if verbose { "Logs — verbose" } else { "Logs" };
         let logs_border_style = if matches!(active_pane, ActivePane::Logs) {
             Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD)
         } else {
@@ -472,10 +476,16 @@ pub fn render_all_panes(
         let logs_block = Block::bordered()
             .title(logs_title)
             .border_style(logs_border_style);
-        
+
         let visible = logs_area.height.saturating_sub(2) as usize;
-        let skip = log.len().saturating_sub(visible + log_scroll as usize).min(log.len());
-        let lines: Vec<Line> = log.iter().map(|msg| Line::styled(msg.clone(), log_style(msg))).collect();
+        let skip = log
+            .len()
+            .saturating_sub(visible + log_scroll as usize)
+            .min(log.len());
+        let lines: Vec<Line> = log
+            .iter()
+            .map(|msg| Line::styled(msg.clone(), log_style(msg)))
+            .collect();
         let logs_paragraph = Paragraph::new(Text::from(lines))
             .block(logs_block)
             .scroll((skip as u16, 0));
@@ -486,11 +496,9 @@ pub fn render_all_panes(
         let added_height = height / 3;
         let logs_height = height - detected_height - added_height;
 
-        let [detected_area, middle_area] = Layout::vertical([
-            Constraint::Length(detected_height),
-            Constraint::Fill(1),
-        ])
-        .areas(area);
+        let [detected_area, middle_area] =
+            Layout::vertical([Constraint::Length(detected_height), Constraint::Fill(1)])
+                .areas(area);
 
         let [added_area, logs_area] = Layout::vertical([
             Constraint::Length(added_height),
@@ -505,7 +513,7 @@ pub fn render_all_panes(
         } else {
             Style::new().fg(Color::Yellow)
         };
-        
+
         let detected_rows = detected.iter().enumerate().map(|(i, d)| {
             let now = Instant::now();
             let pulse_duration = Duration::from_millis(PULSE_MS);
@@ -523,7 +531,13 @@ pub fn render_all_panes(
             } else {
                 detected_theme.idle_status.to_string()
             };
-            let style = row_style(detected_theme.border, detected_selected == Some(i), flash, pulse, now);
+            let style = row_style(
+                detected_theme.border,
+                detected_selected == Some(i),
+                flash,
+                pulse,
+                now,
+            );
             Row::new([
                 Cell::from(d.name.clone()),
                 Cell::from(d.ip.clone().unwrap_or_else(|| "-".to_string())),
@@ -556,7 +570,7 @@ pub fn render_all_panes(
         } else {
             Style::new().fg(Color::Green)
         };
-        
+
         let added_rows = added.iter().enumerate().map(|(i, d)| {
             let now = Instant::now();
             let pulse_duration = Duration::from_millis(PULSE_MS);
@@ -574,7 +588,13 @@ pub fn render_all_panes(
             } else {
                 added_theme.idle_status.to_string()
             };
-            let style = row_style(added_theme.border, added_selected == Some(i), flash, pulse, now);
+            let style = row_style(
+                added_theme.border,
+                added_selected == Some(i),
+                flash,
+                pulse,
+                now,
+            );
             Row::new([
                 Cell::from(d.name.clone()),
                 Cell::from(d.ip.clone().unwrap_or_else(|| "-".to_string())),
@@ -601,11 +621,7 @@ pub fn render_all_panes(
         frame.render_widget(added_table, added_area);
 
         // Render Logs pane
-        let logs_title = if verbose {
-            "Logs — verbose"
-        } else {
-            "Logs"
-        };
+        let logs_title = if verbose { "Logs — verbose" } else { "Logs" };
         let logs_border_style = if matches!(active_pane, ActivePane::Logs) {
             Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD)
         } else {
@@ -614,10 +630,16 @@ pub fn render_all_panes(
         let logs_block = Block::bordered()
             .title(logs_title)
             .border_style(logs_border_style);
-        
+
         let visible = logs_area.height.saturating_sub(2) as usize;
-        let skip = log.len().saturating_sub(visible + log_scroll as usize).min(log.len());
-        let lines: Vec<Line> = log.iter().map(|msg| Line::styled(msg.clone(), log_style(msg))).collect();
+        let skip = log
+            .len()
+            .saturating_sub(visible + log_scroll as usize)
+            .min(log.len());
+        let lines: Vec<Line> = log
+            .iter()
+            .map(|msg| Line::styled(msg.clone(), log_style(msg)))
+            .collect();
         let logs_paragraph = Paragraph::new(Text::from(lines))
             .block(logs_block)
             .scroll((skip as u16, 0));
@@ -635,10 +657,7 @@ pub fn render_question(
     ctx: &QuestionCtx,
 ) -> Option<Position> {
     // The status hints mention the verbose key with its current state.
-    let verbose_hint = format!(
-        "[v] verbose: {}",
-        if ctx.verbose { "on" } else { "off" }
-    );
+    let verbose_hint = format!("[v] verbose: {}", if ctx.verbose { "on" } else { "off" });
     let (title, border, question_line, hint_line) = if ctx.help
         && matches!(question, super::types::Question::Idle)
     {
@@ -659,38 +678,38 @@ pub fn render_question(
                 let (status_line, hint) = match ctx.active_pane {
                     ActivePane::MainMenu => {
                         (
-                            "All panes visible".to_string(),
+                            "Main menu".to_string(),
                             "[d] Detected   [a] Added   [l] Logs   [?] help   [q] quit".to_string(),
                         )
                     }
                     ActivePane::Detected => {
                         if ctx.pending > 0 {
                             (
-                                "Detected devices (active)".to_string(),
+                                "Detected devices".to_string(),
                                 format!("[Esc] no pane   [Up/Dn] select   [Enter/a] add   [n] ignore   [?] help   [q] quit"),
                             )
                         } else {
                             (
-                                "Detected devices (active)".to_string(),
+                                "Detected devices".to_string(),
                                 "[Esc] no pane   [?] help   [q] quit".to_string(),
                             )
                         }
                     }
                     ActivePane::Added => {
                         (
-                            "Added devices (active)".to_string(),
+                            "Added devices".to_string(),
                             "[Esc] no pane   [Up/Dn] select   [i] install key   [r] remove key   [d] delete   [s] sync   [w] wipe   [c] setup-cd   [?] help   [q] quit".to_string(),
                         )
                     }
                     ActivePane::Logs => {
                         (
-                            if ctx.verbose { "Logs (active) - verbose".to_string() } else { "Logs (active)".to_string() },
+                            if ctx.verbose { "Logs - verbose".to_string() } else { "Logs".to_string() },
                             "[Esc] no pane   [Up/Dn] scroll line   [PgUp/PgDn] scroll page   [v] toggle verbose   [?] help   [q] quit".to_string(),
                         )
                     }
                 };
                 (
-                    "Status",
+                    "Actions",
                     Color::Blue,
                     status_line,
                     hint_spans(&hint, ctx.key_flash),
@@ -723,7 +742,10 @@ pub fn render_question(
                 "Delete device",
                 Color::Red,
                 format!("Delete {name} from configuration?"),
-                hint_spans("[Up/Dn] select   [Enter] confirm   [Esc] cancel", ctx.key_flash),
+                hint_spans(
+                    "[Up/Dn] select   [Enter] confirm   [Esc] cancel",
+                    ctx.key_flash,
+                ),
             ),
             super::types::Question::Wipe { count } => (
                 "Wipe configuration",
@@ -754,7 +776,10 @@ pub fn render_question(
                 "Install SSH key",
                 Color::Green,
                 format!("Select user on {machine} ({} available)", users.len()),
-                hint_spans("[Up/Dn] select   [Enter] confirm   [Esc] back", ctx.key_flash),
+                hint_spans(
+                    "[Up/Dn] select   [Enter] confirm   [Esc] back",
+                    ctx.key_flash,
+                ),
             ),
             super::types::Question::InstallKeyConfirm {
                 from_user,
@@ -773,7 +798,10 @@ pub fn render_question(
             super::types::Question::RemoveKeySelectConnection { connections } => (
                 "Remove SSH key",
                 Color::Red,
-                format!("Select connection to remove ({} available)", connections.len()),
+                format!(
+                    "Select connection to remove ({} available)",
+                    connections.len()
+                ),
                 hint_spans(
                     "[Up/Dn] select   [Enter] confirm   [Esc/q] cancel",
                     ctx.key_flash,
