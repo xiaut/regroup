@@ -12,7 +12,7 @@ use ratatui::layout::{Constraint, Layout, Position, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, BorderType, Cell, Paragraph, Row, Table};
+use ratatui::widgets::{Block, BorderType, Cell, Paragraph, Row, Table, Wrap};
 
 use super::logging::{BLINK_MS, KEY_FLASH_MS, PULSE_MS};
 use super::types::{ActivePane, Level};
@@ -866,11 +866,13 @@ pub fn render_question(
         hint_line,
     ]);
     frame.render_widget(
-        Paragraph::new(text).block(
-            Block::bordered()
-                .title(title)
-                .border_style(Style::new().fg(border)),
-        ),
+        Paragraph::new(text)
+            .wrap(Wrap { trim: false })
+            .block(
+                Block::bordered()
+                    .title(title)
+                    .border_style(Style::new().fg(border)),
+            ),
         area,
     );
     if matches!(question, super::types::Question::Rename { .. }) {
