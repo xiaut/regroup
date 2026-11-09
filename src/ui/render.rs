@@ -10,8 +10,9 @@ use crossterm::event::KeyCode;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Position, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
+
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Cell, Paragraph, Row, Table};
+use ratatui::widgets::{Block, BorderType, Cell, Paragraph, Row, Table};
 
 use super::logging::{BLINK_MS, KEY_FLASH_MS, PULSE_MS};
 use super::types::{ActivePane, Level};
@@ -359,6 +360,11 @@ pub fn render_all_panes(
         } else {
             Style::new().fg(Color::Yellow)
         };
+        let detected_border_type = if matches!(active_pane, ActivePane::Detected) {
+            BorderType::Double
+        } else {
+            BorderType::Plain
+        };
 
         let detected_rows = detected.iter().enumerate().map(|(i, d)| {
             let now = Instant::now();
@@ -405,6 +411,7 @@ pub fn render_all_panes(
         .block(
             Block::bordered()
                 .title(format!("{} — {}", detected_theme.title, detected.len()))
+                .border_type(detected_border_type)
                 .border_style(detected_border_style),
         );
         frame.render_widget(detected_table, detected_area);
@@ -415,6 +422,11 @@ pub fn render_all_panes(
             Style::new().fg(Color::Green).add_modifier(Modifier::BOLD)
         } else {
             Style::new().fg(Color::Green)
+        };
+        let added_border_type = if matches!(active_pane, ActivePane::Added) {
+            BorderType::Double
+        } else {
+            BorderType::Plain
         };
 
         let added_rows = added.iter().enumerate().map(|(i, d)| {
@@ -462,6 +474,7 @@ pub fn render_all_panes(
         .block(
             Block::bordered()
                 .title(format!("{} — {}", added_theme.title, added.len()))
+                .border_type(added_border_type)
                 .border_style(added_border_style),
         );
         frame.render_widget(added_table, added_area);
@@ -473,8 +486,14 @@ pub fn render_all_panes(
         } else {
             Style::new().fg(Color::Cyan)
         };
+        let logs_border_type = if matches!(active_pane, ActivePane::Logs) {
+            BorderType::Double
+        } else {
+            BorderType::Plain
+        };
         let logs_block = Block::bordered()
             .title(logs_title)
+            .border_type(logs_border_type)
             .border_style(logs_border_style);
 
         let visible = logs_area.height.saturating_sub(2) as usize;
@@ -513,6 +532,11 @@ pub fn render_all_panes(
         } else {
             Style::new().fg(Color::Yellow)
         };
+        let detected_border_type = if matches!(active_pane, ActivePane::Detected) {
+            BorderType::Double
+        } else {
+            BorderType::Plain
+        };
 
         let detected_rows = detected.iter().enumerate().map(|(i, d)| {
             let now = Instant::now();
@@ -559,6 +583,7 @@ pub fn render_all_panes(
         .block(
             Block::bordered()
                 .title(format!("{} — {}", detected_theme.title, detected.len()))
+                .border_type(detected_border_type)
                 .border_style(detected_border_style),
         );
         frame.render_widget(detected_table, detected_area);
@@ -569,6 +594,11 @@ pub fn render_all_panes(
             Style::new().fg(Color::Green).add_modifier(Modifier::BOLD)
         } else {
             Style::new().fg(Color::Green)
+        };
+        let added_border_type = if matches!(active_pane, ActivePane::Added) {
+            BorderType::Double
+        } else {
+            BorderType::Plain
         };
 
         let added_rows = added.iter().enumerate().map(|(i, d)| {
@@ -616,6 +646,7 @@ pub fn render_all_panes(
         .block(
             Block::bordered()
                 .title(format!("{} — {}", added_theme.title, added.len()))
+                .border_type(added_border_type)
                 .border_style(added_border_style),
         );
         frame.render_widget(added_table, added_area);
@@ -627,8 +658,14 @@ pub fn render_all_panes(
         } else {
             Style::new().fg(Color::Cyan)
         };
+        let logs_border_type = if matches!(active_pane, ActivePane::Logs) {
+            BorderType::Double
+        } else {
+            BorderType::Plain
+        };
         let logs_block = Block::bordered()
             .title(logs_title)
+            .border_type(logs_border_type)
             .border_style(logs_border_style);
 
         let visible = logs_area.height.saturating_sub(2) as usize;
