@@ -12,12 +12,89 @@ use crossterm::event::{self, Event, KeyEvent, KeyEventKind};
 use ratatui::layout::{Constraint, Layout};
 use ratatui::DefaultTerminal;
 
-
-use super::render::{
-    key_label, render_all_panes, render_help, render_question,
-    KeyFlash, QuestionCtx, RowFlash,
-};
+use super::render::{key_label, render_all_panes, render_help, render_question, KeyFlash, QuestionCtx, RowFlash};
 use super::types::{ActivePane, Action, Device, Question, UiEvent};
+
+/// Calculate the height needed for the question block based on its content.
+/// Returns the height in lines, including borders.
+fn calculate_question_height(question: &Question, ctx: &QuestionCtx, width: u16) -> u16 {
+    // The question block has: title border (1) + content + bottom border (1)
+    // Content has: question_line (1) + hint_line (1 or more when wrapped)
+    // Minimum height is 4: top border + question + hint + bottom border
+    
+    // Get the hint text for the current question
+    let hint_text = match question {
+        Question::Idle if ctx.help => {
+            "[Up/Dn/PgUp/PgDn] scroll help   [?] close   [s] sync git   [q] quit"
+        }
+        Question::Idle => {
+            match ctx.active_pane {
+                ActivePane::MainMenu => "[d] Detected   [a] Added   [l] Logs   [?] help   [q] quit",
+                ActivePane::Detected if ctx.pending > 0 => 
+                    "[Esc] no pane   [Up/Dn] select   [Enter/a] add   [n] ignore   [?] help   [q] quit",
+                ActivePane::Detected => 
+                    "[Esc] no pane   [?] help   [q] quit",
+                ActivePane::Added => 
+                    "[Esc] no pane   [Up/Dn] select   [i] install key   [r] remove key   [d] delete   [s] sync   [w] wipe   [c] setup-cd   [?] help   [q] quit",
+                ActivePane::Logs => 
+                    "[Esc] no pane   [Up/Dn] scroll line   [PgUp/PgDn] scroll page   [v] toggle verbose   [?] help   [q] quit",
+            }
+        }
+        Question::AddDevice { .. } => {
+            return 4; // These are shorter hints, 4 lines should be enough
+        }
+        Question::TrustKey { .. } => "[y] trust   [n] reject",
+        Question::Rename { .. } => return 4, // Special case with input line
+        Question::Delete { .. } => "[Up/Dn] select   [Enter] confirm   [Esc] cancel",
+        Question::Wipe { .. } => "[Enter/y] confirm   [Esc/w/q] cancel",
+        Question::SetupCd { .. } => "[Enter/y] confirm   [Esc/c/q] cancel",
+        Question::InstallKeySelectMachine { .. } => "[Up/Dn] select   [Enter] confirm   [Esc/q] cancel",
+        Question::InstallKeySelectUser { .. } => "[Up/Dn] select   [Enter] confirm   [Esc] back",
+        Question::InstallKeyConfirm { .. } => "[y] confirm   [n/Esc] cancel",
+        Question::RemoveKeySelectConnection { .. } => "[Up/Dn] select   [Enter] confirm   [Esc/q] cancel",
+        Question::RemoveKeyConfirm { .. } => "[y] confirm   [n/Esc] cancel",
+    };
+    
+    // Calculate how many lines the hint will take when wrapped to fit in (width - 2 for borders)
+    // Hints are formatted as "[key] description   [key] description" where each
+    // [key] description pair must stay together (non-breakable span).
+    // They are separated by "   " (three spaces).
+    if width <= 2 {
+        return 4; // Minimum height
+    }
+    let content_width = width.saturating_sub(2); // Subtract border characters
+    
+    // Split hint text into tokens separated by "   "
+    let tokens: Vec<&str> = hint_text.split("   ").collect();
+    
+    // Count how many lines the hint will take, treating each token as non-breakable
+    let mut lines = 1;
+    let mut current_line_width = 0;
+    
+    for token in tokens {
+        let token_len = token.len();
+        
+        if current_line_width == 0 {
+            // First token on this line
+            current_line_width = token_len;
+        } else if current_line_width + 3 + token_len <= content_width as usize {
+            // Token fits on current line (account for the "   " separator)
+            current_line_width += 3 + token_len;
+        } else {
+            // Token doesn't fit, move to next line
+            lines += 1;
+            current_line_width = token_len;
+        }
+    }
+    
+    // Total height: top border (1) + question line (1) + hint lines + bottom border (1)
+    // We always have at least 1 line for question and 1 for hint
+    let total_content_lines = 1 + lines; // question line + hint lines
+    let total_height = 2 + total_content_lines; // + 2 for borders
+    
+    total_height.min(10).max(3) // Clamp between 3 and 10 lines
+}
+
 use crate::cli::usage_text;
 
 /// Full-screen ratatui interface.
@@ -493,9 +570,20 @@ impl TtyUi {
         } = self;
         let mut cursor = None;
         terminal.draw(|frame| {
+            // Calculate the height needed for the question block
+            let question_ctx = QuestionCtx {
+                input,
+                pending: detected.len(),
+                help: *show_help,
+                verbose: *verbose,
+                active_pane: *active_pane,
+                key_flash: key_flash.as_ref(),
+            };
+            let question_height = calculate_question_height(question, &question_ctx, frame.area().width);
+            
             let [main_area, question_area] = Layout::vertical([
                 Constraint::Fill(1),
-                Constraint::Length(4),
+                Constraint::Length(question_height),
             ])
             .areas(frame.area());
             if *show_help {
@@ -525,19 +613,7 @@ impl TtyUi {
                     pulses,
                 );
             }
-            cursor = render_question(
-                frame,
-                question_area,
-                question,
-                &QuestionCtx {
-                    input,
-                    pending: detected.len(),
-                    help: *show_help,
-                    verbose: *verbose,
-                    active_pane: *active_pane,
-                    key_flash: key_flash.as_ref(),
-                },
-            );
+            cursor = render_question(frame, question_area, question, &question_ctx);
         })?;
         // Show the text cursor only while typing a name.
         if let Some(position) = cursor {
