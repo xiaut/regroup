@@ -15,82 +15,181 @@ use ratatui::DefaultTerminal;
 use super::render::{key_label, render_all_panes, render_help, render_question, KeyFlash, QuestionCtx, RowFlash};
 use super::types::{ActivePane, Action, Device, Question, UiEvent};
 
+/// Calculate how many lines a text will occupy when wrapped to fit a given width.
+/// For hint-like text with "   " (three spaces) separators, treats each token as non-breakable.
+/// For regular text, uses word-based wrapping.
+fn count_wrapped_lines(text: &str, width: usize, is_hint: bool) -> usize {
+    if width == 0 {
+        return text.lines().count();
+    }
+    
+    // For hint text, treat "   " separated tokens as non-breakable
+    // For regular text (question lines), use word-based wrapping
+    let tokens: Vec<&str> = if is_hint && text.contains("   ") {
+        text.split("   ").collect()
+    } else {
+        text.split_whitespace().collect()
+    };
+    
+    let separator_len = if is_hint && text.contains("   ") { 3 } else { 1 };
+    
+    let mut lines = 0;
+    let mut current_width = 0;
+    
+    for token in tokens {
+        let token_len = token.chars().count();
+        
+        if current_width == 0 {
+            // First token on this line
+            current_width = token_len;
+        } else if current_width + separator_len + token_len <= width {
+            // Token fits on current line
+            current_width += separator_len + token_len;
+        } else {
+            // Token doesn't fit, move to next line
+            lines += 1;
+            current_width = token_len;
+        }
+    }
+    
+    // Don't forget the last line
+    if current_width > 0 {
+        lines += 1;
+    }
+    
+    lines.max(1)
+}
+
 /// Calculate the height needed for the question block based on its content.
 /// Returns the height in lines, including borders.
 fn calculate_question_height(question: &Question, ctx: &QuestionCtx, width: u16) -> u16 {
     // The question block has: title border (1) + content + bottom border (1)
-    // Content has: question_line (1) + hint_line (1 or more when wrapped)
+    // Content has: question_line (1 or more when wrapped) + hint_line (1 or more when wrapped)
     // Minimum height is 4: top border + question + hint + bottom border
     
-    // Get the hint text for the current question
-    let hint_text = match question {
-        Question::Idle if ctx.help => {
-            "[Up/Dn/PgUp/PgDn] scroll help   [?] close   [s] sync git   [q] quit"
-        }
-        Question::Idle => {
-            match ctx.active_pane {
-                ActivePane::MainMenu => "[d] Detected   [a] Added   [l] Logs   [?] help   [q] quit",
-                ActivePane::Detected if ctx.pending > 0 => 
-                    "[Esc] no pane   [Up/Dn] select   [a] add   [n] ignore   [?] help   [q] quit",
-                ActivePane::Detected => 
-                    "[Esc] no pane   [?] help   [q] quit",
-                ActivePane::Added => 
-                    "[Esc] no pane   [Up/Dn] select   [i] install key   [r] remove key   [d] delete   [s] sync   [w] wipe   [c] setup-cd   [?] help   [q] quit",
-                ActivePane::Logs => 
-                    "[Esc] no pane   [Up/Dn] scroll line   [PgUp/PgDn] scroll page   [v] toggle verbose   [?] help   [q] quit",
-            }
-        }
-        Question::AddDevice { .. } => {
-            return 4; // These are shorter hints, 4 lines should be enough
-        }
-        Question::TrustKey { .. } => "[y] trust   [n] reject",
-        Question::Rename { .. } => return 4, // Special case with input line
-        Question::Delete { .. } => "[Up/Dn] select   [y] confirm   [n] cancel",
-        Question::Wipe { .. } => "[y] confirm   [n] cancel",
-        Question::SetupCd { .. } => "[y] confirm   [n] cancel",
-        Question::InstallKeySelectMachine { .. } => "[Up/Dn] select   [y] confirm   [n] cancel",
-        Question::InstallKeySelectUser { .. } => "[Up/Dn] select   [y] confirm   [Esc] back",
-        Question::InstallKeyConfirm { .. } => "[y] confirm   [n] cancel",
-        Question::RemoveKeySelectConnection { .. } => "[Up/Dn] select   [y] confirm   [n] cancel",
-        Question::RemoveKeyConfirm { .. } => "[y] confirm   [n] cancel",
-    };
-    
-    // Calculate how many lines the hint will take when wrapped to fit in (width - 2 for borders)
-    // Hints are formatted as "[key] description   [key] description" where each
-    // [key] description pair must stay together (non-breakable span).
-    // They are separated by "   " (three spaces).
     if width <= 2 {
         return 4; // Minimum height
     }
-    let content_width = width.saturating_sub(2); // Subtract border characters
     
-    // Split hint text into tokens separated by "   "
-    let tokens: Vec<&str> = hint_text.split("   ").collect();
+    let content_width = width.saturating_sub(2) as usize; // Subtract border characters
     
-    // Count how many lines the hint will take, treating each token as non-breakable
-    let mut lines = 1;
-    let mut current_line_width = 0;
-    
-    for token in tokens {
-        let token_len = token.len();
-        
-        if current_line_width == 0 {
-            // First token on this line
-            current_line_width = token_len;
-        } else if current_line_width + 3 + token_len <= content_width as usize {
-            // Token fits on current line (account for the "   " separator)
-            current_line_width += 3 + token_len;
-        } else {
-            // Token doesn't fit, move to next line
-            lines += 1;
-            current_line_width = token_len;
+    // Get both the question line text and hint text for the current question
+    // We need to use owned Strings because format! returns String
+    let (question_line_text, hint_text): (String, String) = match question {
+        Question::Idle if ctx.help => {
+            (
+                "Command-line and interactive help".to_string(),
+                "[Up/Dn/PgUp/PgDn] scroll help   [?] close   [s] sync git   [q] quit".to_string(),
+            )
         }
-    }
+        Question::Idle => {
+            let (status_line, hint) = match ctx.active_pane {
+                ActivePane::MainMenu => {
+                    ("Main menu".to_string(), "[d] Detected   [a] Added   [l] Logs   [?] help   [q] quit".to_string())
+                }
+                ActivePane::Detected if ctx.pending > 0 => {
+                    (
+                        "Detected devices".to_string(),
+                        "[Esc] no pane   [Up/Dn] select   [a] add   [n] ignore   [?] help   [q] quit".to_string(),
+                    )
+                }
+                ActivePane::Detected => {
+                    ("Detected devices".to_string(), "[Esc] no pane   [?] help   [q] quit".to_string())
+                }
+                ActivePane::Added => {
+                    (
+                        "Added devices".to_string(),
+                        "[Esc] no pane   [Up/Dn] select   [i] install key   [r] remove key   [d] delete   [s] sync   [w] wipe   [c] setup-cd   [?] help   [q] quit".to_string(),
+                    )
+                }
+                ActivePane::Logs => {
+                    (
+                        if ctx.verbose { "Logs - verbose" } else { "Logs" }.to_string(),
+                        "[Esc] no pane   [Up/Dn] scroll line   [PgUp/PgDn] scroll page   [v] toggle verbose   [?] help   [q] quit".to_string(),
+                    )
+                }
+            };
+            (status_line, hint)
+        }
+        Question::AddDevice { name, ip } => {
+            (
+                format!("Add {name} ({ip}) to config?"),
+                format!("[y] add   [n] skip   [s] sync git   [v] verbose: {}   [q] quit", 
+                    if ctx.verbose { "on" } else { "off" }),
+            )
+        }
+        Question::TrustKey { name } => {
+            (
+                format!("Trust the new signing key for {name}? (expected after a reinstall — otherwise it may be spoofing)"),
+                "[y] trust   [n] reject".to_string(),
+            )
+        }
+        Question::Rename { .. } => {
+            // For rename, we have an input line which is handled specially
+            // The question line and a separate input line ("> ...")
+            // We'll calculate based on the question line + input line
+            return 4; // Minimum height for rename with input
+        }
+        Question::Delete { name } => {
+            (
+                format!("Delete {name} from configuration?"),
+                "[Up/Dn] select   [y] confirm   [n] cancel".to_string(),
+            )
+        }
+        Question::Wipe { count } => {
+            (
+                format!("Delete the ENTIRE configuration ({count} device block(s) + ~/.regroup-config)?"),
+                "[y] confirm   [n] cancel".to_string(),
+            )
+        }
+        Question::SetupCd { file } => {
+            (
+                format!("Install the 'regroup-cd' shell function (cd to ~/.regroup-config) in ~/{file}?"),
+                "[y] confirm   [n] cancel".to_string(),
+            )
+        }
+        Question::InstallKeySelectMachine { machines } => {
+            (
+                format!("Select target machine ({} available)", machines.len()),
+                "[Up/Dn] select   [y] confirm   [n] cancel".to_string(),
+            )
+        }
+        Question::InstallKeySelectUser { machine, users } => {
+            (
+                format!("Select user on {machine} ({} available)", users.len()),
+                "[Up/Dn] select   [Enter] confirm   [Esc] back".to_string(),
+            )
+        }
+        Question::InstallKeyConfirm { from_user, from_machine, to_user, to_machine } => {
+            (
+                format!("Install key from {}@{} to {}@{}?", from_user, from_machine, to_user, to_machine),
+                "[y] confirm   [n] cancel".to_string(),
+            )
+        }
+        Question::RemoveKeySelectConnection { connections } => {
+            (
+                format!("Select connection to remove ({} available)", connections.len()),
+                "[Up/Dn] select   [y] confirm   [n] cancel".to_string(),
+            )
+        }
+        Question::RemoveKeyConfirm { connection_id, from_user, from_machine, to_user, to_machine } => {
+            (
+                format!("Remove key {} ({}@{}) from {}@{}?", connection_id, from_user, from_machine, to_user, to_machine),
+                "[y] confirm   [n] cancel".to_string(),
+            )
+        }
+    };
     
-    // Total height: top border (1) + question line (1) + hint lines + bottom border (1)
-    // We always have at least 1 line for question and 1 for hint
-    let total_content_lines = 1 + lines; // question line + hint lines
-    let total_height = 2 + total_content_lines; // + 2 for borders
+    // Calculate how many lines each part will take when wrapped
+    // Question line uses word-based wrapping, hint line uses token-based wrapping
+    let question_lines = count_wrapped_lines(&question_line_text, content_width, false);
+    let hint_lines = count_wrapped_lines(&hint_text, content_width, true);
+    
+    // Total content lines = question lines + hint lines
+    let total_content_lines = question_lines + hint_lines;
+    
+    // Total height: top border (1) + content lines + bottom border (1)
+    let total_height = 2 + total_content_lines as u16;
     
     total_height.min(10).max(3) // Clamp between 3 and 10 lines
 }
