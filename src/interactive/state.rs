@@ -641,9 +641,9 @@ impl InteractiveState {
                 } else {
                     tui.with_clean_terminal(|| {
                         sync_git(ctx.home, self.verbose);
+                        // A pull may have brought new device configs: reload
+                        self.reload(ctx);
                     });
-                    // A pull may have brought new device configs: reload
-                    self.reload(ctx);
                 }
             }
             Action::Add => self.accept_selected(ctx, tui),
@@ -664,7 +664,9 @@ impl InteractiveState {
                         device.ssh_public_key.clone(),
                         device.signing_public_key.clone(),
                     );
-                    trust_new_signing_key(ctx.home, &device);
+                    tui.with_clean_terminal(|| {
+                        trust_new_signing_key(ctx.home, &device);
+                    });
                     ui::log_device(
                         &device.ssh_public_key,
                         &device.name,
@@ -752,7 +754,7 @@ impl InteractiveState {
                 self.pending_selected = None;
                 self.added_selected = None;
             }
-            Action::DeleteConfirm => self.delete_selected(ctx),
+            Action::DeleteConfirm => self.delete_selected(ctx, tui),
             Action::DeleteCancel => self.delete_selection = None,
             Action::WipeMode => {
                 if ctx.dry_run {
@@ -765,7 +767,9 @@ impl InteractiveState {
             Action::WipeConfirm => {
                 self.wipe_pending = false;
                 let machines: Vec<Machine> = self.key_to_machine.values().cloned().collect();
-                wipe_config(ctx.home, ctx.ssh_config, &machines);
+                tui.with_clean_terminal(|| {
+                    wipe_config(ctx.home, ctx.ssh_config, &machines);
+                });
                 // Drop the wiped machines from memory, removing their
                 // known_hosts entries (last known IP) on the way — wipe
                 // itself leaves known_hosts alone (see its doc comment).
@@ -815,7 +819,7 @@ impl InteractiveState {
             Action::Help => usage(),
             Action::InstallKeyToSelected => self.install_key_to_selected(ctx, tui),
             Action::RemoveKeyFromSelected => self.remove_key_from_selected(ctx, tui),
-            Action::DeleteSelected => self.delete_selected_device(ctx),
+            Action::DeleteSelected => self.delete_selected_device(ctx, tui),
             Action::InstallKeyMode => {
                 if ctx.dry_run {
                     ui::log("  (dry run - key installation skipped)");
@@ -943,7 +947,7 @@ impl InteractiveState {
     /// the removal propagates on git sync), its ~/.ssh/config block, its
     /// known_hosts entries (last known IP) and its git remote, then drop
     /// it from the in-memory maps.
-    fn delete_selected(&mut self, ctx: &Context) {
+    fn delete_selected(&mut self, ctx: &Context, tui: &mut ui::Ui) {
         let Some(name) = self.delete_selection.take() else {
             return;
         };
@@ -957,7 +961,9 @@ impl InteractiveState {
         };
         let key = machine.ssh_public_key.clone();
         let last_ip = self.known_ip.get(&key).cloned();
-        if remove_device(ctx.home, ctx.ssh_config, &machine, last_ip.as_deref()) {
+        if tui.with_clean_terminal(|| {
+            remove_device(ctx.home, ctx.ssh_config, &machine, last_ip.as_deref())
+        }) {
             ui::log(&format!(
                 "  - Removed {} (device file, ~/.ssh/config block, git remote)",
                 machine.name
@@ -1351,7 +1357,7 @@ impl InteractiveState {
     }
     
     /// Delete the currently selected device from Added pane
-    fn delete_selected_device(&mut self, ctx: &Context) {
+    fn delete_selected_device(&mut self, ctx: &Context, tui: &mut ui::Ui) {
         let Some(name) = self.added_selected.clone() else {
             ui::log("No device selected in Added pane");
             return;
@@ -1365,7 +1371,9 @@ impl InteractiveState {
         let key = machine.ssh_public_key.clone();
         let last_ip = self.known_ip.get(&key).cloned();
         
-        if remove_device(ctx.home, ctx.ssh_config, &machine, last_ip.as_deref()) {
+        if tui.with_clean_terminal(|| {
+            remove_device(ctx.home, ctx.ssh_config, &machine, last_ip.as_deref())
+        }) {
             ui::log(&format!("  - Removed {} (device file, ~/.ssh/config block, git remote)", machine.name));
         } else {
             ui::log(&format!("  ! Could not fully remove {} — see warnings", machine.name));
