@@ -494,7 +494,7 @@ impl TtyUi {
                     if self.active_pane != ActivePane::Detected {
                         self.active_pane = ActivePane::Detected;
                         self.log_scroll = 0;
-                        return None;
+                        return Some(Action::SwitchToDetected);
                     }
                 }
                 crossterm::event::KeyCode::Char('a') => {
@@ -502,7 +502,7 @@ impl TtyUi {
                     if self.active_pane != ActivePane::Added {
                         self.active_pane = ActivePane::Added;
                         self.log_scroll = 0;
-                        return None;
+                        return Some(Action::SwitchToAdded);
                     }
                 }
                 crossterm::event::KeyCode::Char('l') => {
@@ -510,7 +510,7 @@ impl TtyUi {
                     if self.active_pane != ActivePane::Logs {
                         self.active_pane = ActivePane::Logs;
                         self.log_scroll = 0;
-                        return None;
+                        return Some(Action::SwitchToLogs);
                     }
                 }
                 _ => {}

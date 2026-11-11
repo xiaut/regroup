@@ -98,6 +98,13 @@ impl Ui {
         }
     }
 
+    /// Set the currently active pane.
+    pub fn set_active_pane(&mut self, pane: ActivePane) {
+        if let Ui::Tty(ui) = self {
+            ui.active_pane = pane;
+        }
+    }
+
     /// Wait up to `timeout` for a user decision.
     pub fn poll_action(&mut self, timeout: Duration) -> Option<Action> {
         match self {

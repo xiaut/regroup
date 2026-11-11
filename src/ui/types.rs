@@ -185,6 +185,12 @@ pub enum Action {
     DeleteSelected,
     /// Return to Main menu from any pane (key 'Esc').
     BackToMainMenu,
+    /// Switch to Detected pane (key 'd').
+    SwitchToDetected,
+    /// Switch to Added pane (key 'a').
+    SwitchToAdded,
+    /// Switch to Logs pane (key 'l').
+    SwitchToLogs,
     /// Print the CLI help (plain mode; the full-screen ui shows its help
     /// panel instead, toggled by '?').
     Help,

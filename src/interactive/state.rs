@@ -27,6 +27,7 @@ use crate::ssh::config::update_block;
 use crate::ssh::keys::{SigningPublicKeyB64, SshPublicKey};
 use crate::ssh::public_key;
 use crate::ui::{self, Action, Device, Level, Question};
+use crate::ui::types::ActivePane;
 
 /// How long each loop iteration waits for user input before checking the
 /// beacon channel again.
@@ -124,10 +125,21 @@ pub fn run(ctx: &Context, udp_port: u16, beacons: &Receiver<BeaconDevice>) -> us
             .as_ref()
             .and_then(|name| added.iter().position(|d| &d.name == name));
         
+        // When a pane is not active, its selection must be empty
+        let selected = match state.active_pane {
+            ActivePane::Detected => selected,
+            _ => None,
+        };
+        let added_selected = match state.active_pane {
+            ActivePane::Added => added_selected,
+            _ => None,
+        };
+        
         tui.set_devices(detected, added);
         tui.set_selected(selected);
         tui.set_delete_selected(delete_selected);
         tui.set_added_selected(added_selected);
+        tui.set_active_pane(state.active_pane);
         tui.set_verbose(state.verbose);
         tui.draw();
     }
@@ -153,6 +165,8 @@ pub struct InteractiveState {
     pending_devices: VecDeque<BeaconDevice>,
     /// Pending devices by public key, to prevent duplicates.
     pending_keys: HashSet<SshPublicKey>,
+    /// Which pane is currently active in the UI.
+    active_pane: ActivePane,
     /// Machine selected in the Detected panel (full-screen ui), by public
     /// key. None when the queue is empty.
     pending_selected: Option<SshPublicKey>,
@@ -203,6 +217,7 @@ impl InteractiveState {
             rotation_pending: None,
             pending_devices: VecDeque::new(),
             pending_keys: HashSet::new(),
+            active_pane: ActivePane::MainMenu,
             pending_selected: None,
             added_selected: None,
             known_ip: HashMap::new(),
@@ -584,7 +599,9 @@ impl InteractiveState {
         match action {
             Action::Quit => return true,
             Action::BackToMainMenu => {
-                // Navigation action, no state change needed
+                self.active_pane = ActivePane::MainMenu;
+                self.pending_selected = None;
+                self.added_selected = None;
                 return false;
             }
             Action::Sync => {
@@ -687,6 +704,23 @@ impl InteractiveState {
                 } else {
                     self.move_pending_selection(true);
                 }
+            }
+            Action::SwitchToDetected => {
+                self.active_pane = ActivePane::Detected;
+                self.added_selected = None;
+                // Initialize pending_selected if there are pending devices
+                if self.pending_selected.is_none() && !self.pending_devices.is_empty() {
+                    self.pending_selected = Some(self.pending_devices[0].ssh_public_key.clone());
+                }
+            }
+            Action::SwitchToAdded => {
+                self.active_pane = ActivePane::Added;
+                self.pending_selected = None;
+            }
+            Action::SwitchToLogs => {
+                self.active_pane = ActivePane::Logs;
+                self.pending_selected = None;
+                self.added_selected = None;
             }
             Action::DeleteConfirm => self.delete_selected(ctx),
             Action::DeleteCancel => self.delete_selection = None,
