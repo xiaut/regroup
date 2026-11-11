@@ -476,6 +476,9 @@ pub fn sync_git(home: &str, verbose: bool) {
     }
 
     crate::ui::log("Syncing git...");
+    crate::ui::log(
+        "Note: If any remote repository requires authentication, you may be prompted for credentials."
+    );
 
     // Configure remotes for all known machines before syncing: pull/push can
     // only reach devices that already have a remote.
