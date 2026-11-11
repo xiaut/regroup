@@ -79,7 +79,7 @@ fn calculate_question_height(question: &Question, ctx: &QuestionCtx, width: u16)
         Question::Idle if ctx.help => {
             (
                 "Command-line and interactive help".to_string(),
-                "[Up/Dn/PgUp/PgDn] scroll help   [?] close   [s] sync git   [q] quit".to_string(),
+                "[Up/Dn/PgUp/PgDn] scroll help   [q/?] close   [s] sync git".to_string(),
             )
         }
         Question::Idle => {
@@ -90,22 +90,22 @@ fn calculate_question_height(question: &Question, ctx: &QuestionCtx, width: u16)
                 ActivePane::Detected if ctx.pending > 0 => {
                     (
                         "Detected devices".to_string(),
-                        "[Esc] no pane   [Up/Dn] select   [a] add   [n] ignore   [?] help   [q] quit".to_string(),
+                        "[q/Esc] no pane   [Up/Dn] select   [a] add   [n] ignore   [?] help".to_string(),
                     )
                 }
                 ActivePane::Detected => {
-                    ("Detected devices".to_string(), "[Esc] no pane   [?] help   [q] quit".to_string())
+                    ("Detected devices".to_string(), "[q/Esc] no pane   [?] help".to_string())
                 }
                 ActivePane::Added => {
                     (
                         "Added devices".to_string(),
-                        "[Esc] no pane   [Up/Dn] select   [i] install key   [r] remove key   [d] delete   [s] sync   [w] wipe   [c] setup-cd   [?] help   [q] quit".to_string(),
+                        "[q/Esc] no pane   [Up/Dn] select   [i] install key   [r] remove key   [d] delete   [s] sync   [w] wipe   [c] setup-cd   [?] help".to_string(),
                     )
                 }
                 ActivePane::Logs => {
                     (
                         if ctx.verbose { "Logs - verbose" } else { "Logs" }.to_string(),
-                        "[Esc] no pane   [Up/Dn] scroll line   [PgUp/PgDn] scroll page   [v] toggle verbose   [?] help   [q] quit".to_string(),
+                        "[q/Esc] no pane   [Up/Dn] scroll line   [PgUp/PgDn] scroll page   [v] toggle verbose   [?] help".to_string(),
                     )
                 }
             };
@@ -365,6 +365,32 @@ impl TtyUi {
         // Check if we're in a modal question (not Idle)
         let in_modal = in_delete || in_wipe || in_setup || in_rename || self.show_help;
         
+        // 'q' key: close help panel, or return to MainMenu/quit from pane
+        if matches!(key.code, crossterm::event::KeyCode::Char('q')) {
+            if self.show_help {
+                self.show_help = false;
+                self.help_scroll = 0;
+                return None;
+            }
+            // Only handle 'q' for pane navigation if in Idle mode (no question active)
+            if matches!(self.question, Question::Idle) {
+                if self.active_pane != ActivePane::MainMenu {
+                    self.active_pane = ActivePane::MainMenu;
+                    self.detected_selected = None;
+                    self.added_selected = None;
+                    return Some(Action::BackToMainMenu);
+                } else {
+                    return Some(Action::Quit);
+                }
+            }
+            // For non-Idle questions, quit (preserving original behavior)
+            // except AddDevice which has its own handler
+            if !matches!(self.question, Question::AddDevice { .. }) {
+                return Some(Action::Quit);
+            }
+            // For AddDevice, fall through to its specific handler
+        }
+        
         // Escape returns to Main menu from any pane (unless in modal)
         if !in_modal && matches!(key.code, crossterm::event::KeyCode::Esc) {
             self.active_pane = ActivePane::MainMenu;
@@ -614,7 +640,6 @@ impl TtyUi {
                 self.help_scroll = 0;
                 None
             }
-            crossterm::event::KeyCode::Char('q') => Some(Action::Quit),
             _ => None,
         }
     }
