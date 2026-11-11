@@ -195,7 +195,7 @@ fn main() {
         let machine = conf
             .machines
             .iter()
-            .find(|m| &m.name == name)
+            .find(|m| m.name.as_str() == name)
             .cloned()
             .unwrap_or_else(|| die(&format!("no device named \"{name}\" in the configuration")));
         if !assume_yes
@@ -272,7 +272,7 @@ fn main() {
 
     // SSH port and user this machine's server listens on: taken from our own device config
     // (set by the user if the server does not use the default 22), 22 otherwise.
-    let local_machine = conf.machines.iter().find(|m| m.name == local_name);
+    let local_machine = conf.machines.iter().find(|m| m.name.as_str() == local_name);
     let local_ssh_port = local_machine.map(|m| m.port).unwrap_or(22);
     let local_user = local_machine.map(|m| m.user.clone()).unwrap_or_else(|| {
         std::env::var("USER").unwrap_or_else(|_| std::env::var("LOGNAME").unwrap_or_default())

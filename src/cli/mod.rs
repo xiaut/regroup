@@ -296,9 +296,9 @@ fn find_name_conflict(
     let mut conflicts = Vec::new();
     
     // Check if name is used by a known machine in regroup config
-    if let Some(machine) = known_machines.iter().find(|m| m.name == name) {
+    if let Some(machine) = known_machines.iter().find(|m| m.name.as_str() == name) {
         conflicts.push(NameConflict::RegroupMachine {
-            machine_name: machine.name.clone(),
+            machine_name: machine.name.as_str().to_string(),
         });
     }
     
@@ -482,7 +482,8 @@ pub fn add_device_to_config(
     // a placeholder from the beacon data. This will be replaced when the device
     // pushes its own device.json and we pull it.
     let machine = Machine {
-        name: name.to_string(),
+        name: crate::config::DeviceName::from_str(name)
+            .expect("name must be non-empty as checked by device_name_taken"),
         ssh_public_key: device.ssh_public_key.clone(),
         signing_public_key: device.signing_public_key.clone(),
         user: device.user.clone(),
@@ -566,7 +567,7 @@ pub fn trust_new_signing_key(home: &str, device: &BeaconDevice) {
     let device_path = crate::config::device_file_path(&config_dir, &machine.name);
 
     // Try to pull from the device's remote first
-    match git::sync::git_pull_remote(&config_dir, &machine.name) {
+    match git::sync::git_pull_remote(&config_dir, machine.name.as_str()) {
         Ok(_) => {
             if device_path.exists() {
                 match crate::config::device::load_device_file(&device_path) {
@@ -684,11 +685,11 @@ pub fn remove_local_traces(
     machine: &Machine,
     last_ip: Option<&str>,
 ) {
-    match remove_block(ssh_config, &machine.name) {
+    match remove_block(ssh_config, machine.name.as_str()) {
         Ok(true) => {
             crate::ui::log(&format!(
                 "  - Removed {} block from ~/.ssh/config",
-                machine.name
+                machine.name.as_str()
             ));
         }
         Ok(false) => {}
@@ -705,12 +706,12 @@ pub fn remove_local_traces(
     // from another machine): only a failing removal is reported.
     if git::remote::git_list_remotes(&config_dir)
         .iter()
-        .any(|r| r == &machine.name)
-        && let Err(e) = git::remote::git_remove_remote(&config_dir, &machine.name)
+        .any(|r| r == machine.name.as_str())
+        && let Err(e) = git::remote::git_remove_remote(&config_dir, machine.name.as_str())
     {
         warn(&format!(
             "could not remove git remote {}: {}",
-            machine.name, e
+            machine.name.as_str(), e
         ));
     }
 }
@@ -762,10 +763,10 @@ pub fn remove_device(
 /// IP is still known.
 pub fn wipe(home: &str, ssh_config: &Path, machines: &[Machine]) {
     for machine in machines {
-        if let Err(e) = remove_block(ssh_config, &machine.name) {
+        if let Err(e) = remove_block(ssh_config, machine.name.as_str()) {
             warn(&format!(
                 "could not remove {} block from ~/.ssh/config: {}",
-                machine.name, e
+                machine.name.as_str(), e
             ));
         }
     }
@@ -797,7 +798,7 @@ fn configure_remotes(config_dir: &Path) -> Vec<String> {
         .machines
         .into_iter()
         .filter(|m| {
-            m.name != local_name && local_ssh_public_key.as_ref() != Some(&m.ssh_public_key)
+            m.name.as_str() != local_name && local_ssh_public_key.as_ref() != Some(&m.ssh_public_key)
         })
         .collect();
     git::sync_git_remotes(config_dir, &machines, &local_name)
@@ -825,7 +826,7 @@ mod tests {
         fs::create_dir_all(&dir).expect("create temp dir");
 
         let machine = Machine {
-            name: "known".to_string(),
+            name: crate::config::DeviceName::new("known".to_string()).unwrap(),
             ssh_public_key: crate::ssh::keys::SshPublicKey::from("ssh-rsa AAAA"),
             signing_public_key: crate::ssh::keys::SigningPublicKeyB64::from("MCowBQYDK2VwAyEA=="),
             user: String::new(),

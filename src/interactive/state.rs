@@ -390,7 +390,7 @@ impl InteractiveState {
             .values()
             .map(|m| Device {
                 key: m.ssh_public_key.as_str().to_string(),
-                name: m.name.clone(),
+                name: m.name.as_str().to_string(),
                 ip: self.known_ip.get(&m.ssh_public_key).cloned(),
                 port: m.port,
             })
@@ -481,12 +481,12 @@ impl InteractiveState {
                         public_key::HostKeyVerification::HostUnreachable => {
                             ui::log_device(
                                 &machine.ssh_public_key,
-                                &machine.name,
+                                machine.name.as_str(),
                                 Level::Warning,
                                 "unreachable — keeping last verified IP",
                                 Some(&format!(
                                     "[~] Known device: {} at {} — unreachable, keeping last verified IP",
-                                    machine.name, device.ip
+                                    machine.name.as_str(), device.ip
                                 )),
                             );
                             false
@@ -495,12 +495,12 @@ impl InteractiveState {
                             // Verification passed; only the known_hosts write failed
                             ui::log_device(
                                 &machine.ssh_public_key,
-                                &machine.name,
+                                machine.name.as_str(),
                                 Level::Warning,
                                 "verified, but known_hosts write failed",
                                 Some(&format!(
                                     "WARNING: could not write {} to ~/.ssh/known_hosts",
-                                    machine.name
+                                    machine.name.as_str()
                                 )),
                             );
                             true
@@ -511,12 +511,12 @@ impl InteractiveState {
                         } => {
                             ui::log_device(
                                 &machine.ssh_public_key,
-                                &machine.name,
+                                machine.name.as_str(),
                                 Level::Security,
                                 "host key MISMATCH — possible spoofing/MITM",
                                 Some(&format!(
                                     "[!] SECURITY: {} announces IP {} but serves a DIFFERENT host key — possible spoofing/MITM. SSH config NOT updated.\n    expected fingerprint: {}\n    actual fingerprint:   {}",
-                                    machine.name, device.ip, expected, actual
+                                    machine.name.as_str(), device.ip, expected, actual
                                 )),
                             );
                             false
@@ -525,12 +525,12 @@ impl InteractiveState {
                     None => {
                         ui::log_device(
                             &machine.ssh_public_key,
-                            &machine.name,
+                            machine.name.as_str(),
                             Level::Warning,
                             "cannot compute fingerprint — keeping last verified IP",
                             Some(&format!(
                                 "WARNING: cannot compute fingerprint of {}'s host key — keeping last verified IP",
-                                machine.name
+                                machine.name.as_str()
                             )),
                         );
                         false
@@ -540,7 +540,7 @@ impl InteractiveState {
                     let old_ip = self.known_ip.get(&device.ssh_public_key).cloned();
                     let _ = update_block(
                         ctx.ssh_config,
-                        &machine.name,
+                        machine.name.as_str(),
                         &device.ip,
                         &machine.user,
                         machine.port,
@@ -558,7 +558,7 @@ impl InteractiveState {
                     {
                         ui::log_device(
                             &machine.ssh_public_key,
-                            &machine.name,
+                            machine.name.as_str(),
                             Level::Info,
                             "cleaned old known_hosts entries",
                             Some(&format!(
@@ -568,12 +568,12 @@ impl InteractiveState {
                     }
                     ui::log_device(
                         &machine.ssh_public_key,
-                        &machine.name,
+                        machine.name.as_str(),
                         Level::Success,
                         "IP updated — host key verified",
                         Some(&format!(
                             "[~] Known device: {} at {} (IP updated, host key verified)",
-                            machine.name, device.ip
+                            machine.name.as_str(), device.ip
                         )),
                     );
                 }
@@ -611,12 +611,12 @@ impl InteractiveState {
         let added_device = self.pending_devices.back().unwrap();
         ui::log_device(
             &added_device.ssh_public_key,
-            &added_device.name,
+            added_device.name.as_str(),
             Level::Info,
             "new device detected",
             Some(&format!(
                 "[!] New device: {} ({}) - key: {}",
-                added_device.name,
+                added_device.name.as_str(),
                 added_device.ip,
                 crate::interactive::utils::key_preview(&added_device.ssh_public_key)
             )),
@@ -669,12 +669,12 @@ impl InteractiveState {
                     });
                     ui::log_device(
                         &device.ssh_public_key,
-                        &device.name,
+                        device.name.as_str(),
                         Level::Success,
                         "new signing key trusted",
                         Some(&format!(
                             "  + New signing key for {} trusted — its next beacon will be processed normally.",
-                            device.name
+                            device.name.as_str()
                         )),
                     );
                 }
@@ -687,12 +687,12 @@ impl InteractiveState {
                     ));
                     ui::log_device(
                         &device.ssh_public_key,
-                        &device.name,
+                        device.name.as_str(),
                         Level::Warning,
                         "new signing key rejected",
                         Some(&format!(
                             "  New signing key for {} rejected — its beacons are ignored.",
-                            device.name
+                            device.name.as_str()
                         )),
                     );
                 }
@@ -866,7 +866,7 @@ impl InteractiveState {
         let mut names: Vec<String> = self
             .key_to_machine
             .values()
-            .map(|m| m.name.clone())
+            .map(|m| m.name.as_str().to_string())
             .collect();
         names.sort();
         names.dedup();
@@ -954,7 +954,7 @@ impl InteractiveState {
         let Some(machine) = self
             .key_to_machine
             .values()
-            .find(|m| m.name == name)
+            .find(|m| m.name.as_str() == name)
             .cloned()
         else {
             return;
@@ -1119,7 +1119,7 @@ impl InteractiveState {
         }
         
         let target_machine_obj = &machines[0];
-        let target_machine = &target_machine_obj.name;
+        let target_machine = target_machine_obj.name.as_str();
         let target_user = if target_machine_obj.user.is_empty() {
             current_user.clone()
         } else {
@@ -1183,7 +1183,7 @@ impl InteractiveState {
                         
                         // Look up the machine to get its port
                         let target_port = self.key_to_machine.values()
-                            .find(|m| m.name == to_machine)
+                            .find(|m| m.name.as_str() == to_machine)
                             .map(|m| m.port)
                             .unwrap_or(22);
                         
@@ -1236,7 +1236,7 @@ impl InteractiveState {
             return;
         };
         
-        let Some(target_machine) = self.key_to_machine.values().find(|m| &m.name == target_name).cloned() else {
+        let Some(target_machine) = self.key_to_machine.values().find(|m| m.name.as_str() == target_name).cloned() else {
             ui::log(&format!("Device '{}' not found", target_name));
             return;
         };
@@ -1310,7 +1310,7 @@ impl InteractiveState {
                         
                         // Look up the machine to get its port
                         let target_port = self.key_to_machine.values()
-                            .find(|m| m.name == to_machine)
+                            .find(|m| m.name.as_str() == to_machine)
                             .map(|m| m.port)
                             .unwrap_or(22);
                         
@@ -1363,7 +1363,7 @@ impl InteractiveState {
             return;
         };
         
-        let Some(machine) = self.key_to_machine.values().find(|m| m.name == name).cloned() else {
+        let Some(machine) = self.key_to_machine.values().find(|m| m.name.as_str() == name).cloned() else {
             ui::log(&format!("Device '{}' not found", name));
             return;
         };

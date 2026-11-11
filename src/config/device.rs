@@ -8,7 +8,7 @@ use std::path::Path;
 
 use serde_json::Value;
 
-use super::Machine;
+use super::{DeviceName, Machine};
 use super::json_helpers::int_value;
 use super::validation::validate_machine;
 use crate::ssh::keys::{SigningPublicKeyB64, SshPublicKey};
@@ -32,7 +32,10 @@ pub fn load_device_file(path: &Path) -> Result<Machine, String> {
 
     let name = match obj.get("name") {
         Some(v) => match v.as_str() {
-            Some(s) => s.trim().to_string(),
+            Some(s) => {
+                DeviceName::from_str(s)
+                    .ok_or_else(|| "\"name\" must be a non-empty string".to_string())?
+            }
             None => return Err("\"name\" must be a string".to_string()),
         },
         None => {
@@ -41,11 +44,13 @@ pub fn load_device_file(path: &Path) -> Result<Machine, String> {
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("unknown");
-            if let Some(name) = filename.strip_suffix(".json") {
+            let name_str = if let Some(name) = filename.strip_suffix(".json") {
                 name.to_string()
             } else {
                 filename.to_string()
-            }
+            };
+            DeviceName::new(name_str)
+                .ok_or_else(|| "Cannot determine device name from filename".to_string())?
         }
     };
 
@@ -107,7 +112,7 @@ pub fn save_device_file(path: &Path, machine: &Machine) -> io::Result<()> {
     let mut obj = serde_json::Map::new();
     obj.insert(
         "name".to_string(),
-        serde_json::Value::String(machine.name.clone()),
+        serde_json::Value::String(machine.name.as_str().to_string()),
     );
     obj.insert(
         "ssh_public_key".to_string(),
@@ -182,7 +187,7 @@ mod tests {
         fs::write(&path, VALID_DEVICE).unwrap();
 
         let m = load_device_file(&path).expect("valid device file must load");
-        assert_eq!(m.name, "laptop");
+        assert_eq!(m.name.as_str(), "laptop");
         assert_eq!(m.user, "alice");
         assert_eq!(m.port, 8022);
         assert!(m.port_explicit);
@@ -254,7 +259,7 @@ mod tests {
         .unwrap();
 
         let m = load_device_file(&path).expect("name must fall back to filename");
-        assert_eq!(m.name, "from-filename");
+        assert_eq!(m.name.as_str(), "from-filename");
         assert_eq!(m.user, "");
         assert_eq!(m.port, 22);
         assert!(!m.port_explicit);
@@ -285,7 +290,7 @@ mod tests {
         let dir = TempDir::new("roundtrip");
         let path = dir.path("roundtrip.json");
         let machine = Machine {
-            name: "roundtrip".to_string(),
+            name: DeviceName::new("roundtrip".to_string()).unwrap(),
             ssh_public_key: SshPublicKey::from("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFake"),
             signing_public_key: SigningPublicKeyB64::from("MCowBQYDK2VwAyEA=="),
             user: "bob".to_string(),
@@ -295,7 +300,7 @@ mod tests {
 
         save_device_file(&path, &machine).expect("save must succeed");
         let loaded = load_device_file(&path).expect("saved device must load back");
-        assert_eq!(loaded.name, machine.name);
+        assert_eq!(loaded.name.as_str(), machine.name.as_str());
         assert_eq!(loaded.user, machine.user);
         assert_eq!(loaded.port, machine.port);
         assert!(loaded.port_explicit);

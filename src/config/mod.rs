@@ -13,10 +13,13 @@
 // Data types
 // ============================================================
 
+pub mod name;
+pub use name::DeviceName;
+
 /// Represents a machine/device in the network
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Machine {
-    pub name: String,
+    pub name: DeviceName,
     /// Unique identifier of the machine: its SSH *server* host public key.
     /// Typed to prevent confusion with fingerprints or signing keys.
     pub ssh_public_key: crate::ssh::keys::SshPublicKey,
@@ -66,12 +69,12 @@ pub const GLOBAL_CONFIG_FILE: &str = "settings.json";
 // ============================================================
 
 /// Directory of a device's own data: `<config>/devices/<name>/`.
-pub fn device_dir(config_dir: &std::path::Path, device: &str) -> std::path::PathBuf {
-    config_dir.join(DEVICES_DIR).join(device)
+pub fn device_dir(config_dir: &std::path::Path, device: &(impl AsRef<str> + ?Sized)) -> std::path::PathBuf {
+    config_dir.join(DEVICES_DIR).join(device.as_ref())
 }
 
 /// Path of a device's snapshot file: `<config>/devices/<name>/device.json`.
-pub fn device_file_path(config_dir: &std::path::Path, device: &str) -> std::path::PathBuf {
+pub fn device_file_path(config_dir: &std::path::Path, device: &(impl AsRef<str> + ?Sized)) -> std::path::PathBuf {
     device_dir(config_dir, device).join(DEVICE_FILE)
 }
 

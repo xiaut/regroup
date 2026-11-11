@@ -113,7 +113,7 @@ pub fn handle_connections(
                 KeyCode::Up => *selected = selected.saturating_sub(1),
                 KeyCode::Down => *selected = (*selected + 1).min(machines.len() - 1),
                 KeyCode::Enter => {
-                    let name = machines[*selected].name.clone();
+                    let name = machines[*selected].name.as_str().to_string();
                     screen = open_machine_connections(config_dir, &name);
                 }
                 KeyCode::Char('a') | KeyCode::Char('d') => {

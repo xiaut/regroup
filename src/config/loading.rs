@@ -12,8 +12,8 @@ use super::device::{load_device_file, save_device_file};
 use super::settings::{load_global_settings, save_default_global_settings};
 use super::users::ensure_local_user_file;
 use super::{
-    CONFIG_DIR, Conf, DEVICES_DIR, DEVICE_FILE, GLOBAL_CONFIG_FILE, GlobalSettings, Machine,
-    device_dir, device_file_path,
+    CONFIG_DIR, Conf, DeviceName, DEVICES_DIR, DEVICE_FILE, GLOBAL_CONFIG_FILE, GlobalSettings,
+    Machine, device_dir, device_file_path,
 };
 use crate::discovery::local::host_name;
 use crate::git::git_init;
@@ -77,7 +77,8 @@ pub fn create_device_config(config_dir: &Path) -> Result<Machine, String> {
     let current_user = env::var("USER").unwrap_or_else(|_| env::var("LOGNAME").unwrap_or_default());
 
     let machine = Machine {
-        name: hostname.clone(),
+        name: DeviceName::new(hostname.clone())
+            .ok_or_else(|| format!("hostname '{}' is empty or whitespace", hostname))?,
         ssh_public_key,
         signing_public_key,
         user: current_user,
@@ -208,7 +209,7 @@ pub fn load_config() -> Conf {
     let local_ssh_public_key = get_ssh_server_public_key();
 
     let current_machine_exists = machines.iter().any(|m| {
-        m.name == local_hostname || (local_ssh_public_key.as_ref() == Some(&m.ssh_public_key))
+        m.name.as_str() == local_hostname || (local_ssh_public_key.as_ref() == Some(&m.ssh_public_key))
     });
 
     if !current_machine_exists {
@@ -226,7 +227,7 @@ pub fn load_config() -> Conf {
     // Record the current user on the local machine (first run only):
     // `devices/<self>/users/<user>.json` is written once and committed,
     // so other machines learn who this machine's users are through git.
-    if machines.iter().any(|m| m.name == local_hostname) {
+    if machines.iter().any(|m| m.name.as_str() == local_hostname) {
         let current_user =
             env::var("USER").unwrap_or_else(|_| env::var("LOGNAME").unwrap_or_default());
         if !current_user.is_empty() {
@@ -255,7 +256,7 @@ pub fn load_config() -> Conf {
     }
 
     // Sort machines by name for consistent ordering
-    machines.sort_by(|a, b| a.name.cmp(&b.name));
+    machines.sort_by(|a, b| a.name.as_str().cmp(&b.name.as_str()));
 
     if machines.is_empty() {
         warn(&format!(

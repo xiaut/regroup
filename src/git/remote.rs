@@ -186,7 +186,7 @@ pub fn sync_git_remotes(
             continue;
         }
 
-        let has_machine = machines.iter().any(|m| m.name == *remote);
+        let has_machine = machines.iter().any(|m| m.name.as_str() == *remote);
         if !has_machine {
             // Only remove remotes pointing at a regroup config repository
             // (stale device remotes); leave remotes the user configured for
@@ -201,7 +201,7 @@ pub fn sync_git_remotes(
 
     // Add remotes for all machines (except self)
     for machine in machines {
-        if machine.name == local_hostname {
+        if machine.name.as_str() == local_hostname {
             continue; // Skip self
         }
 
@@ -218,15 +218,15 @@ pub fn sync_git_remotes(
         if user.is_empty() {
             errors.push(format!(
                 "no SSH user configured for {} — set \"user\" in its device file to sync with it",
-                machine.name
+                machine.name.as_str()
             ));
             continue;
         }
 
         // Construct SSH URL for the machine's config git repository (using hostname, not IP)
-        let remote_url = format!("{}@{}:~/{}/{}", user, machine.name, CONFIG_DIR, GIT_DIR);
+        let remote_url = format!("{}@{}:~/{}/{}", user, machine.name.as_str(), CONFIG_DIR, GIT_DIR);
 
-        if let Err(e) = git_add_remote(repo_path, &machine.name, &remote_url) {
+        if let Err(e) = git_add_remote(repo_path, machine.name.as_str(), &remote_url) {
             errors.push(format!("failed to add remote for {}: {}", machine.name, e));
         }
     }
