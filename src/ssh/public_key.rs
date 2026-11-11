@@ -206,13 +206,20 @@ pub fn compute_fingerprint_from_public_key(public_key: &str) -> Option<SshFinger
         Err(_) => return None,
     };
 
+    // Normalize: extract just key_type and key_base64 (ignore hostname/comment if present)
+    let key_parts: Vec<&str> = public_key.split_whitespace().collect();
+    if key_parts.len() < 2 {
+        return None;
+    }
+    let key_only = key_parts[0..2].join(" ");
+
     // Write the public key to ssh-keygen's stdin
     if let Some(mut stdin) = child.stdin.take() {
         // ssh-keygen expects the key in the format that ssh-keyscan produces
         // which is: hostname key_type key_base64
-        // But we only have key_type key_base64, so we need to add a dummy hostname
+        // We add a dummy hostname to the normalized key
         // The line must end with a newline for ssh-keygen to recognize it
-        let key_with_hostname = format!("dummy {}\n", public_key);
+        let key_with_hostname = format!("dummy {}\n", key_only);
         if stdin.write_all(key_with_hostname.as_bytes()).is_err() {
             return None;
         }
