@@ -146,7 +146,11 @@ fn get_server_public_key_via_keyscan() -> Option<SshPublicKey> {
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.len() >= 3 {
             // The key is parts[1] and parts[2] (key_type and key_base64)
-            return Some(SshPublicKey::from(parts[1..].join(" ")));
+            // Take only first 2 parts of the key to avoid including comments
+            let key = parts[1..].join(" ");
+            if let Some(normalized) = normalize_public_key(&key) {
+                return Some(SshPublicKey::from(normalized));
+            }
         }
     }
     None
@@ -164,14 +168,11 @@ fn read_host_key(key_path: &PathBuf) -> Option<SshPublicKey> {
             // The file should contain just the key in OpenSSH format
             // Remove any comments or trailing whitespace
             let trimmed = content.trim().to_string();
-            // Standard format is: "key_type key_base64 [comment]"
             if !trimmed.is_empty() {
-                // Split by whitespace and take key_type and key_base64
-                let parts: Vec<&str> = trimmed.split_whitespace().collect();
-                if parts.len() >= 2 {
-                    return Some(SshPublicKey::from(parts[0..2].join(" ")));
+                // Normalize to extract just key_type and key_base64
+                if let Some(normalized) = normalize_public_key(&trimmed) {
+                    return Some(SshPublicKey::from(normalized));
                 }
-                return Some(SshPublicKey::from(trimmed));
             }
             None
         }
@@ -182,6 +183,37 @@ fn read_host_key(key_path: &PathBuf) -> Option<SshPublicKey> {
 // ============================================================
 // Fingerprint computation
 // ============================================================
+
+/// Normalize an SSH public key string to extract just key_type and key_base64.
+/// Removes any hostname prefix or comment that may be present.
+/// Returns None if the key doesn't appear to be valid.
+fn normalize_public_key(public_key: &str) -> Option<String> {
+    // Known SSH key types for detection
+    let known_key_types = ["ssh-rsa", "ssh-dss", "ssh-ed25519", 
+        "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521"];
+    
+    let parts: Vec<&str> = public_key.split_whitespace().collect();
+    if parts.len() < 2 {
+        return None;
+    }
+    
+    // Try to find a known key type in the parts
+    let mut key_start = 0;
+    for (i, part) in parts.iter().enumerate() {
+        if known_key_types.contains(part) {
+            key_start = i;
+            break;
+        }
+    }
+    
+    // If no known key type found, assume the first two parts are the key
+    // (this handles standard format without hostname)
+    if key_start >= parts.len() - 1 {
+        key_start = 0;
+    }
+    
+    Some(parts[key_start..key_start+2].join(" "))
+}
 
 /// Compute SHA256 fingerprint from a public key string (OpenSSH format)
 ///
@@ -207,11 +239,10 @@ pub fn compute_fingerprint_from_public_key(public_key: &str) -> Option<SshFinger
     };
 
     // Normalize: extract just key_type and key_base64 (ignore hostname/comment if present)
-    let key_parts: Vec<&str> = public_key.split_whitespace().collect();
-    if key_parts.len() < 2 {
-        return None;
-    }
-    let key_only = key_parts[0..2].join(" ");
+    let key_only = match normalize_public_key(public_key) {
+        Some(k) => k,
+        None => return None,
+    };
 
     // Write the public key to ssh-keygen's stdin
     if let Some(mut stdin) = child.stdin.take() {
@@ -484,8 +515,13 @@ pub fn verify_and_add_to_known_hosts(
         if parts.len() < 3 {
             continue;
         }
+        // Extract key from ssh-keyscan output and normalize it
         let key = parts[1..].join(" ");
-        if let Some(fp) = compute_fingerprint_from_public_key(&key) {
+        let normalized_key = match normalize_public_key(&key) {
+            Some(k) => k,
+            None => continue,
+        };
+        if let Some(fp) = compute_fingerprint_from_public_key(&normalized_key) {
             if first_served.is_none() {
                 first_served = Some(fp.clone());
             }
