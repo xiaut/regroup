@@ -76,13 +76,13 @@ fn calculate_question_height(question: &Question, ctx: &QuestionCtx, width: u16)
     // Get both the question line text and hint text for the current question
     // We need to use owned Strings because format! returns String
     let (question_line_text, hint_text): (String, String) = match question {
-        Question::Idle if ctx.help => {
+        Question::Idle(_) if ctx.help => {
             (
                 "Command-line and interactive help".to_string(),
                 "[Up/Dn/PgUp/PgDn] scroll help   [q/?] close   [s] sync git".to_string(),
             )
         }
-        Question::Idle => {
+        Question::Idle(_) => {
             let (status_line, hint) = match ctx.active_pane {
                 ActivePane::MainMenu(pane) => {
                     let hint = pane.bindings.iter()
@@ -125,71 +125,131 @@ fn calculate_question_height(question: &Question, ctx: &QuestionCtx, width: u16)
             };
             (status_line, hint)
         }
-        Question::AddDevice { name, ip } => {
+        Question::AddDevice(def, name, ip) => {
             (
                 format!("Add {name} ({ip}) to config?"),
-                format!("[y] add   [n] skip   [s] sync git   [v] verbose: {}   [q] quit", 
-                    if ctx.verbose { "on" } else { "off" }),
+                {
+                    let mut hint = def.bindings.iter()
+                        .map(|b| format!("[{}] {}", b.label, b.description))
+                        .collect::<Vec<_>>()
+                        .join("   ");
+                    hint = format!("{hint}   [v] verbose: {}", if ctx.verbose { "on" } else { "off" });
+                    hint
+                },
             )
         }
-        Question::TrustKey { name } => {
+        Question::TrustKey(def, name) => {
             (
                 format!("Trust the new signing key for {name}? (expected after a reinstall — otherwise it may be spoofing)"),
-                "[y] trust   [n] reject".to_string(),
+                {
+                    let hint = def.bindings.iter()
+                        .map(|b| format!("[{}] {}", b.label, b.description))
+                        .collect::<Vec<_>>()
+                        .join("   ");
+                    hint
+                },
             )
         }
-        Question::Rename { .. } => {
+        Question::Rename(_def, ..) => {
             // For rename, we have an input line which is handled specially
             // The question line and a separate input line ("> ...")
             // We'll calculate based on the question line + input line
             return 4; // Minimum height for rename with input
         }
-        Question::Delete { name } => {
+        Question::Delete(def, name) => {
             (
                 format!("Delete {name} from configuration?"),
-                "[Up/Dn] select   [y] confirm   [n] cancel".to_string(),
+                {
+                    let hint = def.bindings.iter()
+                        .map(|b| format!("[{}] {}", b.label, b.description))
+                        .collect::<Vec<_>>()
+                        .join("   ");
+                    hint
+                },
             )
         }
-        Question::Wipe { count } => {
+        Question::Wipe(def, count) => {
             (
                 format!("Delete the ENTIRE configuration ({count} device block(s) + ~/.regroup-config)?"),
-                "[y] confirm   [n] cancel".to_string(),
+                {
+                    let hint = def.bindings.iter()
+                        .map(|b| format!("[{}] {}", b.label, b.description))
+                        .collect::<Vec<_>>()
+                        .join("   ");
+                    hint
+                },
             )
         }
-        Question::SetupCd { file } => {
+        Question::SetupCd(def, file) => {
             (
                 format!("Install the 'regroup-cd' shell function (cd to ~/.regroup-config) in ~/{file}?"),
-                "[y] confirm   [n] cancel".to_string(),
+                {
+                    let hint = def.bindings.iter()
+                        .map(|b| format!("[{}] {}", b.label, b.description))
+                        .collect::<Vec<_>>()
+                        .join("   ");
+                    hint
+                },
             )
         }
-        Question::InstallKeySelectDevice { devices } => {
+        Question::InstallKeySelectDevice(def, devices) => {
             (
                 format!("Select target device ({} available)", devices.len()),
-                "[Up/Dn] select   [y] confirm   [n] cancel".to_string(),
+                {
+                    let hint = def.bindings.iter()
+                        .map(|b| format!("[{}] {}", b.label, b.description))
+                        .collect::<Vec<_>>()
+                        .join("   ");
+                    hint
+                },
             )
         }
-        Question::InstallKeySelectUser { device, users } => {
+        Question::InstallKeySelectUser(def, device, users) => {
             (
                 format!("Select user on {device} ({} available)", users.len()),
-                "[Up/Dn] select   [Enter] confirm   [q] back".to_string(),
+                {
+                    let hint = def.bindings.iter()
+                        .map(|b| format!("[{}] {}", b.label, b.description))
+                        .collect::<Vec<_>>()
+                        .join("   ");
+                    hint
+                },
             )
         }
-        Question::InstallKeyConfirm { from_user, from_device, to_user, to_device } => {
+        Question::InstallKeyConfirm(def, from_user, from_device, to_user, to_device) => {
             (
                 format!("Install key from {}@{} to {}@{}?", from_user, from_device, to_user, to_device),
-                "[y] confirm   [n] cancel".to_string(),
+                {
+                    let hint = def.bindings.iter()
+                        .map(|b| format!("[{}] {}", b.label, b.description))
+                        .collect::<Vec<_>>()
+                        .join("   ");
+                    hint
+                },
             )
         }
-        Question::RemoveKeySelectConnection { connections } => {
+        Question::RemoveKeySelectConnection(def, connections) => {
             (
                 format!("Select connection to remove ({} available)", connections.len()),
-                "[Up/Dn] select   [y] confirm   [n] cancel".to_string(),
+                {
+                    let hint = def.bindings.iter()
+                        .map(|b| format!("[{}] {}", b.label, b.description))
+                        .collect::<Vec<_>>()
+                        .join("   ");
+                    hint
+                },
             )
         }
-        Question::RemoveKeyConfirm { connection_id, from_user, from_device, to_user, to_device } => {
+        Question::RemoveKeyConfirm(def, connection_id, from_user, from_device, to_user, to_device) => {
             (
                 format!("Remove key {} ({}@{}) from {}@{}?", connection_id, from_user, from_device, to_user, to_device),
-                "[y] confirm   [n] cancel".to_string(),
+                {
+                    let hint = def.bindings.iter()
+                        .map(|b| format!("[{}] {}", b.label, b.description))
+                        .collect::<Vec<_>>()
+                        .join("   ");
+                    hint
+                },
             )
         }
     };
@@ -278,7 +338,7 @@ impl TtyUi {
             self.log_scroll = 0;
             // An urgent question takes precedence over the help panel:
             // close it so the question gets the full screen back.
-            if self.question != Question::Idle {
+            if !matches!(self.question, Question::Idle(_)) {
                 self.show_help = false;
                 self.help_scroll = 0;
             }
@@ -371,10 +431,10 @@ impl TtyUi {
         {
             return Some(Action::Quit);
         }
-        let in_delete = matches!(self.question, Question::Delete { .. });
-        let in_wipe = matches!(self.question, Question::Wipe { .. });
-        let in_setup = matches!(self.question, Question::SetupCd { .. });
-        let in_rename = matches!(self.question, Question::Rename { .. });
+        let in_delete = matches!(self.question, Question::Delete(_, _));
+        let in_wipe = matches!(self.question, Question::Wipe(_, _));
+        let in_setup = matches!(self.question, Question::SetupCd(_, _));
+        let in_rename = matches!(self.question, Question::Rename(_, _, _));
         
         // Check if we're in a modal question (not Idle)
         let in_modal = in_delete || in_wipe || in_setup || in_rename || self.show_help;
@@ -387,7 +447,7 @@ impl TtyUi {
                 return None;
             }
             // Only handle 'q' for pane navigation if in Idle mode (no question active)
-            if matches!(self.question, Question::Idle) {
+            if matches!(self.question, Question::Idle(_)) {
                 if self.active_pane != ActivePane::main_menu() {
                     self.active_pane = ActivePane::main_menu();
                     self.detected_selected = None;
@@ -399,7 +459,7 @@ impl TtyUi {
             }
             // For non-Idle questions, quit (preserving original behavior)
             // except AddDevice which has its own handler
-            if !matches!(self.question, Question::AddDevice { .. }) {
+            if !matches!(self.question, Question::AddDevice(_, _, _)) {
                 return Some(Action::Quit);
             }
             // For AddDevice, fall through to its specific handler
@@ -488,10 +548,10 @@ impl TtyUi {
         }
         
         // Handle TrustKey question
-        if matches!(self.question, Question::TrustKey { .. }) {
+        if matches!(self.question, Question::TrustKey(_, _)) {
             match key.code {
                 crossterm::event::KeyCode::Char('y') => return Some(Action::TrustKey),
-                crossterm::event::KeyCode::Char('n') | crossterm::event::KeyCode::Esc => {
+                crossterm::event::KeyCode::Char('n') | crossterm::event::KeyCode::Char('q') => {
                     return Some(Action::RejectKey);
                 }
                 _ => return None,
@@ -499,7 +559,7 @@ impl TtyUi {
         }
         
         // Handle AddDevice question (plain mode)
-        if matches!(self.question, Question::AddDevice { .. }) {
+        if matches!(self.question, Question::AddDevice(_, _, _)) {
             match key.code {
                 crossterm::event::KeyCode::Char('y') => return Some(Action::AddCurrent),
                 crossterm::event::KeyCode::Char('n') => return Some(Action::SkipCurrent),
@@ -606,7 +666,7 @@ impl TtyUi {
         }
         
         // Pane navigation by letters only (NO TAB)
-        // Esc returns to no active pane (MainMenu)
+        // 'q' returns to no active pane (MainMenu)
         // Only handle pane navigation if we're not currently in that pane
         // This allows pane-specific actions (like 'a' to add in Detected pane) to take precedence
         if !in_modal {

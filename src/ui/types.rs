@@ -24,7 +24,7 @@ pub struct Pane {
 }
 
 /// Question definition: title and its key bindings
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct QuestionDef {
     pub title: &'static str,
     pub bindings: &'static [KeyBinding],
@@ -115,61 +115,48 @@ pub struct UiDevice {
 #[derive(Clone, PartialEq)]
 pub enum Question {
     /// Nothing pending: only global keys.
-    Idle,
+    Idle(QuestionDef),
     /// Add the front of the pending queue (plain mode only: the
     /// full-screen ui adds devices from the Detected panel instead).
-    AddDevice {
-        name: String,
-        ip: String,
-    },
-    TrustKey {
-        name: String,
-    },
-    Rename {
-        name: String,
-        suggested: String,
-    },
-    Delete {
-        name: String,
-    },
+    AddDevice(QuestionDef, String, String), // name, ip
+    TrustKey(QuestionDef, String), // name
+    Rename(QuestionDef, String, String), // name, suggested
+    Delete(QuestionDef, String), // name
     /// Wipe the whole configuration (key 'w'), with the number of device
     /// blocks that would be removed from ~/.ssh/config.
-    Wipe {
-        count: usize,
-    },
+    Wipe(QuestionDef, usize), // count
     /// Install the 'regroup-cd' shell function (key 'c') into `file`
     /// (~/.zshrc or ~/.bashrc), replacing any existing definition.
-    SetupCd {
-        file: String,
-    },
+    SetupCd(QuestionDef, String), // file
     /// Install SSH key: select target device (key 'i')
-    InstallKeySelectDevice {
-        devices: Vec<String>,
-    },
+    InstallKeySelectDevice(QuestionDef, Vec<String>), // devices
     /// Install SSH key: select target user
-    InstallKeySelectUser {
-        device: String,
-        users: Vec<String>,
-    },
+    InstallKeySelectUser(QuestionDef, String, Vec<String>), // device, users
     /// Install SSH key: confirm installation
-    InstallKeyConfirm {
-        from_user: String,
-        from_device: String,
-        to_user: String,
-        to_device: String,
-    },
+    InstallKeyConfirm(QuestionDef, String, String, String, String), // from_user, from_device, to_user, to_device
     /// Remove SSH key: select connection (key 'r')
-    RemoveKeySelectConnection {
-        connections: Vec<(String, String, String)>,
-    },
+    RemoveKeySelectConnection(QuestionDef, Vec<(String, String, String)>), // connections
     /// Remove SSH key: confirm removal
-    RemoveKeyConfirm {
-        connection_id: String,
-        from_user: String,
-        from_device: String,
-        to_user: String,
-        to_device: String,
-    },
+    RemoveKeyConfirm(QuestionDef, String, String, String, String, String), // connection_id, from_user, from_device, to_user, to_device
+}
+
+impl Question {
+    pub fn def(&self) -> &QuestionDef {
+        match self {
+            Question::Idle(def) => def,
+            Question::AddDevice(def, _, _) => def,
+            Question::TrustKey(def, _) => def,
+            Question::Rename(def, _, _) => def,
+            Question::Delete(def, _) => def,
+            Question::Wipe(def, _) => def,
+            Question::SetupCd(def, _) => def,
+            Question::InstallKeySelectDevice(def, _) => def,
+            Question::InstallKeySelectUser(def, _, _) => def,
+            Question::InstallKeyConfirm(def, _, _, _, _) => def,
+            Question::RemoveKeySelectConnection(def, _) => def,
+            Question::RemoveKeyConfirm(def, _, _, _, _, _) => def,
+        }
+    }
 }
 
 /// A user decision, translated by the ui from key presses (or, in plain
@@ -233,7 +220,7 @@ pub enum Action {
     RemoveKeyFromSelected,
     /// Delete the currently selected device in Added pane.
     DeleteSelected,
-    /// Return to Main menu from any pane (key 'Esc').
+    /// Return to Main menu from any pane (key 'q').
     BackToMainMenu,
     /// Switch to Detected pane (key 'd').
     SwitchToDetected,
@@ -315,5 +302,161 @@ impl ActivePane {
 
     pub const fn logs() -> Self {
         ActivePane::Logs(LOGS_PANE)
+    }
+}
+
+// Static question definitions
+pub static IDLE_QUESTION: QuestionDef = QuestionDef {
+    title: "Actions",
+    bindings: &[],
+};
+
+pub static ADD_DEVICE_QUESTION: QuestionDef = QuestionDef {
+    title: "New device",
+    bindings: &[
+        KeyBinding::new(KeyCode::Char('y'), "y", "add"),
+        KeyBinding::new(KeyCode::Char('n'), "n", "skip"),
+        KeyBinding::new(KeyCode::Char('s'), "s", "sync git"),
+        KeyBinding::new(KeyCode::Char('v'), "v", "verbose"),
+        KeyBinding::new(KeyCode::Char('q'), "q", "quit"),
+    ],
+};
+
+pub static TRUST_KEY_QUESTION: QuestionDef = QuestionDef {
+    title: "Signing key changed",
+    bindings: &[
+        KeyBinding::new(KeyCode::Char('y'), "y", "trust"),
+        KeyBinding::new(KeyCode::Char('n'), "n", "reject"),
+    ],
+};
+
+pub static RENAME_QUESTION: QuestionDef = QuestionDef {
+    title: "Name already used",
+    bindings: &[
+        KeyBinding::new(KeyCode::Enter, "Enter", "accept"),
+        KeyBinding::new(KeyCode::Char('q'), "q", "skip"),
+    ],
+};
+
+pub static DELETE_QUESTION: QuestionDef = QuestionDef {
+    title: "Delete device",
+    bindings: &[
+        KeyBinding::new(KeyCode::Up, "Up", "select"),
+        KeyBinding::new(KeyCode::Down, "Dn", "select"),
+        KeyBinding::new(KeyCode::Char('y'), "y", "confirm"),
+        KeyBinding::new(KeyCode::Char('n'), "n", "cancel"),
+    ],
+};
+
+pub static WIPE_QUESTION: QuestionDef = QuestionDef {
+    title: "Wipe configuration",
+    bindings: &[
+        KeyBinding::new(KeyCode::Char('y'), "y", "confirm"),
+        KeyBinding::new(KeyCode::Char('n'), "n", "cancel"),
+    ],
+};
+
+pub static SETUP_CD_QUESTION: QuestionDef = QuestionDef {
+    title: "Install regroup-cd",
+    bindings: &[
+        KeyBinding::new(KeyCode::Char('y'), "y", "confirm"),
+        KeyBinding::new(KeyCode::Char('n'), "n", "cancel"),
+    ],
+};
+
+pub static INSTALL_KEY_SELECT_DEVICE_QUESTION: QuestionDef = QuestionDef {
+    title: "Install SSH key",
+    bindings: &[
+        KeyBinding::new(KeyCode::Up, "Up", "select"),
+        KeyBinding::new(KeyCode::Down, "Dn", "select"),
+        KeyBinding::new(KeyCode::Char('y'), "y", "confirm"),
+        KeyBinding::new(KeyCode::Char('n'), "n", "cancel"),
+    ],
+};
+
+pub static INSTALL_KEY_SELECT_USER_QUESTION: QuestionDef = QuestionDef {
+    title: "Install SSH key",
+    bindings: &[
+        KeyBinding::new(KeyCode::Up, "Up", "select"),
+        KeyBinding::new(KeyCode::Down, "Dn", "select"),
+        KeyBinding::new(KeyCode::Enter, "Enter", "confirm"),
+        KeyBinding::new(KeyCode::Char('q'), "q", "back"),
+    ],
+};
+
+pub static INSTALL_KEY_CONFIRM_QUESTION: QuestionDef = QuestionDef {
+    title: "Install SSH key",
+    bindings: &[
+        KeyBinding::new(KeyCode::Char('y'), "y", "confirm"),
+        KeyBinding::new(KeyCode::Char('n'), "n", "cancel"),
+    ],
+};
+
+pub static REMOVE_KEY_SELECT_CONNECTION_QUESTION: QuestionDef = QuestionDef {
+    title: "Remove SSH key",
+    bindings: &[
+        KeyBinding::new(KeyCode::Up, "Up", "select"),
+        KeyBinding::new(KeyCode::Down, "Dn", "select"),
+        KeyBinding::new(KeyCode::Char('y'), "y", "confirm"),
+        KeyBinding::new(KeyCode::Char('n'), "n", "cancel"),
+    ],
+};
+
+pub static REMOVE_KEY_CONFIRM_QUESTION: QuestionDef = QuestionDef {
+    title: "Remove SSH key",
+    bindings: &[
+        KeyBinding::new(KeyCode::Char('y'), "y", "confirm"),
+        KeyBinding::new(KeyCode::Char('n'), "n", "cancel"),
+    ],
+};
+
+// Convenience constructors for Question
+impl Question {
+    pub fn idle() -> Self {
+        Question::Idle(IDLE_QUESTION)
+    }
+
+    pub fn add_device(name: String, ip: String) -> Self {
+        Question::AddDevice(ADD_DEVICE_QUESTION, name, ip)
+    }
+
+    pub fn trust_key(name: String) -> Self {
+        Question::TrustKey(TRUST_KEY_QUESTION, name)
+    }
+
+    pub fn rename(name: String, suggested: String) -> Self {
+        Question::Rename(RENAME_QUESTION, name, suggested)
+    }
+
+    pub fn delete(name: String) -> Self {
+        Question::Delete(DELETE_QUESTION, name)
+    }
+
+    pub fn wipe(count: usize) -> Self {
+        Question::Wipe(WIPE_QUESTION, count)
+    }
+
+    pub fn setup_cd(file: String) -> Self {
+        Question::SetupCd(SETUP_CD_QUESTION, file)
+    }
+
+    pub fn install_key_select_device(devices: Vec<String>) -> Self {
+        Question::InstallKeySelectDevice(INSTALL_KEY_SELECT_DEVICE_QUESTION, devices)
+    }
+
+    pub fn install_key_select_user(device: String, users: Vec<String>) -> Self {
+        Question::InstallKeySelectUser(INSTALL_KEY_SELECT_USER_QUESTION, device, users)
+    }
+
+    pub fn install_key_confirm(from_user: String, from_device: String, to_user: String, to_device: String) -> Self {
+        Question::InstallKeyConfirm(INSTALL_KEY_CONFIRM_QUESTION, from_user, from_device, to_user, to_device)
+    }
+
+    pub fn remove_key_select_connection(connections: Vec<(String, String, String)>) -> Self {
+        Question::RemoveKeySelectConnection(REMOVE_KEY_SELECT_CONNECTION_QUESTION, connections)
+    }
+
+    pub fn remove_key_confirm(connection_id: String, from_user: String, from_device: String, to_user: String, to_device: String) -> Self {
+        Question::RemoveKeyConfirm(REMOVE_KEY_CONFIRM_QUESTION, connection_id, from_user, from_device, to_user, to_device)
     }
 }

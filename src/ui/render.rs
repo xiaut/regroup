@@ -783,7 +783,7 @@ pub fn render_question(
     // The status hints mention the verbose key with its current state.
     let verbose_hint = format!("[v] verbose: {}", if ctx.verbose { "on" } else { "off" });
     let (title, border, question_line, hint_line) = if ctx.help
-        && matches!(question, super::types::Question::Idle)
+        && matches!(question, super::types::Question::Idle(_))
     {
         (
             "Help",
@@ -796,7 +796,7 @@ pub fn render_question(
         )
     } else {
         match question {
-            super::types::Question::Idle => {
+            super::types::Question::Idle(def) => {
                 use super::types::ActivePane;
                 // Hint lines depend on the active pane
                 let (status_line, hint) = match ctx.active_pane {
@@ -831,118 +831,154 @@ pub fn render_question(
                     }
                 };
                 (
-                    "Actions",
+                    def.title,
                     Color::Blue,
                     status_line,
                     hint_spans(&hint, ctx.key_flash),
                 )
             }
-            super::types::Question::AddDevice { name, ip } => (
-                "New device",
+            super::types::Question::AddDevice(def, name, ip) => (
+                def.title,
                 Color::Yellow,
                 format!("Add {name} ({ip}) to config?"),
-                hint_spans(
-                    &format!("[y] add   [n] skip   [s] sync git   {verbose_hint}   [q] quit"),
-                    ctx.key_flash,
-                ),
+                {
+                    let mut hint = def.bindings.iter()
+                        .map(|b| format!("[{}] {}", b.label, b.description))
+                        .collect::<Vec<_>>()
+                        .join("   ");
+                    // Add verbose hint
+                    hint = format!("{hint}   {verbose_hint}");
+                    hint_spans(&hint, ctx.key_flash)
+                },
             ),
-            super::types::Question::TrustKey { name } => (
-                "Signing key changed",
+            super::types::Question::TrustKey(def, name) => (
+                def.title,
                 Color::Red,
                 format!(
                     "Trust the new signing key for {name}? (expected after a reinstall — otherwise it may be spoofing)"
                 ),
-                hint_spans("[y] trust   [n] reject", ctx.key_flash),
+                {
+                    let hint = def.bindings.iter()
+                        .map(|b| format!("[{}] {}", b.label, b.description))
+                        .collect::<Vec<_>>()
+                        .join("   ");
+                    hint_spans(&hint, ctx.key_flash)
+                },
             ),
-            super::types::Question::Rename { name, suggested } => (
-                "Name already used",
+            super::types::Question::Rename(def, name, suggested) => (
+                def.title,
                 Color::Cyan,
                 format!("New name for {name} ([Enter] = {suggested}, [q] = skip)"),
                 Line::from(format!("> {}", ctx.input)),
             ),
-            super::types::Question::Delete { name } => (
-                "Delete device",
+            super::types::Question::Delete(def, name) => (
+                def.title,
                 Color::Red,
                 format!("Delete {name} from configuration?"),
-                hint_spans(
-                    "[Up/Dn] select   [y] confirm   [n] cancel",
-                    ctx.key_flash,
-                ),
+                {
+                    let hint = def.bindings.iter()
+                        .map(|b| format!("[{}] {}", b.label, b.description))
+                        .collect::<Vec<_>>()
+                        .join("   ");
+                    hint_spans(&hint, ctx.key_flash)
+                },
             ),
-            super::types::Question::Wipe { count } => (
-                "Wipe configuration",
+            super::types::Question::Wipe(def, count) => (
+                def.title,
                 Color::Red,
                 format!(
                     "Delete the ENTIRE configuration ({count} device block(s) + ~/.regroup-config)?"
                 ),
-                hint_spans("[y] confirm   [n] cancel", ctx.key_flash),
+                {
+                    let hint = def.bindings.iter()
+                        .map(|b| format!("[{}] {}", b.label, b.description))
+                        .collect::<Vec<_>>()
+                        .join("   ");
+                    hint_spans(&hint, ctx.key_flash)
+                },
             ),
-            super::types::Question::SetupCd { file } => (
-                "Install regroup-cd",
+            super::types::Question::SetupCd(def, file) => (
+                def.title,
                 Color::Yellow,
                 format!(
                     "Install the 'regroup-cd' shell function (cd to ~/.regroup-config) in ~/{file}?"
                 ),
-                hint_spans("[y] confirm   [n] cancel", ctx.key_flash),
+                {
+                    let hint = def.bindings.iter()
+                        .map(|b| format!("[{}] {}", b.label, b.description))
+                        .collect::<Vec<_>>()
+                        .join("   ");
+                    hint_spans(&hint, ctx.key_flash)
+                },
             ),
-            super::types::Question::InstallKeySelectDevice { devices } => (
-                "Install SSH key",
+            super::types::Question::InstallKeySelectDevice(def, devices) => (
+                def.title,
                 Color::Green,
                 format!("Select target device ({} available)", devices.len()),
-                hint_spans(
-                    "[Up/Dn] select   [y] confirm   [n] cancel",
-                    ctx.key_flash,
-                ),
+                {
+                    let hint = def.bindings.iter()
+                        .map(|b| format!("[{}] {}", b.label, b.description))
+                        .collect::<Vec<_>>()
+                        .join("   ");
+                    hint_spans(&hint, ctx.key_flash)
+                },
             ),
-            super::types::Question::InstallKeySelectUser { device, users } => (
-                "Install SSH key",
+            super::types::Question::InstallKeySelectUser(def, device, users) => (
+                def.title,
                 Color::Green,
                 format!("Select user on {device} ({} available)", users.len()),
-                hint_spans(
-                    "[Up/Dn] select   [Enter] confirm   [q] back",
-                    ctx.key_flash,
-                ),
+                {
+                    let hint = def.bindings.iter()
+                        .map(|b| format!("[{}] {}", b.label, b.description))
+                        .collect::<Vec<_>>()
+                        .join("   ");
+                    hint_spans(&hint, ctx.key_flash)
+                },
             ),
-            super::types::Question::InstallKeyConfirm {
-                from_user,
-                from_device,
-                to_user,
-                to_device,
-            } => (
-                "Install SSH key",
+            super::types::Question::InstallKeyConfirm(def, from_user, from_device, to_user, to_device) => (
+                def.title,
                 Color::Green,
                 format!(
                     "Install key from {}@{} to {}@{}?",
                     from_user, from_device, to_user, to_device
                 ),
-                hint_spans("[y] confirm   [n] cancel", ctx.key_flash),
+                {
+                    let hint = def.bindings.iter()
+                        .map(|b| format!("[{}] {}", b.label, b.description))
+                        .collect::<Vec<_>>()
+                        .join("   ");
+                    hint_spans(&hint, ctx.key_flash)
+                },
             ),
-            super::types::Question::RemoveKeySelectConnection { connections } => (
-                "Remove SSH key",
+            super::types::Question::RemoveKeySelectConnection(def, connections) => (
+                def.title,
                 Color::Red,
                 format!(
                     "Select connection to remove ({} available)",
                     connections.len()
                 ),
-                hint_spans(
-                    "[Up/Dn] select   [y] confirm   [n] cancel",
-                    ctx.key_flash,
-                ),
+                {
+                    let hint = def.bindings.iter()
+                        .map(|b| format!("[{}] {}", b.label, b.description))
+                        .collect::<Vec<_>>()
+                        .join("   ");
+                    hint_spans(&hint, ctx.key_flash)
+                },
             ),
-            super::types::Question::RemoveKeyConfirm {
-                connection_id,
-                from_user,
-                from_device,
-                to_user,
-                to_device,
-            } => (
-                "Remove SSH key",
+            super::types::Question::RemoveKeyConfirm(def, connection_id, from_user, from_device, to_user, to_device) => (
+                def.title,
                 Color::Red,
                 format!(
                     "Remove key {} ({}@{}) from {}@{}?",
                     connection_id, from_user, from_device, to_user, to_device
                 ),
-                hint_spans("[y] confirm   [n] cancel", ctx.key_flash),
+                {
+                    let hint = def.bindings.iter()
+                        .map(|b| format!("[{}] {}", b.label, b.description))
+                        .collect::<Vec<_>>()
+                        .join("   ");
+                    hint_spans(&hint, ctx.key_flash)
+                },
             ),
         }
     };

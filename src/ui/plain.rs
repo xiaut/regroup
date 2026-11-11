@@ -7,7 +7,7 @@ use std::io::{self, Write};
 use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
 
-use super::types::{Action, Question};
+use super::types::{Action, Question, REMOVE_KEY_CONFIRM_QUESTION};
 
 /// Plain line-based fallback for non-terminal stdout, mirroring the
 /// interface the tool had before the full-screen ui.
@@ -36,7 +36,7 @@ impl PlainUi {
         });
         Self {
             rx,
-            question: Question::Idle,
+            question: Question::idle(),
         }
     }
 
@@ -52,55 +52,74 @@ impl PlainUi {
     /// Prompt text for the current question.
     pub fn prompt(&self) -> String {
         match &self.question {
-            Question::Idle => {
-                "[q=quit, s=sync git, d=delete, w=wipe, c=setup-cd, v=verbose, h=help]:".to_string()
+            Question::Idle(def) => {
+                let hints: Vec<String> = def.bindings.iter()
+                    .map(|b| format!("{}={}", b.label, b.description))
+                    .collect();
+                format!("[{}]:", hints.join(", "))
             }
-            Question::AddDevice { name, ip } => {
-                format!("Add {name} ({ip}) to config? [y/n/q/s]:")
+            Question::AddDevice(def, name, ip) => {
+                let hints: Vec<String> = def.bindings.iter()
+                    .map(|b| format!("{}", b.label))
+                    .collect();
+                format!("Add {name} ({ip}) to config? [{}]:", hints.join("/"))
             }
-            Question::TrustKey { name } => {
-                format!("Trust the new signing key for {name}? [y/n]:")
+            Question::TrustKey(def, name) => {
+                let hints: Vec<String> = def.bindings.iter()
+                    .map(|b| format!("{}", b.label))
+                    .collect();
+                format!("Trust the new signing key for {name}? [{}]:", hints.join("/"))
             }
-            Question::Rename { name, suggested } => {
+            Question::Rename(_, name, suggested) => {
                 format!("New name for {name} (empty = {suggested}):")
             }
-            Question::Delete { name } => format!("Delete {name}? [y/n]:"),
-            Question::Wipe { count } => {
-                format!(
-                    "Wipe the ENTIRE configuration ({count} device block(s))? [y/n]:"
-                )
+            Question::Delete(def, name) => {
+                let hints: Vec<String> = def.bindings.iter()
+                    .map(|b| format!("{}", b.label))
+                    .collect();
+                format!("Delete {name}? [{}]:", hints.join("/"))
             }
-            Question::SetupCd { file } => {
-                format!("Install 'regroup-cd' in ~/{file}? [y/n]:")
+            Question::Wipe(def, count) => {
+                let hints: Vec<String> = def.bindings.iter()
+                    .map(|b| format!("{}", b.label))
+                    .collect();
+                format!("Wipe the ENTIRE configuration ({count} device block(s))? [{}]:", hints.join("/"))
             }
-            Question::InstallKeySelectDevice { devices } => {
+            Question::SetupCd(def, file) => {
+                let hints: Vec<String> = def.bindings.iter()
+                    .map(|b| format!("{}", b.label))
+                    .collect();
+                format!("Install 'regroup-cd' in ~/{file}? [{}]:", hints.join("/"))
+            }
+            Question::InstallKeySelectDevice(_, devices) => {
                 format!(
                     "Select target device for key installation ({} available):",
                     devices.len()
                 )
             }
-            Question::InstallKeySelectUser { device, users } => {
+            Question::InstallKeySelectUser(_, device, users) => {
                 format!(
                     "Select user on {} for key installation ({} available):",
                     device, users.len()
                 )
             }
-            Question::InstallKeyConfirm {
-                from_user,
-                from_device,
-                to_user,
-                to_device,
-            } => {
+            Question::InstallKeyConfirm(def, from_user, from_device, to_user, to_device) => {
+                let hints: Vec<String> = def.bindings.iter()
+                    .map(|b| format!("{}", b.label))
+                    .collect();
                 format!(
-                    "Install SSH key from {}@{} to {}@{}? [y/n]:",
-                    from_user, from_device, to_user, to_device
+                    "Install SSH key from {}@{} to {}@{}? [{}]:",
+                    from_user, from_device, to_user, to_device, hints.join("/")
                 )
             }
-            Question::RemoveKeySelectConnection { connections } => {
+            Question::RemoveKeySelectConnection(_, connections) => {
                 format!("Select connection to remove ({} available):", connections.len())
             }
-            Question::RemoveKeyConfirm { connection_id, .. } => {
-                format!("Remove SSH key {connection_id}? [y/n]:")
+            Question::RemoveKeyConfirm(_, connection_id, ..) => {
+                let hints: Vec<String> = REMOVE_KEY_CONFIRM_QUESTION.bindings.iter()
+                    .map(|b| format!("{}", b.label))
+                    .collect();
+                format!("Remove SSH key {connection_id}? [{}]:", hints.join("/"))
             }
         }
     }
@@ -115,58 +134,58 @@ impl PlainUi {
     /// Translate an input line into an Action based on the current question.
     fn translate_action(&self, line: &str) -> Option<Action> {
         match (&self.question, line) {
-            (Question::Idle, "q") => Some(Action::Quit),
-            (Question::Idle, "s") => Some(Action::Sync),
-            (Question::Idle, "d") => Some(Action::DeleteMode),
-            (Question::Idle, "w") => Some(Action::WipeMode),
-            (Question::Idle, "c") => Some(Action::SetupCdMode),
-            (Question::Idle, "k") => Some(Action::ConnectionsMode),
-            (Question::Idle, "v") => Some(Action::ToggleVerbose),
-            (Question::Idle, "h" | "?") => Some(Action::Help),
-            (Question::Idle, _) => None,
-            (Question::AddDevice { .. }, "y") => Some(Action::AddCurrent),
-            (Question::AddDevice { .. }, "n") => Some(Action::SkipCurrent),
-            (Question::AddDevice { .. }, "s") => Some(Action::Sync),
-            (Question::AddDevice { .. }, "d") => Some(Action::DeleteMode),
-            (Question::AddDevice { .. }, "w") => Some(Action::WipeMode),
-            (Question::AddDevice { .. }, "c") => Some(Action::SetupCdMode),
-            (Question::AddDevice { .. }, "k") => Some(Action::ConnectionsMode),
-            (Question::AddDevice { .. }, "q") => Some(Action::Quit),
-            (Question::AddDevice { .. }, _) => Some(Action::SkipCurrent),
-            (Question::TrustKey { .. }, "y") => Some(Action::TrustKey),
-            (Question::TrustKey { .. }, "n") => Some(Action::RejectKey),
-            (Question::TrustKey { .. }, _) => Some(Action::RejectKey),
-            (Question::Rename { suggested, .. }, "") => Some(Action::Rename(suggested.clone())),
-            (Question::Rename { .. }, "q") => Some(Action::SkipRename),
-            (Question::Rename { .. }, name) => Some(Action::Rename(name.to_string())),
-            (Question::Delete { .. }, "y") => Some(Action::DeleteConfirm),
-            (Question::Delete { .. }, "n") => Some(Action::DeleteCancel),
-            (Question::Delete { .. }, _) => Some(Action::DeleteCancel),
-            (Question::Wipe { .. }, "y") => Some(Action::WipeConfirm),
-            (Question::Wipe { .. }, "n") => Some(Action::WipeCancel),
-            (Question::Wipe { .. }, _) => Some(Action::WipeCancel),
-            (Question::SetupCd { .. }, "y") => Some(Action::SetupCdConfirm),
-            (Question::SetupCd { .. }, "n") => Some(Action::SetupCdCancel),
-            (Question::SetupCd { .. }, _) => Some(Action::SetupCdCancel),
+            (Question::Idle(_), "q") => Some(Action::Quit),
+            (Question::Idle(_), "s") => Some(Action::Sync),
+            (Question::Idle(_), "d") => Some(Action::DeleteMode),
+            (Question::Idle(_), "w") => Some(Action::WipeMode),
+            (Question::Idle(_), "c") => Some(Action::SetupCdMode),
+            (Question::Idle(_), "k") => Some(Action::ConnectionsMode),
+            (Question::Idle(_), "v") => Some(Action::ToggleVerbose),
+            (Question::Idle(_), "h" | "?") => Some(Action::Help),
+            (Question::Idle(_), _) => None,
+            (Question::AddDevice(_, _, _), "y") => Some(Action::AddCurrent),
+            (Question::AddDevice(_, _, _), "n") => Some(Action::SkipCurrent),
+            (Question::AddDevice(_, _, _), "s") => Some(Action::Sync),
+            (Question::AddDevice(_, _, _), "d") => Some(Action::DeleteMode),
+            (Question::AddDevice(_, _, _), "w") => Some(Action::WipeMode),
+            (Question::AddDevice(_, _, _), "c") => Some(Action::SetupCdMode),
+            (Question::AddDevice(_, _, _), "k") => Some(Action::ConnectionsMode),
+            (Question::AddDevice(_, _, _), "q") => Some(Action::Quit),
+            (Question::AddDevice(_, _, _), _) => Some(Action::SkipCurrent),
+            (Question::TrustKey(_, _), "y") => Some(Action::TrustKey),
+            (Question::TrustKey(_, _), "n") => Some(Action::RejectKey),
+            (Question::TrustKey(_, _), _) => Some(Action::RejectKey),
+            (Question::Rename(_, _, suggested), "") => Some(Action::Rename(suggested.clone())),
+            (Question::Rename(_, _, _), "q") => Some(Action::SkipRename),
+            (Question::Rename(_, _, _), name) => Some(Action::Rename(name.to_string())),
+            (Question::Delete(_, _), "y") => Some(Action::DeleteConfirm),
+            (Question::Delete(_, _), "n") => Some(Action::DeleteCancel),
+            (Question::Delete(_, _), _) => Some(Action::DeleteCancel),
+            (Question::Wipe(_, _), "y") => Some(Action::WipeConfirm),
+            (Question::Wipe(_, _), "n") => Some(Action::WipeCancel),
+            (Question::Wipe(_, _), _) => Some(Action::WipeCancel),
+            (Question::SetupCd(_, _), "y") => Some(Action::SetupCdConfirm),
+            (Question::SetupCd(_, _), "n") => Some(Action::SetupCdCancel),
+            (Question::SetupCd(_, _), _) => Some(Action::SetupCdCancel),
             // Key installation/removal actions
-            (Question::InstallKeySelectDevice { .. }, "q") => Some(Action::InstallKeyCancel),
-            (Question::InstallKeySelectDevice { .. }, "n") => Some(Action::InstallKeyCancel),
-            (Question::InstallKeySelectDevice { .. }, _) => Some(Action::InstallKeyMode),
-            (Question::InstallKeySelectUser { .. }, "q") => Some(Action::InstallKeyCancel),
-            (Question::InstallKeySelectUser { .. }, "n") => Some(Action::InstallKeyCancel),
-            (Question::InstallKeySelectUser { .. }, _device) => {
+            (Question::InstallKeySelectDevice(_, _), "q") => Some(Action::InstallKeyCancel),
+            (Question::InstallKeySelectDevice(_, _), "n") => Some(Action::InstallKeyCancel),
+            (Question::InstallKeySelectDevice(_, _), _) => Some(Action::InstallKeyMode),
+            (Question::InstallKeySelectUser(_, _, _), "q") => Some(Action::InstallKeyCancel),
+            (Question::InstallKeySelectUser(_, _, _), "n") => Some(Action::InstallKeyCancel),
+            (Question::InstallKeySelectUser(_, _, _), _device) => {
                 // This would require more context to handle properly
                 Some(Action::InstallKeyMode)
             }
-            (Question::InstallKeyConfirm { .. }, "y") => Some(Action::InstallKeyConfirm),
-            (Question::InstallKeyConfirm { .. }, "n") => Some(Action::InstallKeyCancel),
-            (Question::InstallKeyConfirm { .. }, _) => Some(Action::InstallKeyCancel),
-            (Question::RemoveKeySelectConnection { .. }, "q") => Some(Action::RemoveKeyCancel),
-            (Question::RemoveKeySelectConnection { .. }, "n") => Some(Action::RemoveKeyCancel),
-            (Question::RemoveKeySelectConnection { .. }, _) => Some(Action::RemoveKeyMode),
-            (Question::RemoveKeyConfirm { .. }, "y") => Some(Action::RemoveKeyConfirm),
-            (Question::RemoveKeyConfirm { .. }, "n") => Some(Action::RemoveKeyCancel),
-            (Question::RemoveKeyConfirm { .. }, _) => Some(Action::RemoveKeyCancel),
+            (Question::InstallKeyConfirm(_, _, _, _, _), "y") => Some(Action::InstallKeyConfirm),
+            (Question::InstallKeyConfirm(_, _, _, _, _), "n") => Some(Action::InstallKeyCancel),
+            (Question::InstallKeyConfirm(_, _, _, _, _), _) => Some(Action::InstallKeyCancel),
+            (Question::RemoveKeySelectConnection(_, _), "q") => Some(Action::RemoveKeyCancel),
+            (Question::RemoveKeySelectConnection(_, _), "n") => Some(Action::RemoveKeyCancel),
+            (Question::RemoveKeySelectConnection(_, _), _) => Some(Action::RemoveKeyMode),
+            (Question::RemoveKeyConfirm(_, _, _, _, _, _), "y") => Some(Action::RemoveKeyConfirm),
+            (Question::RemoveKeyConfirm(_, _, _, _, _, _), "n") => Some(Action::RemoveKeyCancel),
+            (Question::RemoveKeyConfirm(_, _, _, _, _, _), _) => Some(Action::RemoveKeyCancel),
         }
     }
 }

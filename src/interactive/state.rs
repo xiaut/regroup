@@ -311,57 +311,45 @@ impl InteractiveState {
     /// adds devices from the Detected panel instead.
     fn current_question(&self, ctx: &Context, plain: bool) -> Question {
         if self.wipe_pending {
-            Question::Wipe {
-                count: self.key_to_device.len(),
-            }
+            Question::wipe(self.key_to_device.len())
         } else if self.setup_cd_pending {
-            Question::SetupCd {
-                file: shell_rc_file(ctx.home)
+            Question::setup_cd(
+                shell_rc_file(ctx.home)
                     .file_name()
                     .unwrap_or_default()
                     .to_string_lossy()
                     .into_owned(),
-            }
+            )
         } else if let Some(name) = &self.delete_selection {
-            Question::Delete {
-                name: name.clone(),
-            }
+            Question::delete(name.clone())
         } else if let Some((device, suggested)) = &self.rename_state {
-            Question::Rename {
-                name: device.name.clone(),
-                suggested: suggested.clone(),
-            }
+            Question::rename(device.name.clone(), suggested.clone())
         } else if let Some(device) = &self.rotation_pending {
-            Question::TrustKey {
-                name: device.name.clone(),
-            }
+            Question::trust_key(device.name.clone())
         } else if self.install_key_mode {
             // For now, use a simple question - full interactive selection comes later
-            Question::InstallKeyConfirm {
-                from_user: std::env::var("USER").unwrap_or_else(|_| "unknown".to_string()),
-                from_device: ctx.local_name.to_string(),
-                to_user: self.install_key_user.clone().unwrap_or_else(|| "unknown".to_string()),
-                to_device: self.install_key_target.clone().unwrap_or_else(|| "unknown".to_string()),
-            }
+            Question::install_key_confirm(
+                std::env::var("USER").unwrap_or_else(|_| "unknown".to_string()),
+                ctx.local_name.to_string(),
+                self.install_key_user.clone().unwrap_or_else(|| "unknown".to_string()),
+                self.install_key_target.clone().unwrap_or_else(|| "unknown".to_string()),
+            )
         } else if self.remove_key_mode {
             // For now, use a simple question - full interactive selection comes later
-            Question::RemoveKeyConfirm {
-                connection_id: self.remove_key_connection.clone().unwrap_or_else(|| "unknown".to_string()),
-                from_user: std::env::var("USER").unwrap_or_else(|_| "unknown".to_string()),
-                from_device: ctx.local_name.to_string(),
-                to_user: "unknown".to_string(),
-                to_device: "unknown".to_string(),
-            }
+            Question::remove_key_confirm(
+                self.remove_key_connection.clone().unwrap_or_else(|| "unknown".to_string()),
+                std::env::var("USER").unwrap_or_else(|_| "unknown".to_string()),
+                ctx.local_name.to_string(),
+                "unknown".to_string(),
+                "unknown".to_string(),
+            )
         } else if plain
             && !ctx.dry_run
             && let Some(device) = self.pending_devices.front()
         {
-            Question::AddDevice {
-                name: device.name.clone(),
-                ip: device.ip.clone(),
-            }
+            Question::add_device(device.name.clone(), device.ip.clone())
         } else {
-            Question::Idle
+            Question::idle()
         }
     }
 

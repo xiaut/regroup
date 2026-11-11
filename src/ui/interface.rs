@@ -31,7 +31,7 @@ impl Ui {
                 log_rx,
                 log: Vec::new(),
                 log_scroll: 0,
-                question: Question::Idle,
+                question: Question::idle(),
                 input: String::new(),
                 detected: Vec::new(),
                 added: Vec::new(),
