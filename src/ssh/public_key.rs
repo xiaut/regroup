@@ -192,10 +192,13 @@ pub fn compute_fingerprint_from_public_key(public_key: &str) -> Option<SshFinger
         // ssh-keygen expects the key in the format that ssh-keyscan produces
         // which is: hostname key_type key_base64
         // But we only have key_type key_base64, so we need to add a dummy hostname
-        let key_with_hostname = format!("dummy {}", public_key);
+        // The line must end with a newline for ssh-keygen to recognize it
+        let key_with_hostname = format!("dummy {}\n", public_key);
         if stdin.write_all(key_with_hostname.as_bytes()).is_err() {
             return None;
         }
+        // Explicitly drop stdin to close the pipe and signal EOF to ssh-keygen
+        drop(stdin);
     }
 
     let output = match child.wait_with_output() {
