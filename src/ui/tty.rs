@@ -90,22 +90,22 @@ fn calculate_question_height(question: &Question, ctx: &QuestionCtx, width: u16)
                 ActivePane::Detected if ctx.pending > 0 => {
                     (
                         "Detected devices".to_string(),
-                        "[q/Esc] no pane   [Up/Dn] select   [a] add   [n] ignore   [?] help".to_string(),
+                        "[q] no pane   [Up/Dn] select   [a] add   [n] ignore   [?] help".to_string(),
                     )
                 }
                 ActivePane::Detected => {
-                    ("Detected devices".to_string(), "[q/Esc] no pane   [?] help".to_string())
+                    ("Detected devices".to_string(), "[q] no pane   [?] help".to_string())
                 }
                 ActivePane::Added => {
                     (
                         "Added devices".to_string(),
-                        "[q/Esc] no pane   [Up/Dn] select   [i] install key   [r] remove key   [d] delete   [s] sync   [w] wipe   [c] setup-cd   [?] help".to_string(),
+                        "[q] no pane   [Up/Dn] select   [i] install key   [r] remove key   [d] delete   [s] sync   [w] wipe   [c] setup-cd   [?] help".to_string(),
                     )
                 }
                 ActivePane::Logs => {
                     (
                         if ctx.verbose { "Logs - verbose" } else { "Logs" }.to_string(),
-                        "[q/Esc] no pane   [Up/Dn] scroll line   [PgUp/PgDn] scroll page   [v] toggle verbose   [?] help".to_string(),
+                        "[q] no pane   [Up/Dn] scroll line   [PgUp/PgDn] scroll page   [v] toggle verbose   [?] help".to_string(),
                     )
                 }
             };
@@ -389,14 +389,6 @@ impl TtyUi {
                 return Some(Action::Quit);
             }
             // For AddDevice, fall through to its specific handler
-        }
-        
-        // Escape returns to Main menu from any pane (unless in modal)
-        if !in_modal && matches!(key.code, crossterm::event::KeyCode::Esc) {
-            self.active_pane = ActivePane::MainMenu;
-            self.detected_selected = None;
-            self.added_selected = None;
-            return Some(Action::BackToMainMenu);
         }
         
         // Handle help panel scrolling

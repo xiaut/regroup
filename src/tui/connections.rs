@@ -109,7 +109,7 @@ pub fn handle_connections(
 
         match &mut screen {
             Screen::DeviceList { selected } => match key.code {
-                KeyCode::Char('q') | KeyCode::Esc => return Ok(ConnectionResult::None),
+                KeyCode::Char('q') => return Ok(ConnectionResult::None),
                 KeyCode::Up => *selected = selected.saturating_sub(1),
                 KeyCode::Down => *selected = (*selected + 1).min(devices.len() - 1),
                 KeyCode::Enter => {
@@ -128,7 +128,7 @@ pub fn handle_connections(
                 selected,
                 ..
             } => match key.code {
-                KeyCode::Esc => screen = Screen::DeviceList { selected: 0 },
+                KeyCode::Char('q') => screen = Screen::DeviceList { selected: 0 },
                 KeyCode::Up => *selected = selected.saturating_sub(1),
                 KeyCode::Down => {
                     if !items.is_empty() {
@@ -147,7 +147,6 @@ pub fn handle_connections(
                 KeyCode::Char('a') | KeyCode::Char('d') => screen = Screen::Message {
                     text: NOT_IMPLEMENTED.to_string(),
                 },
-                KeyCode::Char('q') => return Ok(ConnectionResult::None),
                 _ => {}
             },
             Screen::ConnectionDetails {
@@ -157,7 +156,7 @@ pub fn handle_connections(
                 // Any quit key goes back to the device whose directory
                 // holds this file: source device for an outgoing
                 // connection, target device for an incoming one.
-                if matches!(key.code, KeyCode::Esc | KeyCode::Char('q') | KeyCode::Enter) {
+                if matches!(key.code, KeyCode::Char('q') | KeyCode::Enter) {
                     let device = match direction {
                         ConnDirection::Outgoing => connection.from_device.clone(),
                         ConnDirection::Incoming => connection.to_device.clone(),
