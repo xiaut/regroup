@@ -3,6 +3,7 @@
 //! Provides functions for displaying messages through the UI, either in the
 //! activity pane (full-screen mode) or on stdout (plain mode).
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 use std::sync::mpsc::Sender;
 use std::time::Duration;
@@ -13,6 +14,22 @@ use super::types::{Level, UiEvent};
 
 /// Maximum number of activity messages kept for display.
 pub const LOG_CAP: usize = 1000;
+
+/// Global atomic flag to indicate whether logs should go directly to stdout.
+/// This is used when temporarily switching from TUI to CLI mode.
+/// When true, log() and log_device() print directly to stdout instead of
+/// sending to the channel.
+static DIRECT_OUTPUT_MODE: AtomicBool = AtomicBool::new(false);
+
+/// Check if we're in direct output mode.
+fn is_direct_output_mode() -> bool {
+    DIRECT_OUTPUT_MODE.load(Ordering::Relaxed)
+}
+
+/// Set direct output mode on or off.
+pub fn set_direct_output_mode(enabled: bool) {
+    DIRECT_OUTPUT_MODE.store(enabled, Ordering::Relaxed);
+}
 
 /// How long a machine's row keeps its animated status.
 pub const FLASH_MS: u64 = 2500;
@@ -31,11 +48,15 @@ pub static LOG_TX: OnceLock<Sender<UiEvent>> = OnceLock::new();
 /// Display a general message: in the activity pane once the full-screen ui
 /// runs, on stdout otherwise.
 pub fn log(msg: &str) {
-    match LOG_TX.get() {
-        Some(tx) => {
-            let _ = tx.send(UiEvent::Global(msg.to_string()));
+    if is_direct_output_mode() {
+        println!("{msg}");
+    } else {
+        match LOG_TX.get() {
+            Some(tx) => {
+                let _ = tx.send(UiEvent::Global(msg.to_string()));
+            }
+            None => println!("{msg}"),
         }
-        None => println!("{msg}"),
     }
 }
 
@@ -49,20 +70,27 @@ pub fn log_device(
     msg: &str,
     detail: Option<&str>,
 ) {
-    match LOG_TX.get() {
-        Some(tx) => {
-            let _ = tx.send(UiEvent::Device {
-                key: key.as_str().to_string(),
-                name: name.to_string(),
-                level,
-                msg: msg.to_string(),
-                detail: detail.map(str::to_string),
-            });
-        }
-        None => match detail {
+    if is_direct_output_mode() {
+        match detail {
             Some(detail) => println!("{detail}"),
             None => println!("{name}: {msg}"),
-        },
+        }
+    } else {
+        match LOG_TX.get() {
+            Some(tx) => {
+                let _ = tx.send(UiEvent::Device {
+                    key: key.as_str().to_string(),
+                    name: name.to_string(),
+                    level,
+                    msg: msg.to_string(),
+                    detail: detail.map(str::to_string),
+                });
+            }
+            None => match detail {
+                Some(detail) => println!("{detail}"),
+                None => println!("{name}: {msg}"),
+            },
+        }
     }
 }
 

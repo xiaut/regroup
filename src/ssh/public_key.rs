@@ -114,17 +114,34 @@ fn get_server_public_key_via_keyscan() -> Option<SshPublicKey> {
         .arg("3")
         .arg("127.0.0.1")
         .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .output();
 
-    let raw = match scan {
-        Ok(o) if o.status.success() && !o.stdout.is_empty() => o.stdout,
-        _ => return None,
+    let output = match scan {
+        Ok(o) => o,
+        Err(_) => return None,
     };
 
-    let output = String::from_utf8_lossy(&raw);
+    // Log stderr if present
+    if !output.stderr.is_empty() {
+        let stderr_str = String::from_utf8_lossy(&output.stderr);
+        for line in stderr_str.lines() {
+            if !line.is_empty() {
+                crate::ui::log(&format!("ssh-keyscan: {}", line));
+            }
+        }
+    }
+
+    let raw = if output.status.success() && !output.stdout.is_empty() {
+        output.stdout
+    } else {
+        return None;
+    };
+
+    let output_str = String::from_utf8_lossy(&raw);
     // ssh-keyscan output: "127.0.0.1 ssh-rsa AAAAB3NzaC1..."
     // We want to extract just "ssh-rsa AAAAB3NzaC1..." (the key_type key_base64 part)
-    for line in output.lines() {
+    for line in output_str.lines() {
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.len() >= 3 {
             // The key is parts[1] and parts[2] (key_type and key_base64)
@@ -180,7 +197,8 @@ pub fn compute_fingerprint_from_public_key(public_key: &str) -> Option<SshFinger
     cmd.arg("-lf")
         .arg("-")
         .stdin(Stdio::piped())
-        .stdout(Stdio::piped());
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
 
     let mut child = match cmd.spawn() {
         Ok(c) => c,
@@ -205,6 +223,16 @@ pub fn compute_fingerprint_from_public_key(public_key: &str) -> Option<SshFinger
         Ok(o) => o,
         Err(_) => return None,
     };
+
+    // Log stderr if present
+    if !output.stderr.is_empty() {
+        let stderr_str = String::from_utf8_lossy(&output.stderr);
+        for line in stderr_str.lines() {
+            if !line.is_empty() {
+                crate::ui::log(&format!("ssh-keygen: {}", line));
+            }
+        }
+    }
 
     if !output.status.success() {
         return None;
@@ -261,12 +289,31 @@ fn keyscan(ip: &str, port: u16) -> std::io::Result<String> {
         .arg(port.to_string())
         .arg(ip)
         .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .output();
 
     match output {
-        Ok(o) if o.status.success() && !o.stdout.is_empty() => String::from_utf8(o.stdout)
-            .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid key data")),
-        _ => Err(std::io::Error::new(
+        Ok(o) => {
+            // Log stderr if present
+            if !o.stderr.is_empty() {
+                let stderr_str = String::from_utf8_lossy(&o.stderr);
+                for line in stderr_str.lines() {
+                    if !line.is_empty() {
+                        crate::ui::log(&format!("ssh-keyscan: {}", line));
+                    }
+                }
+            }
+            if o.status.success() && !o.stdout.is_empty() {
+                String::from_utf8(o.stdout)
+                    .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid key data"))
+            } else {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionRefused,
+                    "host unreachable",
+                ))
+            }
+        }
+        Err(_) => Err(std::io::Error::new(
             std::io::ErrorKind::ConnectionRefused,
             "host unreachable",
         )),

@@ -41,7 +41,7 @@ pub fn generate_key_pair(from_user: &str, to_machine: &str) -> Result<PathBuf, S
     }
     
     // Generate new ed25519 key with empty passphrase
-    let status = Command::new("ssh-keygen")
+    let output = Command::new("ssh-keygen")
         .arg("-t")
         .arg("ed25519")
         .arg("-N")
@@ -50,11 +50,23 @@ pub fn generate_key_pair(from_user: &str, to_machine: &str) -> Result<PathBuf, S
         .arg(&key_path)
         .arg("-C")
         .arg(&format!("regroup:{}->{}@{}", from_user, from_user, to_machine))
-        .status()
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
         .map_err(|e| format!("Cannot run ssh-keygen: {}", e))?;
     
-    if !status.success() {
-        return Err(format!("ssh-keygen failed: {}", status));
+    // Log stderr if present
+    if !output.stderr.is_empty() {
+        let stderr_str = String::from_utf8_lossy(&output.stderr);
+        for line in stderr_str.lines() {
+            if !line.is_empty() {
+                crate::ui::log(&format!("ssh-keygen: {}", line));
+            }
+        }
+    }
+    
+    if !output.status.success() {
+        return Err(format!("ssh-keygen failed: {}", output.status));
     }
     
     // Set proper permissions
@@ -150,7 +162,7 @@ pub fn remove_authorized_key(public_key: &str) -> Result<(), String> {
 /// Check if a machine is reachable via SSH
 #[allow(dead_code)]
 pub fn is_reachable(host: &str, port: u16, user: &str) -> bool {
-    Command::new("ssh")
+    let output = Command::new("ssh")
         .arg("-o")
         .arg("ConnectTimeout=5")
         .arg("-o")
@@ -159,9 +171,26 @@ pub fn is_reachable(host: &str, port: u16, user: &str) -> bool {
         .arg("-p")
         .arg(port.to_string())
         .arg("true")
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output();
+    
+    match output {
+        Ok(o) => {
+            // Log stderr if present (but don't fail on connection errors)
+            if !o.stderr.is_empty() {
+                let stderr_str = String::from_utf8_lossy(&o.stderr);
+                // Only log the last line to avoid spam
+                if let Some(last_line) = stderr_str.lines().last() {
+                    if !last_line.is_empty() {
+                        crate::ui::log(&format!("ssh: {}", last_line));
+                    }
+                }
+            }
+            o.status.success()
+        }
+        Err(_) => false,
+    }
 }
 
 /// Get the config directory path

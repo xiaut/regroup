@@ -133,8 +133,15 @@ impl Ui {
                 // Restore the terminal (leave alternate screen, disable raw mode)
                 ratatui::restore();
 
+                // Enable direct output mode so logs are printed to stdout immediately
+                // instead of being queued in the channel
+                crate::ui::set_direct_output_mode(true);
+
                 // Execute the function
                 let result = f();
+
+                // Disable direct output mode
+                crate::ui::set_direct_output_mode(false);
 
                 // Reinitialize the terminal
                 // Note: ratatui::init() panics on failure, which is acceptable here

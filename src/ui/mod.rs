@@ -26,5 +26,5 @@ pub mod types;
 
 // Re-export the main UI types and functions for convenience
 pub use interface::Ui;
-pub use logging::{log, log_device, pulse_device, restore};
+pub use logging::{log, log_device, pulse_device, restore, set_direct_output_mode};
 pub use types::{Action, Device, Level, Question};
