@@ -59,6 +59,10 @@ pub fn git_pull_remote(repo_path: &Path, remote_name: &str) -> io::Result<()> {
         return Ok(());
     }
 
+    crate::ui::log(&format!(
+        "Pulling from git remote '{}' (may prompt for password)...",
+        remote_name
+    ));
     let mut cmd = std::process::Command::new("git");
     cmd.current_dir(repo_path)
         .arg("pull")
@@ -82,6 +86,10 @@ pub fn git_push_remote(repo_path: &Path, remote_name: &str) -> io::Result<()> {
         return Ok(());
     }
 
+    crate::ui::log(&format!(
+        "Pushing to git remote '{}' (may prompt for password)...",
+        remote_name
+    ));
     let mut cmd = std::process::Command::new("git");
     cmd.current_dir(repo_path)
         .arg("push")

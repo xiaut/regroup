@@ -162,6 +162,10 @@ pub fn remove_authorized_key(public_key: &str) -> Result<(), String> {
 /// Check if a machine is reachable via SSH
 #[allow(dead_code)]
 pub fn is_reachable(host: &str, port: u16, user: &str) -> bool {
+    crate::ui::log(&format!(
+        "Checking if {}@{} on port {} is reachable via SSH...",
+        user, host, port
+    ));
     let output = Command::new("ssh")
         .arg("-o")
         .arg("ConnectTimeout=5")

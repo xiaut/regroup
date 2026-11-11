@@ -66,6 +66,7 @@ pub fn git_init(repo_path: &Path) -> io::Result<()> {
 
     fs::create_dir_all(repo_path)?;
 
+    crate::ui::log("Initializing git repository...");
     let mut cmd = Command::new("git");
     cmd.current_dir(repo_path).arg("init");
     let output = quiet(cmd)?;

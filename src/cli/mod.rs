@@ -74,6 +74,7 @@ pub fn run_selftest() -> ! {
     // compute_fingerprint_from_public_key matches ssh-keygen -lf's output.
     // (Config parsing and beacon signing are covered by `cargo test`.)
     {
+        println!("Generating test SSH key for fingerprint verification...");
         let key_path = PathBuf::from("/tmp/regroup-selftest-key");
         let pub_path = PathBuf::from("/tmp/regroup-selftest-key.pub");
         let _ = fs::remove_file(&key_path);

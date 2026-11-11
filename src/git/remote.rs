@@ -79,6 +79,10 @@ pub fn git_add_remote(repo_path: &Path, remote_name: &str, remote_url: &str) -> 
         Some(existing_url) => {
             if existing_url != remote_url {
                 // Update existing remote
+                crate::ui::log(&format!(
+                    "Updating git remote '{}' (may prompt for authentication)...",
+                    remote_name
+                ));
                 let mut cmd = Command::new("git");
                 cmd.current_dir(repo_path)
                     .arg("remote")
@@ -94,6 +98,10 @@ pub fn git_add_remote(repo_path: &Path, remote_name: &str, remote_url: &str) -> 
         }
         None => {
             // Add new remote
+            crate::ui::log(&format!(
+                "Adding git remote '{}' (may prompt for authentication)...",
+                remote_name
+            ));
             let mut cmd = Command::new("git");
             cmd.current_dir(repo_path)
                 .arg("remote")
@@ -115,6 +123,10 @@ pub fn git_remove_remote(repo_path: &Path, remote_name: &str) -> io::Result<()> 
         return Ok(());
     }
 
+    crate::ui::log(&format!(
+        "Removing git remote '{}' (may prompt for authentication)...",
+        remote_name
+    ));
     let mut cmd = Command::new("git");
     cmd.current_dir(repo_path)
         .arg("remote")
