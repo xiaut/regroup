@@ -75,6 +75,15 @@ pub fn install_key_action(
     let public_key = get_public_key(&key_path)
         .map_err(|e| format!("Failed to read public key: {}", e))?;
     
+    // Log SSH connection details
+    crate::ui::log(&format!(
+        "Connecting via SSH to {}@{} on port {} to install key...",
+        to_user, to_machine, to_port
+    ));
+    crate::ui::log(
+        "Note: If the remote machine requires password authentication, you will be prompted for a password."
+    );
+    
     // Build the command for the remote machine
     // Use separate arguments to avoid shell quoting issues
     let mut ssh_cmd = Command::new("ssh");
@@ -82,7 +91,7 @@ pub fn install_key_action(
     if to_port != 22 {
         ssh_cmd.arg("-p").arg(to_port.to_string());
     }
-    let status = ssh_cmd
+    let output = ssh_cmd
         .arg("regroup")
         .arg("receive-install-key")
         .arg("--source-user")
@@ -93,41 +102,56 @@ pub fn install_key_action(
         .arg(&public_key)
         .arg("--connection-id")
         .arg(connection_id)
-        .status();
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output();
     
-    match status {
-        Ok(exit_status) if exit_status.success() => {
-            // Save connection file on source machine
-            let connection = Connection::new(
-                current_user,
-                local_machine,
-                to_user,
-                to_machine,
-                &public_key,
-                &key_path.to_string_lossy(),
-                &chrono::Utc::now().to_rfc3339(),
-            );
+    match output {
+        Ok(output) => {
+            // Log stderr to help user understand what's happening (e.g., password prompts)
+            if !output.stderr.is_empty() {
+                let stderr_str = String::from_utf8_lossy(&output.stderr);
+                for line in stderr_str.lines() {
+                    if !line.is_empty() {
+                        crate::ui::log(&format!("ssh {}@{}: {}", to_user, to_machine, line));
+                    }
+                }
+            }
             
-            save_connection(
-                config_dir,
-                local_machine,
-                &connection,
-                current_user,
-            ).map_err(|e| format!("Failed to save connection: {}", e))?;
-            
-            // Commit on source machine
-            let connections_dir = config_dir.join("devices").join(local_machine).join("connections");
-            let config_dir_path = get_config_dir();
-            
-            git_add_and_commit_file(
-                &config_dir_path,
-                &connections_dir,
-                &format!("Add connection: {}->{}@{}", current_user, to_user, to_machine),
-            ).map_err(|e| format!("Failed to commit: {}", e))?;
-            
-            Ok(KeyActionResult::Success(format!("Key installed successfully on {}", to_machine)))
+            if output.status.success() {
+                // Save connection file on source machine
+                let connection = Connection::new(
+                    current_user,
+                    local_machine,
+                    to_user,
+                    to_machine,
+                    &public_key,
+                    &key_path.to_string_lossy(),
+                    &chrono::Utc::now().to_rfc3339(),
+                );
+                
+                save_connection(
+                    config_dir,
+                    local_machine,
+                    &connection,
+                    current_user,
+                ).map_err(|e| format!("Failed to save connection: {}", e))?;
+                
+                // Commit on source machine
+                let connections_dir = config_dir.join("devices").join(local_machine).join("connections");
+                let config_dir_path = get_config_dir();
+                
+                git_add_and_commit_file(
+                    &config_dir_path,
+                    &connections_dir,
+                    &format!("Add connection: {}->{}@{}", current_user, to_user, to_machine),
+                ).map_err(|e| format!("Failed to commit: {}", e))?;
+                
+                Ok(KeyActionResult::Success(format!("Key installed successfully on {}", to_machine)))
+            } else {
+                Ok(KeyActionResult::Error(format!("Failed to install on {}", to_machine)))
+            }
         }
-        Ok(_) => Ok(KeyActionResult::Error(format!("Failed to install on {}", to_machine))),
         Err(e) => Ok(KeyActionResult::Error(format!("SSH error: {}", e))),
     }
 }
@@ -161,6 +185,15 @@ pub fn remove_key_action(
         )));
     }
     
+    // Log SSH connection details
+    crate::ui::log(&format!(
+        "Connecting via SSH to {}@{} on port {} to remove key...",
+        to_user, to_machine, to_port
+    ));
+    crate::ui::log(
+        "Note: If the remote machine requires password authentication, you will be prompted for a password."
+    );
+    
     // Build the command for the remote machine
     // Use separate arguments to avoid shell quoting issues
     let mut ssh_cmd = Command::new("ssh");
@@ -168,37 +201,52 @@ pub fn remove_key_action(
     if to_port != 22 {
         ssh_cmd.arg("-p").arg(to_port.to_string());
     }
-    let status = ssh_cmd
+    let output = ssh_cmd
         .arg("regroup")
         .arg("receive-remove-key")
         .arg("--connection-id")
         .arg(connection_id)
-        .status();
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output();
     
-    match status {
-        Ok(exit_status) if exit_status.success() => {
-            // Delete connection file on source machine
-            let connections_dir = config_dir.join("devices").join(local_machine).join("connections");
-            let connection_file_name = format!("{}->{}@{}.json", current_user, to_user, to_machine);
-            let connection_path = connections_dir.join(connection_file_name);
-            
-            if connection_path.exists() {
-                std::fs::remove_file(&connection_path)
-                    .map_err(|e| format!("Failed to remove connection file: {}", e))?;
+    match output {
+        Ok(output) => {
+            // Log stderr to help user understand what's happening (e.g., password prompts)
+            if !output.stderr.is_empty() {
+                let stderr_str = String::from_utf8_lossy(&output.stderr);
+                for line in stderr_str.lines() {
+                    if !line.is_empty() {
+                        crate::ui::log(&format!("ssh {}@{}: {}", to_user, to_machine, line));
+                    }
+                }
             }
             
-            // Commit on source machine
-            let config_dir_path = get_config_dir();
-            
-            git_add_and_commit_file(
-                &config_dir_path,
-                &connections_dir,
-                &format!("Remove connection: {}->{}@{}", current_user, to_user, to_machine),
-            ).map_err(|e| format!("Failed to commit: {}", e))?;
-            
-            Ok(KeyActionResult::Success(format!("Key removed successfully from {}", to_machine)))
+            if output.status.success() {
+                // Delete connection file on source machine
+                let connections_dir = config_dir.join("devices").join(local_machine).join("connections");
+                let connection_file_name = format!("{}->{}@{}.json", current_user, to_user, to_machine);
+                let connection_path = connections_dir.join(connection_file_name);
+                
+                if connection_path.exists() {
+                    std::fs::remove_file(&connection_path)
+                        .map_err(|e| format!("Failed to remove connection file: {}", e))?;
+                }
+                
+                // Commit on source machine
+                let config_dir_path = get_config_dir();
+                
+                git_add_and_commit_file(
+                    &config_dir_path,
+                    &connections_dir,
+                    &format!("Remove connection: {}->{}@{}", current_user, to_user, to_machine),
+                ).map_err(|e| format!("Failed to commit: {}", e))?;
+                
+                Ok(KeyActionResult::Success(format!("Key removed successfully from {}", to_machine)))
+            } else {
+                Ok(KeyActionResult::Error(format!("Failed to remove from {}", to_machine)))
+            }
         }
-        Ok(_) => Ok(KeyActionResult::Error(format!("Failed to remove from {}", to_machine))),
         Err(e) => Ok(KeyActionResult::Error(format!("SSH error: {}", e))),
     }
 }

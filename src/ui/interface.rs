@@ -136,6 +136,9 @@ impl Ui {
                 // Enable direct output mode so logs are printed to stdout immediately
                 // instead of being queued in the channel
                 crate::ui::set_direct_output_mode(true);
+                
+                // Inform user we're in temporary CLI mode
+                println!("\n--- Temporary CLI mode (Press Enter to return to TUI) ---");
 
                 // Execute the function
                 let result = f();
