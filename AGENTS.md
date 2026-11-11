@@ -1,11 +1,18 @@
 # AGENTS.md for `regroup`
 
-## Contributing
+## FIRST STEP - Always run these commands
 
-### Context
+When you begin ANY work on this repository, your first action must be to run:
 
-As soon as you are asked to contribute, you must run this command `tree -I ".git|target" --dirsfirst` and read the file `Cargo.toml`.
+```bash
+tree -I ".git|target" --dirsfirst
+cat Cargo.toml
+```
 
-### Language
+**This is mandatory.** Do not read files, do not plan, do not ask questions. Run these commands first.
 
-All code, commits, and documentation must be in English. This is an English-language repository.
+## Why
+
+These commands provide the complete project structure and configuration that you need for every task. Without them, you lack essential context.
+
+For additional documentation, see the `docs/` directory.
