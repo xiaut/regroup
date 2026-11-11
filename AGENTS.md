@@ -4,12 +4,7 @@
 
 ### Context
 
-You must execute this script now to get the context of the project.
-
-```bash
-cat Cargo.toml
-tree -I ".git|target" --dirsfirst
-```
+As soon as you are asked to contribute, you must run this command `tree -I ".git|target" --dirsfirst` and read the file `Cargo.toml`.
 
 ### Language
 
