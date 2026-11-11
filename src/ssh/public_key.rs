@@ -194,9 +194,6 @@ fn normalize_public_key(public_key: &str) -> Option<String> {
         "sk-ssh-ed25519@openssh.com", "sk-ecdsa-sha2-nistp256@openssh.com"];
     
     let parts: Vec<&str> = public_key.split_whitespace().collect();
-    if parts.len() < 2 {
-        return None;
-    }
     
     // Try to find a known key type in the parts
     let mut key_start = 0;
@@ -207,13 +204,17 @@ fn normalize_public_key(public_key: &str) -> Option<String> {
         }
     }
     
-    // If no known key type found, assume the first two parts are the key
-    // (this handles standard format without hostname)
-    if key_start >= parts.len() - 1 {
-        key_start = 0;
+    // Ensure we have at least 2 parts starting from key_start
+    // If no known key type found, start from beginning
+    // If key_start is too close to end, start from beginning
+    if key_start <= parts.len() - 2 {
+        Some(parts[key_start..key_start+2].join(" "))
+    } else if parts.len() >= 2 {
+        // Fallback: use first two parts
+        Some(parts[0..2].join(" "))
+    } else {
+        None
     }
-    
-    Some(parts[key_start..key_start+2].join(" "))
 }
 
 /// Compute SHA256 fingerprint from a public key string (OpenSSH format)
