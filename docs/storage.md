@@ -30,8 +30,8 @@ Each device file contains:
 **Critical rule**: A device only writes inside `devices/<its own name>/`.
 
 - `users/` and `connections/` files are **never** written by peers
-- Exception: `device.json` can also be written by a device that discovers new knowledge about a peer (on acceptance), to bootstrap git remotes
-- This rule prevents concurrent modification conflicts
+- `device.json` is **only** written by the device itself
+- This rule prevents concurrent modification conflicts and ensures data consistency
 
 ## Conflict Resolution
 

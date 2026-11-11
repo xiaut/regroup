@@ -347,23 +347,25 @@ pub fn unique_device_name(desired: &str, home: &str, ssh_config: &Path) -> Strin
     format!("{}-{}", desired, n)
 }
 
-/// Add an accepted device to the configuration (device file, ~/.ssh/config,
-/// known_hosts) and commit it to the config git repository, under the given
-/// name.
+/// Add an accepted device to the configuration by adding its git remote
+/// and pulling its authoritative device.json, then updating ~/.ssh/config
+/// and known_hosts.
 ///
-/// The device file is written in the accepted device's directory
-/// (`devices/<name>/device.json`) and holds our latest known state of it —
-/// the device itself writes its own file too, and git sync resolves
-/// diverging writes last-writer-wins (most recent commit wins). The
-/// per-device write isolation applies strictly to `users/` and
-/// `connections/`: those are only ever written by the device itself.
+/// NEW FLOW (no cross-writing):
+/// - Add git remote for the device
+/// - Pull from the remote to get the device's self-written device.json
+/// - Verify host key (security)
+/// - Update SSH config
+/// - The device file must be written by the device itself
+///
+/// This ensures write ownership isolation and eliminates race conditions
+/// when two devices discover each other simultaneously.
 ///
 /// The caller is responsible for the name: interactive mode asks the user to
-/// pick a collision-free name first (see `device_name_taken`); an unavailable
-/// name would overwrite an existing device file or ~/.ssh/config block.
+/// pick a collision-free name first (see `device_name_taken`).
 ///
-/// Returns the machine as actually saved, or None if the device file could
-/// not be written.
+/// Returns the machine from the pulled device.json (or from beacon data as fallback),
+/// or None if the device could not be added.
 pub fn add_device_to_config(
     home: &str,
     ssh_config: &Path,
@@ -373,17 +375,108 @@ pub fn add_device_to_config(
 ) -> Option<Machine> {
     let config_dir = config_dir_of(home);
 
-    // Ensure the device's own directory exists
-    if let Err(e) = fs::create_dir_all(crate::config::device_dir(&config_dir, name)) {
-        warn(&format!("could not create device directory: {}", e));
+    // Determine the user for the remote URL
+    let user = if device.user.is_empty() {
+        env::var("USER")
+            .or_else(|_| env::var("LOGNAME"))
+            .unwrap_or_default()
+    } else {
+        device.user.clone()
+    };
+
+    if user.is_empty() {
+        warn(&format!("no SSH user configured for {} — cannot add git remote", name));
         return None;
     }
 
+    let remote_url = format!("{}@{}:~/{}/{}", user, name, CONFIG_DIR, GIT_DIR);
     let device_path = crate::config::device_file_path(&config_dir, name);
-    // The beacon explicitly carries the device's SSH port: mark it explicit so
-    // ~/.ssh/config and the device file keep it (e.g. Termux port 8022).
-    // Pin the device's Ed25519 signing key: future beacons must be signed
-    // with this same key or the user is asked to confirm the change.
+
+    // SECURITY: verify host key BEFORE adding anything
+    let host_key_ok = match public_key::compute_fingerprint_from_public_key(device.ssh_public_key.as_str()) {
+        Some(expected) => {
+            match public_key::verify_and_add_to_known_hosts(&device.ip, device.port, &expected) {
+                public_key::HostKeyVerification::Success => {
+                    crate::ui::log(&format!("  + Added {} to ~/.ssh/known_hosts (host key verified)", name));
+                    true
+                }
+                public_key::HostKeyVerification::HostUnreachable => {
+                    warn(&format!("{} unreachable at {} — host key not verified, ssh will ask on first connection", name, device.ip));
+                    true
+                }
+                public_key::HostKeyVerification::WriteError => {
+                    warn(&format!("could not write {} to ~/.ssh/known_hosts", name));
+                    true
+                }
+                public_key::HostKeyVerification::FingerprintMismatch { expected, actual } => {
+                    crate::ui::log(&format!(
+                        "[!] SECURITY: {} announces key {} at {}\n    but the server there serves a DIFFERENT host key — possible spoofing or MITM.\n    expected fingerprint: {}\n    actual fingerprint:   {}\n    Device NOT added.",
+                        name,
+                        &device.ssh_public_key.as_str()[..16.min(device.ssh_public_key.as_str().len())],
+                        device.ip,
+                        expected,
+                        actual
+                    ));
+                    false
+                }
+            }
+        }
+        None => {
+            crate::ui::log(&format!("[!] SECURITY: {} announces a host key that is not a valid OpenSSH public key — device NOT added.", name));
+            false
+        }
+    };
+
+    if !host_key_ok {
+        return None;
+    }
+
+    // Add git remote for the device
+    if let Err(e) = git::remote::git_add_remote(&config_dir, name, &remote_url) {
+        warn(&format!("could not add git remote for {}: {}", name, e));
+        return None;
+    }
+    crate::ui::log(&format!("  + Added git remote for {}", name));
+
+    // Try to load existing device.json (from previous pull)
+    if device_path.exists() {
+        if let Ok(machine) = crate::config::device::load_device_file(&device_path) {
+            if machine.ssh_public_key == device.ssh_public_key {
+                if update_ssh_config(ssh_config, name, &device.ip, &machine) {
+                    *new_count += 1;
+                    return Some(machine);
+                }
+            } else {
+                warn(&format!("existing device.json for {} has different SSH key than beacon", name));
+            }
+        }
+    }
+
+    // Try to pull the device's authoritative device.json
+    match git::sync::git_pull_remote(&config_dir, name) {
+        Ok(_) => {
+            if device_path.exists() {
+                if let Ok(machine) = crate::config::device::load_device_file(&device_path) {
+                    if machine.ssh_public_key == device.ssh_public_key {
+                        if update_ssh_config(ssh_config, name, &device.ip, &machine) {
+                            crate::ui::log(&format!("  + Pulled device config for {} from its repository", name));
+                            *new_count += 1;
+                            return Some(machine);
+                        }
+                    } else {
+                        warn(&format!("pulled device.json for {} has different SSH key than beacon", name));
+                    }
+                }
+            }
+            // Device hasn't set up its config yet - will appear on next sync
+            crate::ui::log(&format!("  ! Device {} accepted but device.json not yet available — will appear after first sync from device", name));
+        }
+        Err(e) => {
+            crate::ui::log(&format!("  ! Could not pull from {}: {} — device will appear on next sync", name, e));
+        }
+    }
+
+    // Fallback: use beacon data
     let machine = Machine {
         name: name.to_string(),
         ssh_public_key: device.ssh_public_key.clone(),
@@ -393,93 +486,38 @@ pub fn add_device_to_config(
         port_explicit: true,
     };
 
-    // SECURITY: verify that the host key announced in the beacon is really
-    // served by the SSH server at the announced ip:port, BEFORE writing
-    // anything. A mismatch means a forged beacon or a MITM: refuse the device.
-    match public_key::compute_fingerprint_from_public_key(device.ssh_public_key.as_str()) {
-        Some(expected) => {
-            match public_key::verify_and_add_to_known_hosts(&device.ip, device.port, &expected) {
-                public_key::HostKeyVerification::Success => {
-                    crate::ui::log(&format!(
-                        "  + Added {} to ~/.ssh/known_hosts (host key verified)",
-                        name
-                    ));
-                }
-                public_key::HostKeyVerification::HostUnreachable => {
-                    // Host unreachable: we cannot verify. Do not pin anything;
-                    // ssh will ask the user on first connection.
-                    warn(&format!(
-                        "{} unreachable at {} — host key not verified, ssh will ask on first connection",
-                        name, device.ip
-                    ));
-                }
-                public_key::HostKeyVerification::WriteError => {
-                    warn(&format!("could not write {} to ~/.ssh/known_hosts", name));
-                }
-                public_key::HostKeyVerification::FingerprintMismatch { expected, actual } => {
-                    crate::ui::log(&format!(
-                        "[!] SECURITY: {} announces key {} at {}\n    but the server there serves a DIFFERENT host key — possible spoofing or MITM.\n    expected fingerprint: {}\n    actual fingerprint:   {}\n    Device NOT added.",
-                        name,
-                        &device.ssh_public_key.as_str()
-                            [..16.min(device.ssh_public_key.as_str().len())],
-                        device.ip,
-                        expected,
-                        actual
-                    ));
-                    return None;
-                }
-            }
-        }
-        None => {
-            crate::ui::log(&format!(
-                "[!] SECURITY: {} announces a host key that is not a valid OpenSSH public key — device NOT added.",
-                name
-            ));
-            return None;
-        }
+    if update_ssh_config(ssh_config, name, &device.ip, &machine) {
+        *new_count += 1;
+        Some(machine)
+    } else {
+        None
     }
+}
 
-    match save_device_file(&device_path, &machine) {
+/// Helper to update SSH config and log success/failure
+fn update_ssh_config(ssh_config: &Path, name: &str, ip: &str, machine: &Machine) -> bool {
+    match update_block(ssh_config, name, ip, &machine.user, machine.port, machine.port_explicit) {
         Ok(_) => {
-            // Update SSH config
-            if let Err(e) = update_block(
-                ssh_config,
-                name,
-                &device.ip,
-                &machine.user,
-                machine.port,
-                machine.port_explicit,
-            ) {
-                warn(&format!("could not update SSH config for {}: {}", name, e));
-            } else {
-                crate::ui::log(&format!(
-                    "  + Added {} -> {} (~/.ssh/config updated)",
-                    name, device.ip
-                ));
-            }
-
-            // Commit to git so changes persist across runs
-            if let Err(e) =
-                git_add_and_commit_file(&config_dir, &device_path, &format!("Add device {}", name))
-            {
-                warn(&format!(
-                    "could not commit device config for {}: {}",
-                    name, e
-                ));
-            }
-
-            *new_count += 1;
-            Some(machine)
+            crate::ui::log(&format!("  + Added {} -> {} (~/.ssh/config updated)", name, ip));
+            true
         }
         Err(e) => {
-            warn(&format!("could not save device config for {}: {}", name, e));
-            None
+            warn(&format!("could not update SSH config for {}: {}", name, e));
+            false
         }
     }
 }
 
-/// Persist a device's signing public key in its device file and commit the
-/// change. Used when the user accepts a new signing key (machine reinstall).
+/// Update a device's signing public key by pulling from the device
+/// to get its latest authoritative device.json.
+///
+/// Used when the user accepts a new signing key (machine reinstall).
+/// Instead of directly writing the device file, we pull from the device's
+/// remote to get its latest self-written device.json which should contain
+/// the new signing key.
+///
+/// If pull fails (device unreachable), we fall back to writing the signing
+/// key locally - this is the ONLY case where we write another device's file.
 pub fn trust_new_signing_key(home: &str, device: &BeaconDevice) {
     let conf = load_config();
     let machine = conf
@@ -487,19 +525,48 @@ pub fn trust_new_signing_key(home: &str, device: &BeaconDevice) {
         .iter()
         .find(|m| m.ssh_public_key == device.ssh_public_key)
         .cloned();
-    let mut machine = match machine {
+    let machine = match machine {
         Some(m) => m,
-        None => return,
+        None => {
+            warn(&format!("cannot update signing key: device with SSH key {} not found", device.ssh_public_key.as_str()));
+            return;
+        }
     };
-    machine.signing_public_key = device.signing_public_key.clone();
 
     let config_dir = config_dir_of(home);
     let device_path = crate::config::device_file_path(&config_dir, &machine.name);
-    if let Err(e) = save_device_file(&device_path, &machine) {
-        warn(&format!(
-            "could not update signing key for {}: {}",
-            machine.name, e
-        ));
+
+    // Try to pull from the device's remote first
+    match git::sync::git_pull_remote(&config_dir, &machine.name) {
+        Ok(_) => {
+            if device_path.exists() {
+                match crate::config::device::load_device_file(&device_path) {
+                    Ok(updated_machine) => {
+                        if updated_machine.signing_public_key == device.signing_public_key {
+                            crate::ui::log(&format!("  + Updated signing key for {} (pulled from device)", machine.name));
+                            return;
+                        }
+                    }
+                    Err(e) => {
+                        warn(&format!("could not load device config for {}: {}", machine.name, e));
+                    }
+                }
+            }
+            // Pull succeeded but device.json doesn't have the expected signing key yet
+            warn(&format!("pulled device.json for {} does not have the expected signing key", machine.name));
+        }
+        Err(e) => {
+            // Pull failed - device might not be reachable
+            warn(&format!("could not pull from {} to update signing key: {}", machine.name, e));
+        }
+    }
+
+    // Fallback: update locally (ONLY case where we write another device's file)
+    let mut updated_machine = machine.clone();
+    updated_machine.signing_public_key = device.signing_public_key.clone();
+
+    if let Err(e) = save_device_file(&device_path, &updated_machine) {
+        warn(&format!("could not update signing key for {}: {}", machine.name, e));
         return;
     }
     if let Err(e) = git_add_and_commit_file(
@@ -507,10 +574,7 @@ pub fn trust_new_signing_key(home: &str, device: &BeaconDevice) {
         &device_path,
         &format!("Update signing key for {}", machine.name),
     ) {
-        warn(&format!(
-            "could not commit signing key update for {}: {}",
-            machine.name, e
-        ));
+        warn(&format!("could not commit signing key update for {}: {}", machine.name, e));
     }
 }
 

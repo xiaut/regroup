@@ -41,6 +41,7 @@ A **regroup** process does three things simultaneously:
 - Each device has its own directory: `devices/<name>/`
 - Decentralized: every device can push/pull from every other device
 - Last-writer-wins for conflict resolution
+- **Write isolation**: Each device only writes its own `device.json`; accepting a device adds a git remote and pulls its authoritative data
 
 ## Thread Model
 
