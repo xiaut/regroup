@@ -8,14 +8,27 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 /// Run a git command and log its output.
+/// When in direct output mode (temporary CLI mode), stderr is passed through
+/// directly to allow interactive prompts (e.g., password) to work.
 fn quiet(mut cmd: Command) -> io::Result<std::process::Output> {
-    // Capture stdout and stderr
+    // Check if we're in direct output mode (temporary CLI mode from TUI)
+    let direct_mode = crate::ui::logging::is_direct_output_mode();
+    
+    // In direct mode, pass stderr through to terminal for interactive prompts
+    // In normal mode, capture stderr to log it
+    let stderr_config = if direct_mode {
+        Stdio::inherit()  // Pass through to terminal
+    } else {
+        Stdio::piped()    // Capture for logging
+    };
+    
+    // Always capture stdout
     let output = cmd
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(stderr_config)
         .output()?;
     
-    // Log output
+    // Log stdout
     if !output.stdout.is_empty() {
         let stdout_str = String::from_utf8_lossy(&output.stdout);
         for line in stdout_str.lines() {
@@ -24,7 +37,10 @@ fn quiet(mut cmd: Command) -> io::Result<std::process::Output> {
             }
         }
     }
-    if !output.stderr.is_empty() {
+    
+    // In normal mode, stderr was captured - log it
+    // In direct mode, stderr was passed through - don't try to log it
+    if !direct_mode && !output.stderr.is_empty() {
         let stderr_str = String::from_utf8_lossy(&output.stderr);
         for line in stderr_str.lines() {
             if !line.is_empty() {

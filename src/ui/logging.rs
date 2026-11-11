@@ -22,7 +22,7 @@ pub const LOG_CAP: usize = 1000;
 static DIRECT_OUTPUT_MODE: AtomicBool = AtomicBool::new(false);
 
 /// Check if we're in direct output mode.
-fn is_direct_output_mode() -> bool {
+pub fn is_direct_output_mode() -> bool {
     DIRECT_OUTPUT_MODE.load(Ordering::Relaxed)
 }
 
