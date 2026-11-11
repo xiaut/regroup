@@ -56,22 +56,22 @@ impl PlainUi {
                 "[q=quit, s=sync git, d=delete, w=wipe, c=setup-cd, v=verbose, h=help]:".to_string()
             }
             Question::AddDevice { name, ip } => {
-                format!("Add {name} ({ip}) to config? [y/N/q/s]:")
+                format!("Add {name} ({ip}) to config? [y/n/q/s]:")
             }
             Question::TrustKey { name } => {
-                format!("Trust the new signing key for {name}? [y/N]:")
+                format!("Trust the new signing key for {name}? [y/n]:")
             }
             Question::Rename { name, suggested } => {
                 format!("New name for {name} (empty = {suggested}):")
             }
-            Question::Delete { name } => format!("Delete {name}? [y/N]:"),
+            Question::Delete { name } => format!("Delete {name}? [y/n]:"),
             Question::Wipe { count } => {
                 format!(
-                    "Wipe the ENTIRE configuration ({count} device block(s))? [y/N]:"
+                    "Wipe the ENTIRE configuration ({count} device block(s))? [y/n]:"
                 )
             }
             Question::SetupCd { file } => {
-                format!("Install 'regroup-cd' in ~/{file}? [y/N]:")
+                format!("Install 'regroup-cd' in ~/{file}? [y/n]:")
             }
             Question::InstallKeySelectMachine { machines } => {
                 format!(
@@ -92,7 +92,7 @@ impl PlainUi {
                 to_machine,
             } => {
                 format!(
-                    "Install SSH key from {}@{} to {}@{}? [y/N]:",
+                    "Install SSH key from {}@{} to {}@{}? [y/n]:",
                     from_user, from_machine, to_user, to_machine
                 )
             }
@@ -100,7 +100,7 @@ impl PlainUi {
                 format!("Select connection to remove ({} available):", connections.len())
             }
             Question::RemoveKeyConfirm { connection_id, .. } => {
-                format!("Remove SSH key {connection_id}? [y/N]:")
+                format!("Remove SSH key {connection_id}? [y/n]:")
             }
         }
     }
@@ -115,16 +115,17 @@ impl PlainUi {
     /// Translate an input line into an Action based on the current question.
     fn translate_action(&self, line: &str) -> Option<Action> {
         match (&self.question, line) {
-            (Question::Idle, "q" | "quit") => Some(Action::Quit),
-            (Question::Idle, "s" | "sync") => Some(Action::Sync),
+            (Question::Idle, "q") => Some(Action::Quit),
+            (Question::Idle, "s") => Some(Action::Sync),
             (Question::Idle, "d") => Some(Action::DeleteMode),
-            (Question::Idle, "w" | "wipe") => Some(Action::WipeMode),
-            (Question::Idle, "c" | "cd") => Some(Action::SetupCdMode),
-            (Question::Idle, "k" | "connections") => Some(Action::ConnectionsMode),
-            (Question::Idle, "v" | "verbose") => Some(Action::ToggleVerbose),
-            (Question::Idle, "h" | "help" | "?") => Some(Action::Help),
+            (Question::Idle, "w") => Some(Action::WipeMode),
+            (Question::Idle, "c") => Some(Action::SetupCdMode),
+            (Question::Idle, "k") => Some(Action::ConnectionsMode),
+            (Question::Idle, "v") => Some(Action::ToggleVerbose),
+            (Question::Idle, "h" | "?") => Some(Action::Help),
             (Question::Idle, _) => None,
-            (Question::AddDevice { .. }, "y" | "yes") => Some(Action::AddCurrent),
+            (Question::AddDevice { .. }, "y") => Some(Action::AddCurrent),
+            (Question::AddDevice { .. }, "n") => Some(Action::SkipCurrent),
             (Question::AddDevice { .. }, "s") => Some(Action::Sync),
             (Question::AddDevice { .. }, "d") => Some(Action::DeleteMode),
             (Question::AddDevice { .. }, "w") => Some(Action::WipeMode),
@@ -132,30 +133,39 @@ impl PlainUi {
             (Question::AddDevice { .. }, "k") => Some(Action::ConnectionsMode),
             (Question::AddDevice { .. }, "q") => Some(Action::Quit),
             (Question::AddDevice { .. }, _) => Some(Action::SkipCurrent),
-            (Question::TrustKey { .. }, "y" | "yes") => Some(Action::TrustKey),
+            (Question::TrustKey { .. }, "y") => Some(Action::TrustKey),
+            (Question::TrustKey { .. }, "n") => Some(Action::RejectKey),
             (Question::TrustKey { .. }, _) => Some(Action::RejectKey),
             (Question::Rename { suggested, .. }, "") => Some(Action::Rename(suggested.clone())),
             (Question::Rename { .. }, "q") => Some(Action::SkipRename),
             (Question::Rename { .. }, name) => Some(Action::Rename(name.to_string())),
-            (Question::Delete { .. }, "y" | "yes") => Some(Action::DeleteConfirm),
+            (Question::Delete { .. }, "y") => Some(Action::DeleteConfirm),
+            (Question::Delete { .. }, "n") => Some(Action::DeleteCancel),
             (Question::Delete { .. }, _) => Some(Action::DeleteCancel),
-            (Question::Wipe { .. }, "y" | "yes") => Some(Action::WipeConfirm),
+            (Question::Wipe { .. }, "y") => Some(Action::WipeConfirm),
+            (Question::Wipe { .. }, "n") => Some(Action::WipeCancel),
             (Question::Wipe { .. }, _) => Some(Action::WipeCancel),
-            (Question::SetupCd { .. }, "y" | "yes") => Some(Action::SetupCdConfirm),
+            (Question::SetupCd { .. }, "y") => Some(Action::SetupCdConfirm),
+            (Question::SetupCd { .. }, "n") => Some(Action::SetupCdCancel),
             (Question::SetupCd { .. }, _) => Some(Action::SetupCdCancel),
             // Key installation/removal actions
             (Question::InstallKeySelectMachine { .. }, "q") => Some(Action::InstallKeyCancel),
+            (Question::InstallKeySelectMachine { .. }, "n") => Some(Action::InstallKeyCancel),
             (Question::InstallKeySelectMachine { .. }, _) => Some(Action::InstallKeyMode),
             (Question::InstallKeySelectUser { .. }, "q") => Some(Action::InstallKeyCancel),
+            (Question::InstallKeySelectUser { .. }, "n") => Some(Action::InstallKeyCancel),
             (Question::InstallKeySelectUser { .. }, _machine) => {
                 // This would require more context to handle properly
                 Some(Action::InstallKeyMode)
             }
-            (Question::InstallKeyConfirm { .. }, "y" | "yes") => Some(Action::InstallKeyConfirm),
+            (Question::InstallKeyConfirm { .. }, "y") => Some(Action::InstallKeyConfirm),
+            (Question::InstallKeyConfirm { .. }, "n") => Some(Action::InstallKeyCancel),
             (Question::InstallKeyConfirm { .. }, _) => Some(Action::InstallKeyCancel),
             (Question::RemoveKeySelectConnection { .. }, "q") => Some(Action::RemoveKeyCancel),
+            (Question::RemoveKeySelectConnection { .. }, "n") => Some(Action::RemoveKeyCancel),
             (Question::RemoveKeySelectConnection { .. }, _) => Some(Action::RemoveKeyMode),
-            (Question::RemoveKeyConfirm { .. }, "y" | "yes") => Some(Action::RemoveKeyConfirm),
+            (Question::RemoveKeyConfirm { .. }, "y") => Some(Action::RemoveKeyConfirm),
+            (Question::RemoveKeyConfirm { .. }, "n") => Some(Action::RemoveKeyCancel),
             (Question::RemoveKeyConfirm { .. }, _) => Some(Action::RemoveKeyCancel),
         }
     }

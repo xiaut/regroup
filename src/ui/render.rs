@@ -780,7 +780,7 @@ pub fn render_question(
                 Color::Red,
                 format!("Delete {name} from configuration?"),
                 hint_spans(
-                    "[Up/Dn] select   [Enter] confirm   [Esc] cancel",
+                    "[Up/Dn] select   [y] confirm   [n] cancel",
                     ctx.key_flash,
                 ),
             ),
@@ -790,7 +790,7 @@ pub fn render_question(
                 format!(
                     "Delete the ENTIRE configuration ({count} device block(s) + ~/.regroup-config)?"
                 ),
-                hint_spans("[Enter/y] confirm   [Esc/w/q] cancel", ctx.key_flash),
+                hint_spans("[y] confirm   [n] cancel", ctx.key_flash),
             ),
             super::types::Question::SetupCd { file } => (
                 "Install regroup-cd",
@@ -798,14 +798,14 @@ pub fn render_question(
                 format!(
                     "Install the 'regroup-cd' shell function (cd to ~/.regroup-config) in ~/{file}?"
                 ),
-                hint_spans("[Enter/y] confirm   [Esc/c/q] cancel", ctx.key_flash),
+                hint_spans("[y] confirm   [n] cancel", ctx.key_flash),
             ),
             super::types::Question::InstallKeySelectMachine { machines } => (
                 "Install SSH key",
                 Color::Green,
                 format!("Select target machine ({} available)", machines.len()),
                 hint_spans(
-                    "[Up/Dn] select   [Enter] confirm   [Esc/q] cancel",
+                    "[Up/Dn] select   [y] confirm   [n] cancel",
                     ctx.key_flash,
                 ),
             ),
@@ -830,7 +830,7 @@ pub fn render_question(
                     "Install key from {}@{} to {}@{}?",
                     from_user, from_machine, to_user, to_machine
                 ),
-                hint_spans("[y] confirm   [n/Esc] cancel", ctx.key_flash),
+                hint_spans("[y] confirm   [n] cancel", ctx.key_flash),
             ),
             super::types::Question::RemoveKeySelectConnection { connections } => (
                 "Remove SSH key",
@@ -840,7 +840,7 @@ pub fn render_question(
                     connections.len()
                 ),
                 hint_spans(
-                    "[Up/Dn] select   [Enter] confirm   [Esc/q] cancel",
+                    "[Up/Dn] select   [y] confirm   [n] cancel",
                     ctx.key_flash,
                 ),
             ),
@@ -857,7 +857,7 @@ pub fn render_question(
                     "Remove key {} ({}@{}) from {}@{}?",
                     connection_id, from_user, from_machine, to_user, to_machine
                 ),
-                hint_spans("[y] confirm   [n/Esc] cancel", ctx.key_flash),
+                hint_spans("[y] confirm   [n] cancel", ctx.key_flash),
             ),
         }
     };

@@ -45,14 +45,14 @@ fn calculate_question_height(question: &Question, ctx: &QuestionCtx, width: u16)
         }
         Question::TrustKey { .. } => "[y] trust   [n] reject",
         Question::Rename { .. } => return 4, // Special case with input line
-        Question::Delete { .. } => "[Up/Dn] select   [Enter] confirm   [Esc] cancel",
-        Question::Wipe { .. } => "[Enter/y] confirm   [Esc/w/q] cancel",
-        Question::SetupCd { .. } => "[Enter/y] confirm   [Esc/c/q] cancel",
-        Question::InstallKeySelectMachine { .. } => "[Up/Dn] select   [Enter] confirm   [Esc/q] cancel",
-        Question::InstallKeySelectUser { .. } => "[Up/Dn] select   [Enter] confirm   [Esc] back",
-        Question::InstallKeyConfirm { .. } => "[y] confirm   [n/Esc] cancel",
-        Question::RemoveKeySelectConnection { .. } => "[Up/Dn] select   [Enter] confirm   [Esc/q] cancel",
-        Question::RemoveKeyConfirm { .. } => "[y] confirm   [n/Esc] cancel",
+        Question::Delete { .. } => "[Up/Dn] select   [y] confirm   [n] cancel",
+        Question::Wipe { .. } => "[y] confirm   [n] cancel",
+        Question::SetupCd { .. } => "[y] confirm   [n] cancel",
+        Question::InstallKeySelectMachine { .. } => "[Up/Dn] select   [y] confirm   [n] cancel",
+        Question::InstallKeySelectUser { .. } => "[Up/Dn] select   [y] confirm   [Esc] back",
+        Question::InstallKeyConfirm { .. } => "[y] confirm   [n] cancel",
+        Question::RemoveKeySelectConnection { .. } => "[Up/Dn] select   [y] confirm   [n] cancel",
+        Question::RemoveKeyConfirm { .. } => "[y] confirm   [n] cancel",
     };
     
     // Calculate how many lines the hint will take when wrapped to fit in (width - 2 for borders)
@@ -305,14 +305,11 @@ impl TtyUi {
         // Handle modal questions (wipe, setup-cd, delete, trust key, rename)
         if in_wipe {
             match key.code {
-                crossterm::event::KeyCode::Enter | crossterm::event::KeyCode::Char('y') => {
+                crossterm::event::KeyCode::Char('y') => {
                     return Some(Action::WipeConfirm);
                 }
-                crossterm::event::KeyCode::Esc | crossterm::event::KeyCode::Char('n') => {
+                crossterm::event::KeyCode::Char('n') => {
                     return Some(Action::WipeCancel);
-                }
-                crossterm::event::KeyCode::Char(c) => {
-                    return (c == 'w' || c == 'q').then_some(Action::WipeCancel);
                 }
                 _ => return None,
             }
@@ -320,14 +317,11 @@ impl TtyUi {
         
         if in_setup {
             match key.code {
-                crossterm::event::KeyCode::Enter | crossterm::event::KeyCode::Char('y') => {
+                crossterm::event::KeyCode::Char('y') => {
                     return Some(Action::SetupCdConfirm);
                 }
-                crossterm::event::KeyCode::Esc | crossterm::event::KeyCode::Char('n') => {
+                crossterm::event::KeyCode::Char('n') => {
                     return Some(Action::SetupCdCancel);
-                }
-                crossterm::event::KeyCode::Char(c) => {
-                    return (c == 'c' || c == 'q').then_some(Action::SetupCdCancel);
                 }
                 _ => return None,
             }
@@ -337,11 +331,8 @@ impl TtyUi {
             match key.code {
                 crossterm::event::KeyCode::Up => return Some(Action::SelectPrev),
                 crossterm::event::KeyCode::Down => return Some(Action::SelectNext),
-                crossterm::event::KeyCode::Enter => return Some(Action::DeleteConfirm),
-                crossterm::event::KeyCode::Esc => return Some(Action::DeleteCancel),
-                crossterm::event::KeyCode::Char(c) => {
-                    return (c == 'd' || c == 'q').then_some(Action::DeleteCancel);
-                }
+                crossterm::event::KeyCode::Char('y') => return Some(Action::DeleteConfirm),
+                crossterm::event::KeyCode::Char('n') => return Some(Action::DeleteCancel),
                 _ => return None,
             }
         }
