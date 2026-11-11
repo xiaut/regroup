@@ -336,7 +336,7 @@ pub fn render_all_panes(
 
     // If a specific pane is active (not MainMenu), show only that pane full-screen
     match active_pane {
-        ActivePane::Detected => {
+        ActivePane::Detected(_) => {
             // Full-screen Detected pane
             let detected_theme = PanelTheme::new("Detected", Color::Yellow, "detected");
             let detected_border_style = Style::new().fg(Color::Yellow);
@@ -391,7 +391,7 @@ pub fn render_all_panes(
             );
             frame.render_widget(detected_table, area);
         }
-        ActivePane::Added => {
+        ActivePane::Added(_) => {
             // Full-screen Added pane
             let added_theme = PanelTheme::new("Added", Color::Green, "known");
             let added_border_style = Style::new().fg(Color::Green);
@@ -446,7 +446,7 @@ pub fn render_all_panes(
             );
             frame.render_widget(added_table, area);
         }
-        ActivePane::Logs => {
+        ActivePane::Logs(_) => {
             // Full-screen Logs pane
             let logs_title = if verbose { "Logs — verbose" } else { "Logs" };
             let logs_border_style = Style::new().fg(Color::Cyan);
@@ -469,7 +469,7 @@ pub fn render_all_panes(
                 .scroll((skip as u16, 0));
             frame.render_widget(logs_paragraph, area);
         }
-        ActivePane::MainMenu => {
+        ActivePane::MainMenu(_) => {
             // Show all three panes when in MainMenu
             if width >= min_width_for_side_by_side {
                 // Layout: Detected | Added (top row), Logs (bottom row)
@@ -800,36 +800,34 @@ pub fn render_question(
                 use super::types::ActivePane;
                 // Hint lines depend on the active pane
                 let (status_line, hint) = match ctx.active_pane {
-                    ActivePane::MainMenu => {
-                        (
-                            "Main menu".to_string(),
-                            "[d] Detected   [a] Added   [l] Logs   [?] help   [q] quit".to_string(),
-                        )
+                    ActivePane::MainMenu(pane) => {
+                        let hint = pane.bindings.iter()
+                            .map(|b| format!("[{}] {}", b.label, b.description))
+                            .collect::<Vec<_>>()
+                            .join("   ");
+                        (pane.name.to_string(), hint)
                     }
-                    ActivePane::Detected => {
-                        if ctx.pending > 0 {
-                            (
-                                "Detected devices".to_string(),
-                                "[q] no pane   [Up/Dn] select   [a] add   [n] ignore   [?] help".to_string(),
-                            )
-                        } else {
-                            (
-                                "Detected devices".to_string(),
-                                "[q] no pane   [?] help".to_string(),
-                            )
-                        }
+                    ActivePane::Detected(pane) => {
+                        let hint = pane.bindings.iter()
+                            .map(|b| format!("[{}] {}", b.label, b.description))
+                            .collect::<Vec<_>>()
+                            .join("   ");
+                        (pane.name.to_string(), hint)
                     }
-                    ActivePane::Added => {
-                        (
-                            "Added devices".to_string(),
-                            "[q] no pane   [Up/Dn] select   [i] install key   [r] remove key   [d] delete   [s] sync   [w] wipe   [c] setup-cd   [?] help".to_string(),
-                        )
+                    ActivePane::Added(pane) => {
+                        let hint = pane.bindings.iter()
+                            .map(|b| format!("[{}] {}", b.label, b.description))
+                            .collect::<Vec<_>>()
+                            .join("   ");
+                        (pane.name.to_string(), hint)
                     }
-                    ActivePane::Logs => {
-                        (
-                            if ctx.verbose { "Logs - verbose".to_string() } else { "Logs".to_string() },
-                            "[q] no pane   [Up/Dn] scroll line   [PgUp/PgDn] scroll page   [v] toggle verbose   [?] help".to_string(),
-                        )
+                    ActivePane::Logs(pane) => {
+                        let name = if ctx.verbose { "Logs - verbose" } else { pane.name };
+                        let hint = pane.bindings.iter()
+                            .map(|b| format!("[{}] {}", b.label, b.description))
+                            .collect::<Vec<_>>()
+                            .join("   ");
+                        (name.to_string(), hint)
                     }
                 };
                 (

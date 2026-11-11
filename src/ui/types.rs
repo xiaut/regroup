@@ -1,5 +1,35 @@
 //! UI types: events, levels, devices, questions, and actions.
 
+use crossterm::event::KeyCode;
+
+/// A key binding: the physical key, how it displays, and what it does
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct KeyBinding {
+    pub key: KeyCode,
+    pub label: &'static str,
+    pub description: &'static str,
+}
+
+impl KeyBinding {
+    pub const fn new(key: KeyCode, label: &'static str, description: &'static str) -> Self {
+        Self { key, label, description }
+    }
+}
+
+/// Pane definition: name and its key bindings
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Pane {
+    pub name: &'static str,
+    pub bindings: &'static [KeyBinding],
+}
+
+/// Question definition: title and its key bindings
+#[derive(Clone, Copy, Debug)]
+pub struct QuestionDef {
+    pub title: &'static str,
+    pub bindings: &'static [KeyBinding],
+}
+
 /// A message for the ui, buffered through the log channel.
 pub enum UiEvent {
     /// General message: activity pane (full-screen ui) or stdout.
@@ -28,13 +58,33 @@ pub enum UiEvent {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ActivePane {
     /// No pane active - in Main menu
-    MainMenu,
+    MainMenu(Pane),
     /// Detected devices panel
-    Detected,
+    Detected(Pane),
     /// Added devices panel
-    Added,
+    Added(Pane),
     /// Logs pane (formerly Activity)
-    Logs,
+    Logs(Pane),
+}
+
+impl ActivePane {
+    pub fn name(&self) -> &'static str {
+        match self {
+            ActivePane::MainMenu(pane) => pane.name,
+            ActivePane::Detected(pane) => pane.name,
+            ActivePane::Added(pane) => pane.name,
+            ActivePane::Logs(pane) => pane.name,
+        }
+    }
+
+    pub fn bindings(&self) -> &'static [KeyBinding] {
+        match self {
+            ActivePane::MainMenu(pane) => pane.bindings,
+            ActivePane::Detected(pane) => pane.bindings,
+            ActivePane::Added(pane) => pane.bindings,
+            ActivePane::Logs(pane) => pane.bindings,
+        }
+    }
 }
 
 /// How important a device-specific message is; drives the row animation.
@@ -194,4 +244,76 @@ pub enum Action {
     /// Print the CLI help (plain mode; the full-screen ui shows its help
     /// panel instead, toggled by '?').
     Help,
+}
+
+// Static pane definitions
+pub static MAIN_MENU_PANE: Pane = Pane {
+    name: "Main menu",
+    bindings: &[
+        KeyBinding::new(KeyCode::Char('d'), "d", "Detected"),
+        KeyBinding::new(KeyCode::Char('a'), "a", "Added"),
+        KeyBinding::new(KeyCode::Char('l'), "l", "Logs"),
+        KeyBinding::new(KeyCode::Char('?'), "?", "help"),
+        KeyBinding::new(KeyCode::Char('q'), "q", "quit"),
+    ],
+};
+
+pub static DETECTED_PANE: Pane = Pane {
+    name: "Detected devices",
+    bindings: &[
+        KeyBinding::new(KeyCode::Char('q'), "q", "no pane"),
+        KeyBinding::new(KeyCode::Up, "Up", "select"),
+        KeyBinding::new(KeyCode::Down, "Dn", "select"),
+        KeyBinding::new(KeyCode::Char('a'), "a", "add"),
+        KeyBinding::new(KeyCode::Char('n'), "n", "ignore"),
+        KeyBinding::new(KeyCode::Char('?'), "?", "help"),
+    ],
+};
+
+pub static ADDED_PANE: Pane = Pane {
+    name: "Added devices",
+    bindings: &[
+        KeyBinding::new(KeyCode::Char('q'), "q", "no pane"),
+        KeyBinding::new(KeyCode::Up, "Up", "select"),
+        KeyBinding::new(KeyCode::Down, "Dn", "select"),
+        KeyBinding::new(KeyCode::Char('i'), "i", "install key"),
+        KeyBinding::new(KeyCode::Char('r'), "r", "remove key"),
+        KeyBinding::new(KeyCode::Char('d'), "d", "delete"),
+        KeyBinding::new(KeyCode::Char('s'), "s", "sync"),
+        KeyBinding::new(KeyCode::Char('w'), "w", "wipe"),
+        KeyBinding::new(KeyCode::Char('c'), "c", "setup-cd"),
+        KeyBinding::new(KeyCode::Char('?'), "?", "help"),
+    ],
+};
+
+pub static LOGS_PANE: Pane = Pane {
+    name: "Logs",
+    bindings: &[
+        KeyBinding::new(KeyCode::Char('q'), "q", "no pane"),
+        KeyBinding::new(KeyCode::Up, "Up", "scroll line"),
+        KeyBinding::new(KeyCode::Down, "Dn", "scroll line"),
+        KeyBinding::new(KeyCode::PageUp, "PgUp", "scroll page"),
+        KeyBinding::new(KeyCode::PageDown, "PgDn", "scroll page"),
+        KeyBinding::new(KeyCode::Char('v'), "v", "toggle verbose"),
+        KeyBinding::new(KeyCode::Char('?'), "?", "help"),
+    ],
+};
+
+// Convenience constructors for ActivePane
+impl ActivePane {
+    pub const fn main_menu() -> Self {
+        ActivePane::MainMenu(MAIN_MENU_PANE)
+    }
+
+    pub const fn detected() -> Self {
+        ActivePane::Detected(DETECTED_PANE)
+    }
+
+    pub const fn added() -> Self {
+        ActivePane::Added(ADDED_PANE)
+    }
+
+    pub const fn logs() -> Self {
+        ActivePane::Logs(LOGS_PANE)
+    }
 }

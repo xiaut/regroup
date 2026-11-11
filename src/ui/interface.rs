@@ -38,7 +38,7 @@ impl Ui {
                 detected_selected: None,
                 added_selected: None,
                 delete_selected: None,
-                active_pane: ActivePane::MainMenu,
+                active_pane: ActivePane::main_menu(),
                 show_help: false,
                 help_scroll: 0,
                 verbose: false,

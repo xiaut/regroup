@@ -84,29 +84,43 @@ fn calculate_question_height(question: &Question, ctx: &QuestionCtx, width: u16)
         }
         Question::Idle => {
             let (status_line, hint) = match ctx.active_pane {
-                ActivePane::MainMenu => {
-                    ("Main menu".to_string(), "[d] Detected   [a] Added   [l] Logs   [?] help   [q] quit".to_string())
+                ActivePane::MainMenu(pane) => {
+                    let hint = pane.bindings.iter()
+                        .map(|b| format!("[{}] {}", b.label, b.description))
+                        .collect::<Vec<_>>()
+                        .join("   ");
+                    (pane.name.to_string(), hint)
                 }
-                ActivePane::Detected if ctx.pending > 0 => {
+                ActivePane::Detected(pane) if ctx.pending > 0 => {
+                    // For Detected with pending, we need special bindings that include add/ignore
+                    // This is a special case, so we'll keep the hardcoded hint for now
+                    // In a full refactor, we'd have DetectedWithPending as a separate variant
                     (
-                        "Detected devices".to_string(),
+                        pane.name.to_string(),
                         "[q] no pane   [Up/Dn] select   [a] add   [n] ignore   [?] help".to_string(),
                     )
                 }
-                ActivePane::Detected => {
-                    ("Detected devices".to_string(), "[q] no pane   [?] help".to_string())
+                ActivePane::Detected(pane) => {
+                    let hint = pane.bindings.iter()
+                        .map(|b| format!("[{}] {}", b.label, b.description))
+                        .collect::<Vec<_>>()
+                        .join("   ");
+                    (pane.name.to_string(), hint)
                 }
-                ActivePane::Added => {
-                    (
-                        "Added devices".to_string(),
-                        "[q] no pane   [Up/Dn] select   [i] install key   [r] remove key   [d] delete   [s] sync   [w] wipe   [c] setup-cd   [?] help".to_string(),
-                    )
+                ActivePane::Added(pane) => {
+                    let hint = pane.bindings.iter()
+                        .map(|b| format!("[{}] {}", b.label, b.description))
+                        .collect::<Vec<_>>()
+                        .join("   ");
+                    (pane.name.to_string(), hint)
                 }
-                ActivePane::Logs => {
-                    (
-                        if ctx.verbose { "Logs - verbose" } else { "Logs" }.to_string(),
-                        "[q] no pane   [Up/Dn] scroll line   [PgUp/PgDn] scroll page   [v] toggle verbose   [?] help".to_string(),
-                    )
+                ActivePane::Logs(pane) => {
+                    let name = if ctx.verbose { "Logs - verbose" } else { pane.name };
+                    let hint = pane.bindings.iter()
+                        .map(|b| format!("[{}] {}", b.label, b.description))
+                        .collect::<Vec<_>>()
+                        .join("   ");
+                    (name.to_string(), hint)
                 }
             };
             (status_line, hint)
@@ -374,8 +388,8 @@ impl TtyUi {
             }
             // Only handle 'q' for pane navigation if in Idle mode (no question active)
             if matches!(self.question, Question::Idle) {
-                if self.active_pane != ActivePane::MainMenu {
-                    self.active_pane = ActivePane::MainMenu;
+                if self.active_pane != ActivePane::main_menu() {
+                    self.active_pane = ActivePane::main_menu();
                     self.detected_selected = None;
                     self.added_selected = None;
                     return Some(Action::BackToMainMenu);
@@ -508,7 +522,7 @@ impl TtyUi {
         // From this point on, we're in Idle mode with no modal questions
         
         // Detected pane: navigate detected devices and add them
-        if self.active_pane == ActivePane::Detected && !in_modal {
+        if matches!(self.active_pane, ActivePane::Detected(_)) && !in_modal {
             match key.code {
                 crossterm::event::KeyCode::Up => {
                     if !self.detected.is_empty() {
@@ -531,7 +545,7 @@ impl TtyUi {
         }
         
         // Added pane: navigate added devices and perform actions
-        if self.active_pane == ActivePane::Added && !in_modal {
+        if matches!(self.active_pane, ActivePane::Added(_)) && !in_modal {
             match key.code {
                 crossterm::event::KeyCode::Up => {
                     if !self.added.is_empty() {
@@ -566,7 +580,7 @@ impl TtyUi {
         }
         
         // Logs pane: scroll and toggle verbose
-        if self.active_pane == ActivePane::Logs && !in_modal {
+        if matches!(self.active_pane, ActivePane::Logs(_)) && !in_modal {
             match key.code {
                 crossterm::event::KeyCode::Up => {
                     self.log_scroll = self.log_scroll.saturating_add(1);
@@ -599,24 +613,24 @@ impl TtyUi {
             match key.code {
                 crossterm::event::KeyCode::Char('d') => {
                     // Only switch to Detected if we're not already there
-                    if self.active_pane != ActivePane::Detected {
-                        self.active_pane = ActivePane::Detected;
+                    if !matches!(self.active_pane, ActivePane::Detected(_)) {
+                        self.active_pane = ActivePane::detected();
                         self.log_scroll = 0;
                         return Some(Action::SwitchToDetected);
                     }
                 }
                 crossterm::event::KeyCode::Char('a') => {
                     // Only switch to Added if we're not already there
-                    if self.active_pane != ActivePane::Added {
-                        self.active_pane = ActivePane::Added;
+                    if !matches!(self.active_pane, ActivePane::Added(_)) {
+                        self.active_pane = ActivePane::added();
                         self.log_scroll = 0;
                         return Some(Action::SwitchToAdded);
                     }
                 }
                 crossterm::event::KeyCode::Char('l') => {
                     // Only switch to Logs if we're not already there
-                    if self.active_pane != ActivePane::Logs {
-                        self.active_pane = ActivePane::Logs;
+                    if !matches!(self.active_pane, ActivePane::Logs(_)) {
+                        self.active_pane = ActivePane::logs();
                         self.log_scroll = 0;
                         return Some(Action::SwitchToLogs);
                     }

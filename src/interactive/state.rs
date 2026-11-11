@@ -157,11 +157,11 @@ pub fn run(ctx: &Context, udp_port: u16, beacons: &Receiver<BeaconDevice>) -> us
         
         // When a pane is not active, its selection must be empty
         let selected = match state.active_pane {
-            ActivePane::Detected => selected,
+            ActivePane::Detected(_) => selected,
             _ => None,
         };
         let added_selected = match state.active_pane {
-            ActivePane::Added => added_selected,
+            ActivePane::Added(_) => added_selected,
             _ => None,
         };
         
@@ -247,7 +247,7 @@ impl InteractiveState {
             rotation_pending: None,
             pending_devices: VecDeque::new(),
             pending_keys: HashSet::new(),
-            active_pane: ActivePane::MainMenu,
+            active_pane: ActivePane::main_menu(),
             pending_selected: None,
             added_selected: None,
             known_ip: HashMap::new(),
@@ -629,7 +629,7 @@ impl InteractiveState {
         match action {
             Action::Quit => return true,
             Action::BackToMainMenu => {
-                self.active_pane = ActivePane::MainMenu;
+                self.active_pane = ActivePane::main_menu();
                 self.pending_selected = None;
                 self.added_selected = None;
                 return false;
@@ -738,7 +738,7 @@ impl InteractiveState {
                 }
             }
             Action::SwitchToDetected => {
-                self.active_pane = ActivePane::Detected;
+                self.active_pane = ActivePane::detected();
                 self.added_selected = None;
                 // Initialize pending_selected if there are pending devices
                 if self.pending_selected.is_none() && !self.pending_devices.is_empty() {
@@ -746,11 +746,11 @@ impl InteractiveState {
                 }
             }
             Action::SwitchToAdded => {
-                self.active_pane = ActivePane::Added;
+                self.active_pane = ActivePane::added();
                 self.pending_selected = None;
             }
             Action::SwitchToLogs => {
-                self.active_pane = ActivePane::Logs;
+                self.active_pane = ActivePane::logs();
                 self.pending_selected = None;
                 self.added_selected = None;
             }
