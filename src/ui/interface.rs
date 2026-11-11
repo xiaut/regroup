@@ -3,7 +3,7 @@
 //! This module provides the `Ui` enum that delegates to either the full-screen
 //! TUI or the plain text fallback, depending on whether stdout is a terminal.
 
-use std::io::{self, IsTerminal};
+use std::io::{self, IsTerminal, Write};
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -142,6 +142,12 @@ impl Ui {
 
                 // Disable direct output mode
                 crate::ui::set_direct_output_mode(false);
+
+                // Pause to let the user read the output
+                println!("\nPress Enter to return to the TUI...");
+                let _ = io::stdout().flush();
+                let mut input = String::new();
+                let _ = io::stdin().read_line(&mut input);
 
                 // Reinitialize the terminal
                 // Note: ratatui::init() panics on failure, which is acceptable here
