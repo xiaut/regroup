@@ -257,15 +257,70 @@ pub fn device_name_taken(name: &str, home: &str, ssh_config: &Path) -> bool {
     )
 }
 
+/// Get detailed information about where a device name is already taken.
+///
+/// Returns a vector of conflicts, each indicating where the name is used:
+/// - RegroupMachine: the name is used by a machine in regroup config
+/// - DeviceFileOnDisk: a device file exists on disk for this name
+/// - SshConfigBlock: the name is in an SSH config Host block
+pub fn find_name_conflicts(name: &str, home: &str, ssh_config: &Path) -> Vec<NameConflict> {
+    let ssh_content = fs::read_to_string(ssh_config).unwrap_or_default();
+    let config_dir = PathBuf::from(home).join(CONFIG_DIR).join(GIT_DIR);
+    find_name_conflict(
+        name,
+        &ssh_content,
+        &config_dir,
+        &load_config().machines,
+    )
+}
+
+/// Information about where a device name is already taken
+#[derive(Debug, Clone)]
+pub enum NameConflict {
+    /// The name is used by a machine in the regroup configuration
+    RegroupMachine { machine_name: String },
+    /// The name has a device file on disk (even if it failed to load)
+    DeviceFileOnDisk,
+    /// The name is in an existing SSH config Host block
+    SshConfigBlock,
+}
+
+/// Check where a device name is already taken
+fn find_name_conflict(
+    name: &str,
+    ssh_content: &str,
+    config_dir: &Path,
+    known_machines: &[Machine],
+) -> Vec<NameConflict> {
+    let mut conflicts = Vec::new();
+    
+    // Check if name is used by a known machine in regroup config
+    if let Some(machine) = known_machines.iter().find(|m| m.name == name) {
+        conflicts.push(NameConflict::RegroupMachine {
+            machine_name: machine.name.clone(),
+        });
+    }
+    
+    // Check if device file exists on disk
+    if crate::config::device_file_path(config_dir, name).exists() {
+        conflicts.push(NameConflict::DeviceFileOnDisk);
+    }
+    
+    // Check if name is in SSH config
+    if ssh_config_has_host(ssh_content, name) {
+        conflicts.push(NameConflict::SshConfigBlock);
+    }
+    
+    conflicts
+}
+
 fn name_taken(
     name: &str,
     ssh_content: &str,
     config_dir: &Path,
     known_machines: &[Machine],
 ) -> bool {
-    known_machines.iter().any(|m| m.name == name)
-        || crate::config::device_file_path(config_dir, name).exists()
-        || ssh_config_has_host(ssh_content, name)
+    !find_name_conflict(name, ssh_content, config_dir, known_machines).is_empty()
 }
 
 /// Suggest the first free name for a device: `desired` if free, otherwise

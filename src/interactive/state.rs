@@ -16,8 +16,8 @@ use std::path::Path;
 use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::Duration;
 
-use crate::cli::{
-    add_device_to_config, device_name_taken, remove_device, remove_local_traces, setup_cd,
+use crate::cli::{NameConflict,
+    add_device_to_config, device_name_taken, find_name_conflicts, remove_device, remove_local_traces, setup_cd,
     shell_rc_file, sync_git, trust_new_signing_key, unique_device_name, usage,
     wipe as wipe_config,
 };
@@ -32,6 +32,36 @@ use crate::ui::types::ActivePane;
 /// How long each loop iteration waits for user input before checking the
 /// beacon channel again.
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
+
+/// Format name conflicts into a human-readable message
+fn format_name_conflicts(conflicts: &[NameConflict]) -> String {
+    if conflicts.is_empty() {
+        return "already in use".to_string();
+    }
+    
+    let messages: Vec<String> = conflicts
+        .iter()
+        .map(|conflict| {
+            match conflict {
+                NameConflict::RegroupMachine { machine_name } => {
+                    format!("a device named '{}' already exists in regroup", machine_name)
+                }
+                NameConflict::DeviceFileOnDisk => {
+                    "a device file already exists on disk".to_string()
+                }
+                NameConflict::SshConfigBlock => {
+                    "the name is already in ~/.ssh/config".to_string()
+                }
+            }
+        })
+        .collect();
+    
+    if messages.len() == 1 {
+        messages[0].clone()
+    } else {
+        format!("{}", messages.join(", "))
+    }
+}
 
 /// Per-run context shared by every branch of the interactive loop.
 pub struct Context<'a> {
@@ -984,9 +1014,11 @@ impl InteractiveState {
         // ask the user to pick a new one.
         if device_name_taken(&device.name, ctx.home, ctx.ssh_config) {
             let suggested = unique_device_name(&device.name, ctx.home, ctx.ssh_config);
+            let conflicts = find_name_conflicts(&device.name, ctx.home, ctx.ssh_config);
+            let conflict_msg = format_name_conflicts(&conflicts);
             ui::log(&format!(
-                "  ! Name '{}' is already used by another machine or an existing ~/.ssh/config entry.",
-                device.name
+                "  ! Name '{}' cannot be used: {}",
+                device.name, conflict_msg
             ));
             self.rename_state = Some((device, suggested));
             return;
@@ -1031,8 +1063,11 @@ impl InteractiveState {
         };
         if device_name_taken(&name, ctx.home, ctx.ssh_config) {
             let suggested = unique_device_name(&name, ctx.home, ctx.ssh_config);
+            let conflicts = find_name_conflicts(&name, ctx.home, ctx.ssh_config);
+            let conflict_msg = format_name_conflicts(&conflicts);
             ui::log(&format!(
-                "  ! '{name}' is also already used by another machine or an existing ~/.ssh/config entry."
+                "  ! Name '{}' cannot be used: {}",
+                name, conflict_msg
             ));
             self.rename_state = Some((device, suggested));
             return;
