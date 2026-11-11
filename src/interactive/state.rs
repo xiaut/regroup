@@ -646,9 +646,9 @@ impl InteractiveState {
                     self.reload(ctx);
                 }
             }
-            Action::Add => self.accept_selected(ctx),
+            Action::Add => self.accept_selected(ctx, tui),
             Action::Ignore => self.ignore_selected(),
-            Action::AddCurrent => self.accept_front(ctx),
+            Action::AddCurrent => self.accept_front(ctx, tui),
             Action::SkipCurrent => {
                 if let Some(device) = self.pending_devices.pop_front() {
                     self.pending_keys.remove(&device.ssh_public_key);
@@ -695,7 +695,7 @@ impl InteractiveState {
                     );
                 }
             }
-            Action::Rename(name) => self.rename(ctx, name),
+            Action::Rename(name) => self.rename(ctx, tui, name),
             Action::SkipRename => {
                 if let Some((device, _)) = self.rename_state.take() {
                     ui::log(&format!("  Skipped {}.", device.name));
@@ -976,7 +976,7 @@ impl InteractiveState {
 
     /// Add the machine selected in the Detected panel. A name collision
     /// redirects to the rename question instead.
-    fn accept_selected(&mut self, ctx: &Context) {
+    fn accept_selected(&mut self, ctx: &Context, tui: &mut ui::Ui) {
         let Some(key) = self
             .pending_selected
             .clone()
@@ -994,22 +994,22 @@ impl InteractiveState {
         let device = self.pending_devices.remove(pos).unwrap();
         self.pending_keys.remove(&device.ssh_public_key);
         self.after_selection_change();
-        self.accept_device(ctx, device);
+        self.accept_device(ctx, tui, device);
     }
 
     /// Add the front of the pending queue (plain mode). A name collision
     /// redirects to the rename question instead.
-    fn accept_front(&mut self, ctx: &Context) {
+    fn accept_front(&mut self, ctx: &Context, tui: &mut ui::Ui) {
         let Some(device) = self.pending_devices.pop_front() else {
             return;
         };
         self.pending_keys.remove(&device.ssh_public_key);
         self.after_selection_change();
-        self.accept_device(ctx, device);
+        self.accept_device(ctx, tui, device);
     }
 
     /// Accept `device`: a name collision redirects to the rename question.
-    fn accept_device(&mut self, ctx: &Context, device: BeaconDevice) {
+    fn accept_device(&mut self, ctx: &Context, tui: &mut ui::Ui, device: BeaconDevice) {
         // If the name is already used by another machine,
         // ask the user to pick a new one.
         if device_name_taken(&device.name, ctx.home, ctx.ssh_config) {
@@ -1024,7 +1024,7 @@ impl InteractiveState {
             return;
         }
         let name = device.name.clone();
-        self.add_device(ctx, device, name);
+        self.add_device(ctx, tui, device, name);
     }
 
     /// Ignore the machine selected in the Detected panel: it is dropped
@@ -1057,7 +1057,7 @@ impl InteractiveState {
 
     /// The user picked a new name for the pending rename. A name that is
     /// taken as well re-asks with a fresh suggestion.
-    fn rename(&mut self, ctx: &Context, name: String) {
+    fn rename(&mut self, ctx: &Context, tui: &mut ui::Ui, name: String) {
         let Some((device, _)) = self.rename_state.take() else {
             return;
         };
@@ -1072,19 +1072,21 @@ impl InteractiveState {
             self.rename_state = Some((device, suggested));
             return;
         }
-        self.add_device(ctx, device, name);
+        self.add_device(ctx, tui, device, name);
     }
 
     /// Add `device` under `name`: write to disk and update the in-memory
     /// maps so future beacons for it are treated as a known device.
-    fn add_device(&mut self, ctx: &Context, device: BeaconDevice, name: String) {
-        if let Some(machine) = add_device_to_config(
-            ctx.home,
-            ctx.ssh_config,
-            &device,
-            &name,
-            &mut self.new_count,
-        ) {
+    fn add_device(&mut self, ctx: &Context, tui: &mut ui::Ui, device: BeaconDevice, name: String) {
+        if let Some(machine) = tui.with_clean_terminal(|| {
+            add_device_to_config(
+                ctx.home,
+                ctx.ssh_config,
+                &device,
+                &name,
+                &mut self.new_count,
+            )
+        }) {
             // Pin the signing key the device used when accepted
             self.pinned_signing_keys.insert(
                 device.ssh_public_key.clone(),

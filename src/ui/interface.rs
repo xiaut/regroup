@@ -137,9 +137,6 @@ impl Ui {
                 // instead of being queued in the channel
                 crate::ui::set_direct_output_mode(true);
                 
-                // Inform user we're in temporary CLI mode
-                println!("\n--- Temporary CLI mode (Press Enter to return to TUI) ---");
-
                 // Execute the function
                 let result = f();
 
@@ -160,7 +157,8 @@ impl Ui {
                 result
             }
             Ui::Plain(_) => {
-                // In plain mode, no terminal manipulation needed
+                // In plain mode, just execute the function
+                // Direct output mode is already false in plain mode
                 f()
             }
         }
