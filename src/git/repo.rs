@@ -7,13 +7,33 @@ use std::io;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-/// Run a git command quietly: its output would corrupt the interactive
-/// display (which owns the terminal), and failures are reported through the
-/// returned errors.
-fn quiet(mut cmd: Command) -> Command {
-    cmd.stdout(Stdio::null());
-    cmd.stderr(Stdio::null());
-    cmd
+/// Run a git command and log its output.
+fn quiet(mut cmd: Command) -> io::Result<std::process::Output> {
+    // Capture stdout and stderr
+    let output = cmd
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()?;
+    
+    // Log output
+    if !output.stdout.is_empty() {
+        let stdout_str = String::from_utf8_lossy(&output.stdout);
+        for line in stdout_str.lines() {
+            if !line.is_empty() {
+                crate::ui::log(line);
+            }
+        }
+    }
+    if !output.stderr.is_empty() {
+        let stderr_str = String::from_utf8_lossy(&output.stderr);
+        for line in stderr_str.lines() {
+            if !line.is_empty() {
+                crate::ui::log(line);
+            }
+        }
+    }
+    
+    Ok(output)
 }
 
 /// Check if a directory is a git repository
@@ -30,67 +50,66 @@ pub fn git_init(repo_path: &Path) -> io::Result<()> {
 
     fs::create_dir_all(repo_path)?;
 
-    let status = quiet(Command::new("git"))
-        .current_dir(repo_path)
-        .arg("init")
-        .status()?;
+    let mut cmd = Command::new("git");
+    cmd.current_dir(repo_path).arg("init");
+    let output = quiet(cmd)?;
 
-    if !status.success() {
+    if !output.status.success() {
         return Err(io::Error::other("git init failed"));
     }
 
     // Ensure the initial branch is "main": pull/push operations hardcode it.
     // git_init only runs on a freshly created repository (no commits yet), so
     // moving HEAD is safe even if git's default branch is "master".
-    let head = Command::new("git")
-        .current_dir(repo_path)
+    let mut cmd = Command::new("git");
+    cmd.current_dir(repo_path)
         .arg("symbolic-ref")
         .arg("--short")
-        .arg("HEAD")
-        .output();
-    if let Ok(o) = head
+        .arg("HEAD");
+    let head = quiet(cmd);
+    if let Ok(ref o) = head
         && o.status.success()
         && String::from_utf8_lossy(&o.stdout).trim() != "main"
     {
-        let _ = quiet(Command::new("git"))
-            .current_dir(repo_path)
+        let mut cmd = Command::new("git");
+        cmd.current_dir(repo_path)
             .arg("symbolic-ref")
             .arg("HEAD")
-            .arg("refs/heads/main")
-            .status();
+            .arg("refs/heads/main");
+        let _ = quiet(cmd);
     }
 
     // Configure git to allow commits without user info
-    let _ = quiet(Command::new("git"))
-        .current_dir(repo_path)
+    let mut cmd = Command::new("git");
+    cmd.current_dir(repo_path)
         .arg("config")
         .arg("user.email")
-        .arg("regroup@local")
-        .status();
+        .arg("regroup@local");
+    let _ = quiet(cmd);
 
-    let _ = quiet(Command::new("git"))
-        .current_dir(repo_path)
+    let mut cmd = Command::new("git");
+    cmd.current_dir(repo_path)
         .arg("config")
         .arg("user.name")
-        .arg("regroup")
-        .status();
+        .arg("regroup");
+    let _ = quiet(cmd);
 
     // Configure git to allow pushing to the currently checked-out branch
     // This is essential for decentralized sync where each device pushes to others
-    let _ = quiet(Command::new("git"))
-        .current_dir(repo_path)
+    let mut cmd = Command::new("git");
+    cmd.current_dir(repo_path)
         .arg("config")
         .arg("receive.denyCurrentBranch")
-        .arg("updateInstead")
-        .status();
+        .arg("updateInstead");
+    let _ = quiet(cmd);
 
     // Configure pull to use rebase by default for cleaner history
-    let _ = quiet(Command::new("git"))
-        .current_dir(repo_path)
+    let mut cmd = Command::new("git");
+    cmd.current_dir(repo_path)
         .arg("config")
         .arg("pull.rebase")
-        .arg("true")
-        .status();
+        .arg("true");
+    let _ = quiet(cmd);
 
     Ok(())
 }

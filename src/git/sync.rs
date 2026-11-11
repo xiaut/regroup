@@ -4,14 +4,37 @@
 
 use std::io;
 use std::path::Path;
-use std::process::Command;
+use std::process::Stdio;
 
 use crate::git::remote;
 
-/// Run a git command without suppressing its output.
-/// The output is shown to the user for visibility.
-fn quiet(cmd: Command) -> Command {
-    cmd
+/// Run a git command and log its output.
+fn quiet(mut cmd: std::process::Command) -> io::Result<std::process::Output> {
+    // Capture stdout and stderr
+    let output = cmd
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()?;
+    
+    // Log output
+    if !output.stdout.is_empty() {
+        let stdout_str = String::from_utf8_lossy(&output.stdout);
+        for line in stdout_str.lines() {
+            if !line.is_empty() {
+                crate::ui::log(line);
+            }
+        }
+    }
+    if !output.stderr.is_empty() {
+        let stderr_str = String::from_utf8_lossy(&output.stderr);
+        for line in stderr_str.lines() {
+            if !line.is_empty() {
+                crate::ui::log(line);
+            }
+        }
+    }
+    
+    Ok(output)
 }
 
 /// Pull from a specific remote
@@ -20,14 +43,14 @@ pub fn git_pull_remote(repo_path: &Path, remote_name: &str) -> io::Result<()> {
         return Ok(());
     }
 
-    let status = quiet(Command::new("git"))
-        .current_dir(repo_path)
+    let mut cmd = std::process::Command::new("git");
+    cmd.current_dir(repo_path)
         .arg("pull")
         .arg(remote_name)
-        .arg("main")
-        .status()?;
+        .arg("main");
+    let output = quiet(cmd)?;
 
-    if !status.success() {
+    if !output.status.success() {
         return Err(io::Error::other(format!(
             "failed to pull from {}",
             remote_name
@@ -43,14 +66,14 @@ pub fn git_push_remote(repo_path: &Path, remote_name: &str) -> io::Result<()> {
         return Ok(());
     }
 
-    let status = quiet(Command::new("git"))
-        .current_dir(repo_path)
+    let mut cmd = std::process::Command::new("git");
+    cmd.current_dir(repo_path)
         .arg("push")
         .arg(remote_name)
-        .arg("main")
-        .status()?;
+        .arg("main");
+    let output = quiet(cmd)?;
 
-    if !status.success() {
+    if !output.status.success() {
         return Err(io::Error::other(format!(
             "failed to push to {}",
             remote_name
@@ -132,25 +155,25 @@ pub fn git_add_and_commit_file(
     }
 
     // Add the file
-    let add_status = quiet(Command::new("git"))
-        .current_dir(repo_path)
+    let mut add_cmd = std::process::Command::new("git");
+    add_cmd.current_dir(repo_path)
         .arg("add")
-        .arg(file_path)
-        .status()?;
+        .arg(file_path);
+    let add_output = quiet(add_cmd)?;
 
-    if !add_status.success() {
+    if !add_output.status.success() {
         return Err(io::Error::other("failed to add file"));
     }
 
     // Commit
-    let commit_status = quiet(Command::new("git"))
-        .current_dir(repo_path)
+    let mut commit_cmd = std::process::Command::new("git");
+    commit_cmd.current_dir(repo_path)
         .arg("commit")
         .arg("-m")
-        .arg(commit_message)
-        .status()?;
+        .arg(commit_message);
+    let commit_output = quiet(commit_cmd)?;
 
-    if !commit_status.success() {
+    if !commit_output.status.success() {
         // If commit fails because there's nothing to commit, that's okay
         // (file might have already been committed)
         return Ok(());

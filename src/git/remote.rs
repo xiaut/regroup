@@ -5,14 +5,37 @@
 use std::env;
 use std::io;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use crate::config::{CONFIG_DIR, GIT_DIR, Machine};
 
-/// Run a git command without suppressing its output.
-/// The output is shown to the user for visibility.
-fn quiet(cmd: Command) -> Command {
-    cmd
+/// Run a git command and log its output.
+fn quiet(mut cmd: Command) -> io::Result<std::process::Output> {
+    // Capture stdout and stderr
+    let output = cmd
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()?;
+    
+    // Log output
+    if !output.stdout.is_empty() {
+        let stdout_str = String::from_utf8_lossy(&output.stdout);
+        for line in stdout_str.lines() {
+            if !line.is_empty() {
+                crate::ui::log(line);
+            }
+        }
+    }
+    if !output.stderr.is_empty() {
+        let stderr_str = String::from_utf8_lossy(&output.stderr);
+        for line in stderr_str.lines() {
+            if !line.is_empty() {
+                crate::ui::log(line);
+            }
+        }
+    }
+    
+    Ok(output)
 }
 
 /// Get the URL of an existing remote, or None if it doesn't exist
@@ -40,14 +63,14 @@ pub fn git_add_remote(repo_path: &Path, remote_name: &str, remote_url: &str) -> 
         Some(existing_url) => {
             if existing_url != remote_url {
                 // Update existing remote
-                let status = quiet(Command::new("git"))
-                    .current_dir(repo_path)
+                let mut cmd = Command::new("git");
+                cmd.current_dir(repo_path)
                     .arg("remote")
                     .arg("set-url")
                     .arg(remote_name)
-                    .arg(remote_url)
-                    .status()?;
-                if !status.success() {
+                    .arg(remote_url);
+                let output = quiet(cmd)?;
+                if !output.status.success() {
                     return Err(io::Error::other("failed to update remote"));
                 }
             }
@@ -55,14 +78,14 @@ pub fn git_add_remote(repo_path: &Path, remote_name: &str, remote_url: &str) -> 
         }
         None => {
             // Add new remote
-            let status = quiet(Command::new("git"))
-                .current_dir(repo_path)
+            let mut cmd = Command::new("git");
+            cmd.current_dir(repo_path)
                 .arg("remote")
                 .arg("add")
                 .arg(remote_name)
-                .arg(remote_url)
-                .status()?;
-            if !status.success() {
+                .arg(remote_url);
+            let output = quiet(cmd)?;
+            if !output.status.success() {
                 return Err(io::Error::other("failed to add remote"));
             }
             Ok(())
@@ -76,14 +99,14 @@ pub fn git_remove_remote(repo_path: &Path, remote_name: &str) -> io::Result<()> 
         return Ok(());
     }
 
-    let status = quiet(Command::new("git"))
-        .current_dir(repo_path)
+    let mut cmd = Command::new("git");
+    cmd.current_dir(repo_path)
         .arg("remote")
         .arg("remove")
-        .arg(remote_name)
-        .status()?;
+        .arg(remote_name);
+    let output = quiet(cmd)?;
 
-    if !status.success() {
+    if !output.status.success() {
         return Err(io::Error::other("failed to remove remote"));
     }
 
