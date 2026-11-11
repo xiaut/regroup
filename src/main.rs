@@ -278,9 +278,6 @@ fn main() {
         std::env::var("USER").unwrap_or_else(|_| std::env::var("LOGNAME").unwrap_or_default())
     });
 
-    // Set global CLI mode flag so subprocesses know to show their output
-    cli::set_cli_mode(cli_mode);
-
     // Start beacon listener in background (always listen for other devices)
     // Signature verification, beacon age check and IP consistency check are
     // performed inside listen_beacons_continuous; only valid beacons reach the queue.

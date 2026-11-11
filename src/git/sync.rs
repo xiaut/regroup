@@ -4,23 +4,14 @@
 
 use std::io;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Command;
 
 use crate::git::remote;
 
-/// Run a git command quietly: its output would corrupt the interactive
-/// display (which owns the terminal), and failures are reported through the
-/// returned errors. In CLI mode, output is not suppressed.
-fn quiet(mut cmd: Command) -> Command {
-    if crate::cli::is_cli_mode() {
-        // In CLI mode, let output go to stdout/stderr
-        cmd
-    } else {
-        // In TUI mode, suppress output to avoid corrupting the display
-        cmd.stdout(Stdio::null());
-        cmd.stderr(Stdio::null());
-        cmd
-    }
+/// Run a git command without suppressing its output.
+/// The output is shown to the user for visibility.
+fn quiet(cmd: Command) -> Command {
+    cmd
 }
 
 /// Pull from a specific remote
