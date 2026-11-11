@@ -188,9 +188,10 @@ fn read_host_key(key_path: &PathBuf) -> Option<SshPublicKey> {
 /// Removes any hostname prefix or comment that may be present.
 /// Returns None if the key doesn't appear to be valid.
 fn normalize_public_key(public_key: &str) -> Option<String> {
-    // Known SSH key types for detection
-    let known_key_types = ["ssh-rsa", "ssh-dss", "ssh-ed25519", 
-        "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521"];
+    // Known SSH key types for detection (including RSA signature algorithms)
+    let known_key_types = ["ssh-rsa", "rsa-sha2-256", "rsa-sha2-512", "rsa-sha2-256-cert-v01@openssh.com", "rsa-sha2-512-cert-v01@openssh.com",
+        "ssh-dss", "ssh-ed25519", "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521",
+        "sk-ssh-ed25519@openssh.com", "sk-ecdsa-sha2-nistp256@openssh.com"];
     
     let parts: Vec<&str> = public_key.split_whitespace().collect();
     if parts.len() < 2 {
