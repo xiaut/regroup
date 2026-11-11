@@ -723,7 +723,7 @@ pub fn render_question(
                         if ctx.pending > 0 {
                             (
                                 "Detected devices".to_string(),
-                                format!("[Esc] no pane   [Up/Dn] select   [Enter/a] add   [n] ignore   [?] help   [q] quit"),
+                                format!("[Esc] no pane   [Up/Dn] select   [a] add   [n] ignore   [?] help   [q] quit"),
                             )
                         } else {
                             (

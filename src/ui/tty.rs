@@ -31,7 +31,7 @@ fn calculate_question_height(question: &Question, ctx: &QuestionCtx, width: u16)
             match ctx.active_pane {
                 ActivePane::MainMenu => "[d] Detected   [a] Added   [l] Logs   [?] help   [q] quit",
                 ActivePane::Detected if ctx.pending > 0 => 
-                    "[Esc] no pane   [Up/Dn] select   [Enter/a] add   [n] ignore   [?] help   [q] quit",
+                    "[Esc] no pane   [Up/Dn] select   [a] add   [n] ignore   [?] help   [q] quit",
                 ActivePane::Detected => 
                     "[Esc] no pane   [?] help   [q] quit",
                 ActivePane::Added => 
@@ -399,43 +399,6 @@ impl TtyUi {
         
         // From this point on, we're in Idle mode with no modal questions
         
-        // Pane navigation by letters only (NO TAB)
-        // Esc returns to no active pane (MainMenu)
-        if !in_modal {
-            match key.code {
-                crossterm::event::KeyCode::Char('d') => {
-                    self.active_pane = ActivePane::Detected;
-                    if self.detected.is_empty() {
-                        self.detected_selected = None;
-                    } else {
-                        self.detected_selected = Some(0);
-                    }
-                    self.added_selected = None;
-                    self.log_scroll = 0;
-                    return None;
-                }
-                crossterm::event::KeyCode::Char('a') => {
-                    self.active_pane = ActivePane::Added;
-                    if self.added.is_empty() {
-                        self.added_selected = None;
-                    } else {
-                        self.added_selected = Some(0);
-                    }
-                    self.detected_selected = None;
-                    self.log_scroll = 0;
-                    return None;
-                }
-                crossterm::event::KeyCode::Char('l') => {
-                    self.active_pane = ActivePane::Logs;
-                    self.log_scroll = 0;
-                    self.detected_selected = None;
-                    self.added_selected = None;
-                    return None;
-                }
-                _ => {}
-            }
-        }
-        
         // Detected pane: navigate detected devices and add them
         if self.active_pane == ActivePane::Detected && !in_modal {
             match key.code {
@@ -455,7 +418,7 @@ impl TtyUi {
                     }
                     return None;
                 }
-                crossterm::event::KeyCode::Enter | crossterm::event::KeyCode::Char('a') => {
+                crossterm::event::KeyCode::Char('a') => {
                     return self.detected_selected.map(|_| Action::Add);
                 }
                 crossterm::event::KeyCode::Char('n') => {
@@ -527,6 +490,54 @@ impl TtyUi {
                 }
                 crossterm::event::KeyCode::Char('v') => {
                     return Some(Action::ToggleVerbose);
+                }
+                _ => {}
+            }
+        }
+        
+        // Pane navigation by letters only (NO TAB)
+        // Esc returns to no active pane (MainMenu)
+        // Only handle pane navigation if we're not currently in that pane
+        // This allows pane-specific actions (like 'a' to add in Detected pane) to take precedence
+        if !in_modal {
+            match key.code {
+                crossterm::event::KeyCode::Char('d') => {
+                    // Only switch to Detected if we're not already there
+                    if self.active_pane != ActivePane::Detected {
+                        self.active_pane = ActivePane::Detected;
+                        if self.detected.is_empty() {
+                            self.detected_selected = None;
+                        } else {
+                            self.detected_selected = Some(0);
+                        }
+                        self.added_selected = None;
+                        self.log_scroll = 0;
+                        return None;
+                    }
+                }
+                crossterm::event::KeyCode::Char('a') => {
+                    // Only switch to Added if we're not already there
+                    if self.active_pane != ActivePane::Added {
+                        self.active_pane = ActivePane::Added;
+                        if self.added.is_empty() {
+                            self.added_selected = None;
+                        } else {
+                            self.added_selected = Some(0);
+                        }
+                        self.detected_selected = None;
+                        self.log_scroll = 0;
+                        return None;
+                    }
+                }
+                crossterm::event::KeyCode::Char('l') => {
+                    // Only switch to Logs if we're not already there
+                    if self.active_pane != ActivePane::Logs {
+                        self.active_pane = ActivePane::Logs;
+                        self.log_scroll = 0;
+                        self.detected_selected = None;
+                        self.added_selected = None;
+                        return None;
+                    }
                 }
                 _ => {}
             }
