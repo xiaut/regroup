@@ -141,9 +141,15 @@ fn get_server_public_key_via_keyscan() -> Option<SshPublicKey> {
 
     let output_str = String::from_utf8_lossy(&raw);
     // ssh-keyscan output: "127.0.0.1 ssh-rsa AAAAB3NzaC1..."
+    // It may also include comment lines starting with #
     // We want to extract just "ssh-rsa AAAAB3NzaC1..." (the key_type key_base64 part)
     for line in output_str.lines() {
-        let parts: Vec<&str> = line.split_whitespace().collect();
+        // Skip comment lines and empty lines
+        let trimmed_line = line.trim();
+        if trimmed_line.is_empty() || trimmed_line.starts_with('#') {
+            continue;
+        }
+        let parts: Vec<&str> = trimmed_line.split_whitespace().collect();
         if parts.len() >= 3 {
             // The key is parts[1] and parts[2] (key_type and key_base64)
             // Take only first 2 parts of the key to avoid including comments
@@ -513,7 +519,12 @@ pub fn verify_and_add_to_known_hosts(
     // The announced key must be among the keys the server offers.
     let mut first_served: Option<SshFingerprint> = None;
     for line in keyscan_str.lines() {
-        let parts: Vec<&str> = line.split_whitespace().collect();
+        // Skip comment lines (ssh-keyscan outputs lines starting with #)
+        let trimmed_line = line.trim();
+        if trimmed_line.is_empty() || trimmed_line.starts_with('#') {
+            continue;
+        }
+        let parts: Vec<&str> = trimmed_line.split_whitespace().collect();
         if parts.len() < 3 {
             continue;
         }
