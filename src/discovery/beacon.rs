@@ -7,12 +7,12 @@
 //!
 //! The signed message is: "name|ssh_public_key|user|ip|port|timestamp"
 //!
-//! # Machine Identification
+//! # Device Identification
 //!
-//! **CRITICAL**: Machines are uniquely identified by their SSH public key, NOT by hostname or IP.
+//! **CRITICAL**: Devices are uniquely identified by their SSH public key, NOT by hostname or IP.
 //! - Hostname can change (especially in Termux where it may be randomized on each launch)
 //! - IP addresses can change with network changes (WiFi, VPN, DHCP, etc.)
-//! - SSH public key is persistent and uniquely identifies a machine
+//! - SSH public key is persistent and uniquely identifies a device
 //!
 //! This is why self-detection filtering MUST use the SSH public key to determine
 //! "this beacon is from me" rather than comparing hostname or IP address.
@@ -141,8 +141,8 @@ const MAX_BEACON_FUTURE: u64 = 60;
 /// Runs until the `running` flag becomes false or the channel is disconnected.
 ///
 /// Only beacons with valid signatures are forwarded via the channel.
-/// Beacons from the local machine (self-detection) are filtered out based on SSH public key.
-/// The SSH public key is the unique identifier for a machine - this is what defines
+/// Beacons from the local device (self-detection) are filtered out based on SSH public key.
+/// The SSH public key is the unique identifier for a device - this is what defines
 /// "this is me" and not name or IP (which can change).
 pub fn listen_beacons_continuous(
     port: u16,
@@ -199,7 +199,7 @@ pub fn listen_beacons_continuous(
 
                 // A timestamp in the future would bypass the age check
                 // forever (saturating_sub yields 0): allow only a small
-                // clock skew between machines.
+                // clock skew between devices.
                 if timestamp > now + MAX_BEACON_FUTURE {
                     crate::ui::log(&format!(
                         "WARNING: received beacon from {} with a future timestamp ({}s ahead) — rejected",
@@ -223,7 +223,7 @@ pub fn listen_beacons_continuous(
                         }
 
                         // IMPORTANT: Filter out self-detection based on SSH public key only.
-                        // The SSH public key is the unique identifier for a machine.
+                        // The SSH public key is the unique identifier for a device.
                         // We cannot rely on hostname (changes in Termux) or IP (changes with network).
                         // If the beacon's SSH public key matches our own, this is us - ignore it.
                         if ssh_public_key == local_ssh_public_key {

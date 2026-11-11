@@ -1,9 +1,9 @@
 //! Receive and remove an SSH public key for a regroup connection
 //!
-//! This command is called on the TARGET machine via SSH to remove a public key
+//! This command is called on the TARGET device via SSH to remove a public key
 //! from authorized_keys and delete the connection file.
 //!
-//! Usage (from source machine):
+//! Usage (from source device):
 //!   ssh user@target "regroup receive-remove-key --connection-id alice->bob@target"
 
 use std::env;
@@ -12,7 +12,7 @@ use std::process;
 
 use crate::cli::key_management::{
     get_config_dir, remove_authorized_key, commit_changes, parse_connection_id,
-    get_current_user, get_local_machine_name,
+    get_current_user, get_local_device_name,
 };
 use crate::config::connection::{load_connection_file, delete_connection};
 
@@ -58,8 +58,8 @@ pub fn handle_receive_remove_key() -> Result<(), String> {
     let args = parse_args()?;
     
     // Parse connection ID to get components
-    // connection_id format: "from_user->to_user@to_machine"
-    let (from_user, to_user, to_machine) = parse_connection_id(&args.connection_id)?;
+    // connection_id format: "from_user->to_user@to_device"
+    let (from_user, to_user, to_device) = parse_connection_id(&args.connection_id)?;
     
     // Validate that current user matches the target user
     let current_user = get_current_user();
@@ -70,20 +70,20 @@ pub fn handle_receive_remove_key() -> Result<(), String> {
         ));
     }
     
-    // Validate that local machine matches to_machine
-    let local_machine = get_local_machine_name();
-    if local_machine != to_machine {
+    // Validate that local device matches to_device
+    let local_device = get_local_device_name();
+    if local_device != to_device {
         return Err(format!(
-            "Local machine '{}' does not match target machine '{}' in connection ID",
-            local_machine, to_machine
+            "Local device '{}' does not match target device '{}' in connection ID",
+            local_device, to_device
         ));
     }
     
     let config_dir = get_config_dir();
-    let connections_dir = config_dir.join("devices").join(&local_machine).join("connections");
+    let connections_dir = config_dir.join("devices").join(&local_device).join("connections");
     
     // Find the connection file that matches from_user and to_user
-    // On target machine, incoming connection files are named: from_user@from_machine->to_user.json
+    // On target device, incoming connection files are named: from_user@from_device->to_user.json
     // We need to find the file where the local user is to_user
     let mut matching_file: Option<PathBuf> = None;
     if connections_dir.exists() {
@@ -95,7 +95,7 @@ pub fn handle_receive_remove_key() -> Result<(), String> {
             }
             
             let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            // Filename format: from_user@from_machine->to_user.json
+            // Filename format: from_user@from_device->to_user.json
             if filename.ends_with(".json") {
                 let base_name = &filename[..filename.len()-5]; // Remove .json
                 let parts: Vec<&str> = base_name.split("->").collect();
@@ -119,7 +119,7 @@ pub fn handle_receive_remove_key() -> Result<(), String> {
     
     let connection_path = matching_file.ok_or(format!(
         "No matching connection file found for {}->{}@{}",
-        from_user, to_user, to_machine
+        from_user, to_user, to_device
     ))?;
     
     if !connection_path.exists() {
@@ -127,13 +127,13 @@ pub fn handle_receive_remove_key() -> Result<(), String> {
     }
     
     // Load the connection to get the public key
-    let connection = load_connection_file(&connection_path, &local_machine)
+    let connection = load_connection_file(&connection_path, &local_device)
         .map_err(|e| format!("Failed to load connection: {}", e))?;
     
     // Delete the connection file
     delete_connection(
         &config_dir,
-        &local_machine,
+        &local_device,
         &connection,
         &current_user,
     ).map_err(|e| format!("Failed to delete connection: {}", e))?;
@@ -143,7 +143,7 @@ pub fn handle_receive_remove_key() -> Result<(), String> {
         .map_err(|e| format!("Failed to remove authorized key: {}", e))?;
     
     // Commit the changes
-    let commit_message = format!("Remove connection: {}@{}->{}", from_user, connection.from_machine, to_user);
+    let commit_message = format!("Remove connection: {}@{}->{}", from_user, connection.from_device, to_user);
     commit_changes(&config_dir, &commit_message)
         .map_err(|e| format!("Failed to commit: {}", e))?;
     

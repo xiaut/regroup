@@ -42,7 +42,7 @@ Each device file contains:
 ## Lists as Directories
 
 **Extensible collections must be one file per item** so that:
-- Two machines (or two users of one machine) appending different items never conflict
+- Two devices (or two users of one device) appending different items never conflict
 - Each addition creates a separate file, avoiding merge conflicts
 
 Example:

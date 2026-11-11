@@ -31,7 +31,7 @@ pub fn set_direct_output_mode(enabled: bool) {
     DIRECT_OUTPUT_MODE.store(enabled, Ordering::Relaxed);
 }
 
-/// How long a machine's row keeps its animated status.
+/// How long a device's row keeps its animated status.
 pub const FLASH_MS: u64 = 2500;
 /// Security flashes last longer: the user must not miss them.
 pub const SECURITY_FLASH_MS: u64 = 5000;
@@ -39,7 +39,7 @@ pub const SECURITY_FLASH_MS: u64 = 5000;
 pub const BLINK_MS: u64 = 250;
 /// How long the pressed key stays highlighted in the hint line.
 pub const KEY_FLASH_MS: u64 = 700;
-/// How long a machine's row animates after a beacon is received from it.
+/// How long a device's row animates after a beacon is received from it.
 pub const PULSE_MS: u64 = 900;
 
 /// Sender side of the log channel; unset until [`crate::ui::Ui::start`] creates it.
@@ -60,7 +60,7 @@ pub fn log(msg: &str) {
     }
 }
 
-/// Display a machine-specific message: animated status on the machine's
+/// Display a device-specific message: animated status on the device's
 /// row in the full-screen ui, `detail` (or `name: msg`) on stdout otherwise.
 /// Security messages are additionally kept in the activity pane.
 pub fn log_device(
@@ -78,7 +78,7 @@ pub fn log_device(
     } else {
         match LOG_TX.get() {
             Some(tx) => {
-                let _ = tx.send(UiEvent::Device {
+                let _ = tx.send(UiEvent::UiDevice {
                     key: key.as_str().to_string(),
                     name: name.to_string(),
                     level,
@@ -94,9 +94,9 @@ pub fn log_device(
     }
 }
 
-/// Pulse a machine's row: the row lights up and fades out for a short
+/// Pulse a device's row: the row lights up and fades out for a short
 /// while, showing the user that a beacon was received from it (even a
-/// silent one: known machine, unchanged IP). Full-screen ui only.
+/// silent one: known device, unchanged IP). Full-screen ui only.
 pub fn pulse_device(key: &SshPublicKey) {
     if let Some(tx) = LOG_TX.get() {
         let _ = tx.send(UiEvent::Pulse {

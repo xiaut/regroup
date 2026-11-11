@@ -13,7 +13,7 @@ use super::settings::{load_global_settings, save_default_global_settings};
 use super::users::ensure_local_user_file;
 use super::{
     CONFIG_DIR, Conf, DeviceName, DEVICES_DIR, DEVICE_FILE, GLOBAL_CONFIG_FILE, GlobalSettings,
-    Machine, device_dir, device_file_path,
+    Device, device_dir, device_file_path,
 };
 use crate::discovery::local::host_name;
 use crate::git::git_init;
@@ -45,7 +45,7 @@ fn warn(msg: &str) {
 // ============================================================
 
 /// Auto-create device configuration with self-detected information
-pub fn create_device_config(config_dir: &Path) -> Result<Machine, String> {
+pub fn create_device_config(config_dir: &Path) -> Result<Device, String> {
     let hostname = host_name();
 
     // Validate hostname
@@ -58,10 +58,10 @@ pub fn create_device_config(config_dir: &Path) -> Result<Machine, String> {
     }
 
     let ssh_public_key = get_ssh_server_public_key().ok_or_else(|| {
-        "Could not detect SSH public key. Ensure SSH server is running on this machine.".to_string()
+        "Could not detect SSH public key. Ensure SSH server is running on this device.".to_string()
     })?;
 
-    // Pin our own signing key in the device file: the machines that accept
+    // Pin our own signing key in the device file: the devices that accept
     // this device verify our beacons against it.
     let signing_public_key = match crate::signing::initialize_signing_keys() {
         Ok((_signing_key, verifying_key)) => {
@@ -76,7 +76,7 @@ pub fn create_device_config(config_dir: &Path) -> Result<Machine, String> {
     // Determine the current user
     let current_user = env::var("USER").unwrap_or_else(|_| env::var("LOGNAME").unwrap_or_default());
 
-    let machine = Machine {
+    let device = Device {
         name: DeviceName::new(hostname.clone())
             .ok_or_else(|| format!("hostname '{}' is empty or whitespace", hostname))?,
         ssh_public_key,
@@ -86,8 +86,8 @@ pub fn create_device_config(config_dir: &Path) -> Result<Machine, String> {
         port_explicit: false,
     };
 
-    // Validate the machine configuration
-    super::validation::validate_machine(&machine)?;
+    // Validate the device configuration
+    super::validation::validate_device(&device)?;
 
     // Save to the device's own directory
     let dir = device_dir(config_dir, &hostname);
@@ -96,7 +96,7 @@ pub fn create_device_config(config_dir: &Path) -> Result<Machine, String> {
     }
 
     let device_path = device_file_path(config_dir, &hostname);
-    if let Err(e) = save_device_file(&device_path, &machine) {
+    if let Err(e) = save_device_file(&device_path, &device) {
         return Err(format!("cannot save device config: {}", e));
     }
 
@@ -111,7 +111,7 @@ pub fn create_device_config(config_dir: &Path) -> Result<Machine, String> {
         warn(&format!("could not commit device config: {}", e));
     }
 
-    Ok(machine)
+    Ok(device)
 }
 
 // ============================================================
@@ -190,44 +190,44 @@ pub fn load_config() -> Conf {
     } = load_global_settings(&config_dir);
 
     // Load all device configurations: one device.json per device directory
-    let mut machines: Vec<Machine> = Vec::new();
+    let mut devices: Vec<Device> = Vec::new();
 
     if let Ok(entries) = fs::read_dir(&devices_dir) {
         for entry in entries.flatten() {
             let device_path = entry.path().join(DEVICE_FILE);
             if device_path.is_file() {
                 match load_device_file(&device_path) {
-                    Ok(machine) => machines.push(machine),
+                    Ok(device) => devices.push(device),
                     Err(e) => warn(&format!("skipping {}: {}", device_path.display(), e)),
                 }
             }
         }
     }
 
-    // Check if current machine's config exists, if not create it
+    // Check if current device's config exists, if not create it
     let local_hostname = host_name();
     let local_ssh_public_key = get_ssh_server_public_key();
 
-    let current_machine_exists = machines.iter().any(|m| {
-        m.name.as_str() == local_hostname || (local_ssh_public_key.as_ref() == Some(&m.ssh_public_key))
+    let current_device_exists = devices.iter().any(|d| {
+        d.name.as_str() == local_hostname || (local_ssh_public_key.as_ref() == Some(&d.ssh_public_key))
     });
 
-    if !current_machine_exists {
-        // Auto-create this machine's configuration
+    if !current_device_exists {
+        // Auto-create this device's configuration
         match create_device_config(&config_dir) {
-            Ok(new_machine) => {
-                machines.push(new_machine);
+            Ok(new_device) => {
+                devices.push(new_device);
             }
             Err(e) => {
-                warn(&format!("could not create machine config: {}", e));
+                warn(&format!("could not create device config: {}", e));
             }
         }
     }
 
-    // Record the current user on the local machine (first run only):
+    // Record the current user on the local device (first run only):
     // `devices/<self>/users/<user>.json` is written once and committed,
-    // so other machines learn who this machine's users are through git.
-    if machines.iter().any(|m| m.name.as_str() == local_hostname) {
+    // so other devices learn who this device's users are through git.
+    if devices.iter().any(|d| d.name.as_str() == local_hostname) {
         let current_user =
             env::var("USER").unwrap_or_else(|_| env::var("LOGNAME").unwrap_or_default());
         if !current_user.is_empty() {
@@ -255,12 +255,12 @@ pub fn load_config() -> Conf {
         }
     }
 
-    // Sort machines by name for consistent ordering
-    machines.sort_by(|a, b| a.name.as_str().cmp(&b.name.as_str()));
+    // Sort devices by name for consistent ordering
+    devices.sort_by(|a, b| a.name.as_str().cmp(&b.name.as_str()));
 
-    if machines.is_empty() {
+    if devices.is_empty() {
         warn(&format!(
-            "no machines configured in {} — first machine will be auto-created on first run",
+            "no devices configured in {} — first device will be auto-created on first run",
             config_dir.display()
         ));
     }
@@ -268,7 +268,7 @@ pub fn load_config() -> Conf {
     Conf {
         udp_port,
         wait_secs,
-        machines,
+        devices,
     }
 }
 

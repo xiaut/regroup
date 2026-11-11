@@ -70,7 +70,7 @@ pub fn list_remotes() -> Result<Vec<String>, GitError>
 Updates all remotes from the current configuration:
 
 ```rust
-pub fn sync_remotes(home: &str, machines: &[Machine]) -> Result<(), GitError>
+pub fn sync_remotes(home: &str, devices: &[Device]) -> Result<(), GitError>
 ```
 
 ## Sync Operations

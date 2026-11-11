@@ -2,7 +2,7 @@
 //!
 //! View-only for now: the procedures to create and remove connections
 //! (dedicated SSH key pair, installation of the public key on the target
-//! machine) are not implemented yet and will be redesigned (ssh-copy-id is
+//! device) are not implemented yet and will be redesigned (ssh-copy-id is
 //! one candidate). Keys 'a' (add) and 'd' (delete) answer with an explicit
 //! "not implemented" message.
 //!
@@ -30,7 +30,7 @@ use ratatui::{
 };
 
 use crate::config::connection::{self as conn_store, Connection, Direction as ConnDirection};
-use crate::config::Machine;
+use crate::config::Device;
 
 const NOT_IMPLEMENTED: &str =
     "Création et suppression de connexions : non implémentées pour le moment.";
@@ -46,11 +46,11 @@ pub enum ConnectionResult {
 
 /// The screen currently displayed.
 enum Screen {
-    /// Choice of the machine whose connections to browse
-    MachineList { selected: usize },
-    /// All connections of the selected machine (both directions)
+    /// Choice of the device whose connections to browse
+    DeviceList { selected: usize },
+    /// All connections of the selected device (both directions)
     ConnectionList {
-        machine_name: String,
+        device_name: String,
         items: Vec<(Connection, ConnDirection)>,
         selected: usize,
     },
@@ -63,36 +63,36 @@ enum Screen {
     Message { text: String },
 }
 
-/// Browse the connections of all known machines except the local one.
+/// Browse the connections of all known devices except the local one.
 pub fn handle_connections(
     terminal: &mut ratatui::Terminal<impl ratatui::backend::Backend>,
     config_dir: &Path,
-    machines: &[Machine],
-    local_machine: &str,
+    devices: &[Device],
+    local_device: &str,
 ) -> io::Result<ConnectionResult> {
-    let machines: Vec<Machine> = machines
+    let devices: Vec<Device> = devices
         .iter()
-        .filter(|m| m.name != local_machine)
+        .filter(|d| d.name != local_device)
         .cloned()
         .collect();
-    if machines.is_empty() {
+    if devices.is_empty() {
         return Ok(ConnectionResult::Error(
-            "No other machines known.".to_string(),
+            "No other devices known.".to_string(),
         ));
     }
 
-    let mut screen = Screen::MachineList { selected: 0 };
+    let mut screen = Screen::DeviceList { selected: 0 };
 
     loop {
         terminal.draw(|f| match &screen {
-            Screen::MachineList { selected } => {
-                draw_machine_list(f, &machines, *selected, local_machine)
+            Screen::DeviceList { selected } => {
+                draw_device_list(f, &devices, *selected, local_device)
             }
             Screen::ConnectionList {
-                machine_name,
+                device_name,
                 items,
                 selected,
-            } => draw_connection_list(f, machine_name, items, *selected),
+            } => draw_connection_list(f, device_name, items, *selected),
             Screen::ConnectionDetails {
                 connection,
                 direction,
@@ -108,13 +108,13 @@ pub fn handle_connections(
         }
 
         match &mut screen {
-            Screen::MachineList { selected } => match key.code {
+            Screen::DeviceList { selected } => match key.code {
                 KeyCode::Char('q') | KeyCode::Esc => return Ok(ConnectionResult::None),
                 KeyCode::Up => *selected = selected.saturating_sub(1),
-                KeyCode::Down => *selected = (*selected + 1).min(machines.len() - 1),
+                KeyCode::Down => *selected = (*selected + 1).min(devices.len() - 1),
                 KeyCode::Enter => {
-                    let name = machines[*selected].name.as_str().to_string();
-                    screen = open_machine_connections(config_dir, &name);
+                    let name = devices[*selected].name.as_str().to_string();
+                    screen = open_device_connections(config_dir, &name);
                 }
                 KeyCode::Char('a') | KeyCode::Char('d') => {
                     screen = Screen::Message {
@@ -128,7 +128,7 @@ pub fn handle_connections(
                 selected,
                 ..
             } => match key.code {
-                KeyCode::Esc => screen = Screen::MachineList { selected: 0 },
+                KeyCode::Esc => screen = Screen::DeviceList { selected: 0 },
                 KeyCode::Up => *selected = selected.saturating_sub(1),
                 KeyCode::Down => {
                     if !items.is_empty() {
@@ -154,26 +154,26 @@ pub fn handle_connections(
                 connection,
                 direction,
             } => {
-                // Any quit key goes back to the machine whose directory
-                // holds this file: source machine for an outgoing
-                // connection, target machine for an incoming one.
+                // Any quit key goes back to the device whose directory
+                // holds this file: source device for an outgoing
+                // connection, target device for an incoming one.
                 if matches!(key.code, KeyCode::Esc | KeyCode::Char('q') | KeyCode::Enter) {
-                    let machine = match direction {
-                        ConnDirection::Outgoing => connection.from_machine.clone(),
-                        ConnDirection::Incoming => connection.to_machine.clone(),
+                    let device = match direction {
+                        ConnDirection::Outgoing => connection.from_device.clone(),
+                        ConnDirection::Incoming => connection.to_device.clone(),
                     };
-                    screen = open_machine_connections(config_dir, &machine);
+                    screen = open_device_connections(config_dir, &device);
                 }
             }
-            Screen::Message { .. } => screen = Screen::MachineList { selected: 0 },
+            Screen::Message { .. } => screen = Screen::DeviceList { selected: 0 },
         }
     }
 }
 
 /// Rebuild the list of a device's connections, both directions mixed;
 /// load failures and malformed files become a message screen.
-fn open_machine_connections(config_dir: &Path, machine_name: &str) -> Screen {
-    match conn_store::load_machine_connections(config_dir, machine_name) {
+fn open_device_connections(config_dir: &Path, device_name: &str) -> Screen {
+    match conn_store::load_device_connections(config_dir, device_name) {
         Ok(loaded) => {
             // Malformed files are reported instead of silently hidden.
             if !loaded.warnings.is_empty() {
@@ -189,13 +189,13 @@ fn open_machine_connections(config_dir: &Path, machine_name: &str) -> Screen {
                 items.push((c, ConnDirection::Incoming));
             }
             Screen::ConnectionList {
-                machine_name: machine_name.to_string(),
+                device_name: device_name.to_string(),
                 items,
                 selected: 0,
             }
         }
         Err(e) => Screen::Message {
-            text: format!("Impossible de lire les connexions de {machine_name} : {e}"),
+            text: format!("Impossible de lire les connexions de {device_name} : {e}"),
         },
     }
 }
@@ -204,20 +204,20 @@ fn open_machine_connections(config_dir: &Path, machine_name: &str) -> Screen {
 // Drawing
 // ============================================================
 
-fn draw_machine_list(
+fn draw_device_list(
     f: &mut ratatui::Frame,
-    machines: &[Machine],
+    devices: &[Device],
     selected: usize,
-    local_machine: &str,
+    local_device: &str,
 ) {
     let area = full(f.area());
-    let title = format!(" Connexions — machines connues depuis {} ", local_machine);
+    let title = format!(" Connexions — devices connues depuis {} ", local_device);
 
-    let items: Vec<ListItem> = machines
+    let items: Vec<ListItem> = devices
         .iter()
         .enumerate()
-        .map(|(i, m)| {
-            let label = format!("{} ({})", m.name, m.user);
+        .map(|(i, d)| {
+            let label = format!("{} ({})", d.name, d.user);
             let style = if i == selected {
                 Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
             } else {
@@ -232,12 +232,12 @@ fn draw_machine_list(
 
 fn draw_connection_list(
     f: &mut ratatui::Frame,
-    machine_name: &str,
+    device_name: &str,
     items: &[(Connection, ConnDirection)],
     selected: usize,
 ) {
     let area = full(f.area());
-    let title = format!(" Connexions de {} ", machine_name);
+    let title = format!(" Connexions de {} ", device_name);
 
     let entries: Vec<ListItem> = items
         .iter()
@@ -337,11 +337,11 @@ fn pretty_direction(c: &Connection, d: ConnDirection) -> String {
     match d {
         ConnDirection::Outgoing => format!(
             "{}(ici) → {}@{}",
-            c.from_user, c.to_user, c.to_machine
+            c.from_user, c.to_user, c.to_device
         ),
         ConnDirection::Incoming => format!(
             "{}@{} → {}(ici)",
-            c.from_user, c.from_machine, c.to_user
+            c.from_user, c.from_device, c.to_user
         ),
     }
 }

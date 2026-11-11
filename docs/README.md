@@ -4,7 +4,7 @@ This directory contains the technical documentation for the **regroup** project.
 
 ## Overview
 
-**regroup** is a tool that finds machines by their SSH host key fingerprint and updates `~/.ssh/config`. Devices announce themselves via signed UDP beacons, and regroup listens continuously, prompting for each new device.
+**regroup** is a tool that finds devices by their SSH host key fingerprint and updates `~/.ssh/config`. Devices announce themselves via signed UDP beacons, and regroup listens continuously, prompting for each new device.
 
 Configuration is stored in `~/.regroup-config/git/` (a git repository) where each device owns a directory under `devices/<name>/` holding its state and lists.
 

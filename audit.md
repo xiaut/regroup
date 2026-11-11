@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-**Project**: Automatic machine discovery tool on local networks via signed UDP beacons, with decentralized Git synchronization.
+**Project**: Automatic device discovery tool on local networks via signed UDP beacons, with decentralized Git synchronization.
 **Language**: Rust (edition 2024)
 **Version**: 0.2.0
 **Status**: Functional, well-structured, with identified improvement areas.
@@ -14,12 +14,12 @@
 ### 1. Architecture & Design
 - **Excellent modularity**: Clear separation of concerns (CLI, config, discovery, git, signing, ssh, tui)
 - **Security by design**:
-  - Machine identification by **SSH server public key** (not hostname/IP)
+  - Device identification by **SSH server public key** (not hostname/IP)
   - Ed25519 beacon signing with systematic verification
   - Dual anti-MITM verification (beacon signature + ssh-keyscan)
   - Signing key pinning in configuration files
 - **Decentralized synchronization**: Smart git architecture with last-writer-wins conflict resolution
-- **Strict ownership**: Each machine writes only in its own directory
+- **Strict ownership**: Each device writes only in its own directory
 
 ### 2. Code Quality
 - **Comprehensive unit tests**: 25 passing tests covering signing, config, CLI
@@ -234,7 +234,7 @@ fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
 
 ## Conclusion
 
-The **regroup** project is **well-designed and secure** overall. The decentralized architecture with SSH key-based identification and Ed25519 signatures provides a solid foundation for network machine discovery.
+The **regroup** project is **well-designed and secure** overall. The decentralized architecture with SSH key-based identification and Ed25519 signatures provides a solid foundation for network device discovery.
 
 **Major strengths**: Security by design, modularity, comprehensive tests.
 

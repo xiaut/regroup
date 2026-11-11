@@ -1,6 +1,6 @@
 //! UI rendering functions and styling utilities.
 //!
-//! Contains all the rendering logic for the TUI interface, including machine
+//! Contains all the rendering logic for the TUI interface, including device
 //! panels, activity log, help panel, and question block rendering.
 
 use std::collections::HashMap;
@@ -17,12 +17,12 @@ use ratatui::widgets::{Block, BorderType, Cell, Paragraph, Row, Table, Wrap};
 use super::logging::{BLINK_MS, KEY_FLASH_MS, PULSE_MS};
 use super::types::{ActivePane, Level};
 
-/// Minimum terminal width to display machine panels side-by-side.
+/// Minimum terminal width to display device panels side-by-side.
 /// Below this, panels stack vertically.
 pub const MIN_WIDTH_FOR_SIDE_BY_SIDE: u16 = 80;
 
-/// Static look of one machine panel: title, border color and the status
-/// shown when the machine has no animated message.
+/// Static look of one device panel: title, border color and the status
+/// shown when the device has no animated message.
 pub struct PanelTheme {
     pub title: &'static str,
     pub border: Color,
@@ -39,7 +39,7 @@ impl PanelTheme {
     }
 }
 
-/// A machine's animated status, shown in the last column of its row.
+/// A device's animated status, shown in the last column of its row.
 pub struct RowFlash {
     pub level: Level,
     pub msg: String,
@@ -57,7 +57,7 @@ pub struct KeyFlash {
 pub struct QuestionCtx<'a> {
     /// Text typed for the rename question.
     pub input: &'a str,
-    /// Machines waiting for a decision (drives the Idle hints).
+    /// Devices waiting for a decision (drives the Idle hints).
     pub pending: usize,
     /// Whether the help panel is shown.
     pub help: bool,
@@ -69,15 +69,15 @@ pub struct QuestionCtx<'a> {
     pub key_flash: Option<&'a KeyFlash>,
 }
 
-/// A machine panel: one row per machine, with the animated per-machine
+/// A device panel: one row per device, with the animated per-device
 /// status in the last column. `selected` highlights a row (selection in
 /// the Detected panel, delete mode in the Added panel). A recent beacon
 /// pulses the row: bright background fading back to the base color.
-pub fn render_machines(
+pub fn render_devices(
     frame: &mut Frame,
     area: Rect,
     theme: PanelTheme,
-    devices: &[super::types::Device],
+    devices: &[super::types::UiDevice],
     selected: Option<usize>,
     flashes: &HashMap<String, RowFlash>,
     pulses: &HashMap<String, Instant>,
@@ -126,7 +126,7 @@ pub fn render_machines(
     frame.render_widget(table, area);
 }
 
-/// Style of a machine row: the panel's base color, overridden by the
+/// Style of a device row: the panel's base color, overridden by the
 /// selection, an urgent blink (warning, security), a beacon pulse, or the
 /// row's animated status, in that order of precedence.
 pub fn row_style(
@@ -270,7 +270,7 @@ pub fn render_log(frame: &mut Frame, area: Rect, log: &[String], scroll: u16, ve
     frame.render_widget(paragraph, area);
 }
 
-/// Help panel (key '?'): the CLI help text, replacing the machine panels
+/// Help panel (key '?'): the CLI help text, replacing the device panels
 /// and the activity pane while shown. Section headers are bold; the pane
 /// is bottom-anchored, shifted up by `scroll` lines.
 pub fn render_help(frame: &mut Frame, area: Rect, scroll: u16) {
@@ -316,9 +316,9 @@ pub fn render_all_panes(
     frame: &mut Frame,
     area: Rect,
     active_pane: ActivePane,
-    detected: &[super::types::Device],
+    detected: &[super::types::UiDevice],
     detected_selected: Option<usize>,
-    added: &[super::types::Device],
+    added: &[super::types::UiDevice],
     added_selected: Option<usize>,
     log: &[String],
     log_scroll: u16,
@@ -800,19 +800,19 @@ pub fn render_question(
                 ),
                 hint_spans("[y] confirm   [n] cancel", ctx.key_flash),
             ),
-            super::types::Question::InstallKeySelectMachine { machines } => (
+            super::types::Question::InstallKeySelectDevice { devices } => (
                 "Install SSH key",
                 Color::Green,
-                format!("Select target machine ({} available)", machines.len()),
+                format!("Select target device ({} available)", devices.len()),
                 hint_spans(
                     "[Up/Dn] select   [y] confirm   [n] cancel",
                     ctx.key_flash,
                 ),
             ),
-            super::types::Question::InstallKeySelectUser { machine, users } => (
+            super::types::Question::InstallKeySelectUser { device, users } => (
                 "Install SSH key",
                 Color::Green,
-                format!("Select user on {machine} ({} available)", users.len()),
+                format!("Select user on {device} ({} available)", users.len()),
                 hint_spans(
                     "[Up/Dn] select   [Enter] confirm   [Esc] back",
                     ctx.key_flash,
@@ -820,15 +820,15 @@ pub fn render_question(
             ),
             super::types::Question::InstallKeyConfirm {
                 from_user,
-                from_machine,
+                from_device,
                 to_user,
-                to_machine,
+                to_device,
             } => (
                 "Install SSH key",
                 Color::Green,
                 format!(
                     "Install key from {}@{} to {}@{}?",
-                    from_user, from_machine, to_user, to_machine
+                    from_user, from_device, to_user, to_device
                 ),
                 hint_spans("[y] confirm   [n] cancel", ctx.key_flash),
             ),
@@ -847,15 +847,15 @@ pub fn render_question(
             super::types::Question::RemoveKeyConfirm {
                 connection_id,
                 from_user,
-                from_machine,
+                from_device,
                 to_user,
-                to_machine,
+                to_device,
             } => (
                 "Remove SSH key",
                 Color::Red,
                 format!(
                     "Remove key {} ({}@{}) from {}@{}?",
-                    connection_id, from_user, from_machine, to_user, to_machine
+                    connection_id, from_user, from_device, to_user, to_device
                 ),
                 hint_spans("[y] confirm   [n] cancel", ctx.key_flash),
             ),

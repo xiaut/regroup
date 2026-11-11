@@ -10,7 +10,7 @@ use std::time::Duration;
 use super::logging::LOG_TX;
 use super::plain::PlainUi;
 use super::tty::TtyUi;
-use super::types::{ActivePane, Action, Device, Question};
+use super::types::{ActivePane, Action, Question, UiDevice};
 
 /// The interface used by the interactive loop.
 pub enum Ui {
@@ -60,8 +60,8 @@ impl Ui {
         }
     }
 
-    /// Update the machine panels (ignored in plain mode).
-    pub fn set_devices(&mut self, detected: Vec<Device>, added: Vec<Device>) {
+    /// Update the device panels (ignored in plain mode).
+    pub fn set_devices(&mut self, detected: Vec<UiDevice>, added: Vec<UiDevice>) {
         if let Ui::Tty(ui) = self {
             ui.detected = detected;
             ui.added = added;

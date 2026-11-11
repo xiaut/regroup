@@ -7,7 +7,7 @@ use std::io;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use crate::config::{CONFIG_DIR, GIT_DIR, Machine};
+use crate::config::{CONFIG_DIR, GIT_DIR, Device};
 
 /// Run a git command and log its output.
 /// When in direct output mode (temporary CLI mode), stderr is passed through
@@ -69,7 +69,7 @@ fn git_get_remote_url(repo_path: &Path, remote_name: &str) -> Option<String> {
     }
 }
 
-/// Add a git remote for a machine (updates the URL if it already exists)
+/// Add a git remote for a device (updates the URL if it already exists)
 pub fn git_add_remote(repo_path: &Path, remote_name: &str, remote_url: &str) -> io::Result<()> {
     if !super::repo::is_git_repo(repo_path) {
         return Ok(());
@@ -162,10 +162,10 @@ pub fn git_list_remotes(repo_path: &Path) -> Vec<String> {
     }
 }
 
-/// Sync git remotes to match all machines except self
+/// Sync git remotes to match all devices except self
 pub fn sync_git_remotes(
     repo_path: &Path,
-    machines: &[Machine],
+    devices: &[Device],
     local_hostname: &str,
 ) -> Vec<String> {
     let mut errors = Vec::new();
@@ -176,7 +176,7 @@ pub fn sync_git_remotes(
 
     let existing_remotes = git_list_remotes(repo_path);
 
-    // Remove remotes that don't correspond to any machine or are self
+    // Remove remotes that don't correspond to any device or are self
     for remote in &existing_remotes {
         if remote == local_hostname {
             // Never add self as a remote
@@ -186,8 +186,8 @@ pub fn sync_git_remotes(
             continue;
         }
 
-        let has_machine = machines.iter().any(|m| m.name.as_str() == *remote);
-        if !has_machine {
+        let has_device = devices.iter().any(|m| m.name.as_str() == *remote);
+        if !has_device {
             // Only remove remotes pointing at a regroup config repository
             // (stale device remotes); leave remotes the user configured for
             // other purposes (e.g. a backup repo) untouched.
@@ -199,35 +199,35 @@ pub fn sync_git_remotes(
         }
     }
 
-    // Add remotes for all machines (except self)
-    for machine in machines {
-        if machine.name.as_str() == local_hostname {
+    // Add remotes for all devices (except self)
+    for device in devices {
+        if device.name.as_str() == local_hostname {
             continue; // Skip self
         }
 
         // The remote URL needs an SSH user. Devices discovered via beacon carry
         // their user field; fall back to the current local user if empty.
         // "user" in the device file overrides it.
-        let user = if machine.user.is_empty() {
+        let user = if device.user.is_empty() {
             env::var("USER")
                 .or_else(|_| env::var("LOGNAME"))
                 .unwrap_or_default()
         } else {
-            machine.user.clone()
+            device.user.clone()
         };
         if user.is_empty() {
             errors.push(format!(
                 "no SSH user configured for {} — set \"user\" in its device file to sync with it",
-                machine.name.as_str()
+                device.name.as_str()
             ));
             continue;
         }
 
-        // Construct SSH URL for the machine's config git repository (using hostname, not IP)
-        let remote_url = format!("{}@{}:~/{}/{}", user, machine.name.as_str(), CONFIG_DIR, GIT_DIR);
+        // Construct SSH URL for the device's config git repository (using hostname, not IP)
+        let remote_url = format!("{}@{}:~/{}/{}", user, device.name.as_str(), CONFIG_DIR, GIT_DIR);
 
-        if let Err(e) = git_add_remote(repo_path, machine.name.as_str(), &remote_url) {
-            errors.push(format!("failed to add remote for {}: {}", machine.name, e));
+        if let Err(e) = git_add_remote(repo_path, device.name.as_str(), &remote_url) {
+            errors.push(format!("failed to add remote for {}: {}", device.name, e));
         }
     }
 

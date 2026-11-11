@@ -6,9 +6,9 @@
 //! prompt. All decisions that affect what is written to disk live here.
 //!
 //! General messages go through `ui::log` (activity pane of the full-screen
-//! interface, stdout in plain mode); messages about one machine go through
+//! interface, stdout in plain mode); messages about one device go through
 //! `ui::log_device`, which the full-screen ui shows as an animated status on
-//! the machine's row. The current question stays visible as the bottom block
+//! the device's row. The current question stays visible as the bottom block
 //! at all times.
 
 mod state;

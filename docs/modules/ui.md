@@ -6,7 +6,7 @@ The `ui` module provides the terminal user interface for interactive mode.
 
 This module implements two UI backends with the same interface:
 
-1. **Full-screen TUI** (ratatui): A rich terminal interface with machine panels, activity log, and question display
+1. **Full-screen TUI** (ratatui): A rich terminal interface with device panels, activity log, and question display
 2. **Plain fallback**: A simple line-based interface for non-terminal output (piped to files or other commands)
 
 The module automatically selects the appropriate backend based on whether stdout is a terminal.
@@ -49,8 +49,8 @@ Messages sent through the logging channel:
 ```rust
 pub enum UiEvent {
     Global(String),           // General message for activity pane
-    Device {                 // Machine-specific message
-        key: String,           // SSH public key (identifies machine)
+    Device {                 // Device-specific message
+        key: String,           // SSH public key (identifies device)
         name: String,
         level: Level,
         msg: String,
@@ -62,7 +62,7 @@ pub enum UiEvent {
 
 ### `Level`
 
-Priority levels for machine messages:
+Priority levels for device messages:
 
 ```rust
 pub enum Level {
@@ -75,7 +75,7 @@ pub enum Level {
 
 ### `Device`
 
-Represents a machine for display in panels:
+Represents a device for display in panels:
 
 ```rust
 pub struct Device {
@@ -100,8 +100,8 @@ pub enum Question {
     Wipe { count: usize },
     SetupCd { file: String },
     // SSH key management questions
-    InstallKeySelectMachine { machines: Vec<String> },
-    InstallKeySelectUser { machine: String, users: Vec<String> },
+    InstallKeySelectDevice { devices: Vec<String> },
+    InstallKeySelectUser { device: String, users: Vec<String> },
     InstallKeyConfirm { ... },
     RemoveKeySelectConnection { ... },
     RemoveKeyConfirm { ... },
@@ -116,8 +116,8 @@ User decisions translated from key presses:
 pub enum Action {
     Quit,
     Sync,
-    Add,            // Add selected machine
-    Ignore,         // Ignore selected machine
+    Add,            // Add selected device
+    Ignore,         // Ignore selected device
     AddCurrent,     // Add front of pending queue (plain mode)
     SkipCurrent,    // Skip front of pending queue (plain mode)
     TrustKey,
@@ -162,7 +162,7 @@ pub fn log(msg: &str)
 
 ### `log_device()`
 
-Display a machine-specific message:
+Display a device-specific message:
 
 ```rust
 pub fn log_device(
@@ -174,13 +174,13 @@ pub fn log_device(
 )
 ```
 
-- In full-screen mode: animated status on the machine's row
+- In full-screen mode: animated status on the device's row
 - In plain mode: printed as "name: msg" or detail
 - Security messages also appear in the activity pane
 
 ### `pulse_device()`
 
-Pulse a machine's row (beacon received):
+Pulse a device's row (beacon received):
 
 ```rust
 pub fn pulse_device(key: &SshPublicKey)
@@ -221,7 +221,7 @@ The TUI interface uses **ratatui** (formerly tui-rs) with **crossterm** for term
 │  Device dev2 IP updated                  │
 ├─────────────────────────────────────────┤
 │  [Status]                                │
-│  2 machine(s) detected — add them?       │
+│  2 device(s) detected — add them?       │
 │  [Up/Dn] select   [Enter/y] add   [n]    │
 │  ignore   [s] sync   [d] delete   [?]    │
 │  help   [q] quit                         │
@@ -230,8 +230,8 @@ The TUI interface uses **ratatui** (formerly tui-rs) with **crossterm** for term
 
 ### Panels
 
-- **Detected panel** (left, yellow): Machines that have announced but not been accepted
-- **Added panel** (right, green): Machines already in the configuration
+- **Detected panel** (left, yellow): Devices that have announced but not been accepted
+- **Added panel** (right, green): Devices already in the configuration
 - **Activity pane** (middle): General messages and logs
 - **Question block** (bottom): Current question and available actions
 
@@ -275,7 +275,7 @@ Add device2 (192.168.1.101) to config? [y/N/q/s]: n
 |-----|--------|
 | `q` | Quit |
 | `s` | Sync git (pull/push) |
-| `d` | Delete mode (select machine to delete) |
+| `d` | Delete mode (select device to delete) |
 | `w` | Wipe configuration |
 | `c` | Setup regroup-cd shell function |
 | `k` | Connections management |
@@ -283,15 +283,15 @@ Add device2 (192.168.1.101) to config? [y/N/q/s]: n
 | `r` | Remove SSH key |
 | `v` | Toggle verbose mode |
 | `?` | Toggle help panel |
-| `Up/Dn` | Select machine in Detected panel |
+| `Up/Dn` | Select device in Detected panel |
 | `PgUp/PgDn` | Scroll activity pane |
 
 ### In Detected Panel
 
 | Key | Action |
 |-----|--------|
-| `Enter` or `y` | Add selected machine |
-| `n` | Ignore selected machine |
+| `Enter` or `y` | Add selected device |
+| `n` | Ignore selected device |
 
 ### In Add Device Prompt
 
@@ -305,7 +305,7 @@ Add device2 (192.168.1.101) to config? [y/N/q/s]: n
 
 | Key | Action |
 |-----|--------|
-| `Up/Dn` | Select machine in Added panel |
+| `Up/Dn` | Select device in Added panel |
 | `Enter` | Confirm deletion |
 | `Esc` | Cancel |
 

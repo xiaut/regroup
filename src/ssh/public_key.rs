@@ -1,14 +1,14 @@
 //! SSH server public key detection and verification module
 //!
 //! This module:
-//! - detects the local SSH *server* host public key (the machine's identity)
+//! - detects the local SSH *server* host public key (the device's identity)
 //! - computes SHA256 fingerprints of host keys
 //! - verifies that the host key announced in a beacon is really served by the
 //!   SSH server at the announced IP, and pins it in ~/.ssh/known_hosts
 //!
 //! IMPORTANT: We need the server's host key, NOT the user's public key.
-//! The server host key is what identifies a machine in the network and allows
-//! SSH clients to verify they are connecting to the right machine.
+//! The server host key is what identifies a device in the network and allows
+//! SSH clients to verify they are connecting to the right device.
 //!
 //! Without a valid SSH server host key, the device should NOT announce itself
 //! because it cannot be contacted via SSH.
@@ -493,7 +493,7 @@ pub fn remove_known_host(ip: &str) -> usize {
 /// identity, we verify that the actual SSH server on that IP serves the same
 /// key. If the fingerprints don't match, it could indicate:
 /// - a man-in-the-middle attack
-/// - a forged beacon (someone claiming another machine's key)
+/// - a forged beacon (someone claiming another device's key)
 /// - the device's SSH keys were regenerated
 /// - network misconfiguration
 ///

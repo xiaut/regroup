@@ -207,7 +207,7 @@ foo.rs → foo/mod.rs + foo/one.rs + foo/two.rs
 ### Logging
 
 - Use `ui::log()` for general messages
-- Use `ui::log_device()` for machine-specific messages
+- Use `ui::log_device()` for device-specific messages
 - Include context in log messages
 
 ### Git Commits

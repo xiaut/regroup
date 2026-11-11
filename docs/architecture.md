@@ -26,7 +26,7 @@ A **regroup** process does three things simultaneously:
 ### Key Concepts
 
 #### Device Identity
-- **SSH host key** is the unique identifier for a machine (never hostname or IP, which can change)
+- **SSH host key** is the unique identifier for a device (never hostname or IP, which can change)
 - Each device has an Ed25519 **signing key** used to sign beacons
 - Signing keys are pinned at first acceptance; different keys trigger a rotation prompt
 

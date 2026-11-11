@@ -73,27 +73,27 @@ impl PlainUi {
             Question::SetupCd { file } => {
                 format!("Install 'regroup-cd' in ~/{file}? [y/n]:")
             }
-            Question::InstallKeySelectMachine { machines } => {
+            Question::InstallKeySelectDevice { devices } => {
                 format!(
-                    "Select target machine for key installation ({} available):",
-                    machines.len()
+                    "Select target device for key installation ({} available):",
+                    devices.len()
                 )
             }
-            Question::InstallKeySelectUser { machine, users } => {
+            Question::InstallKeySelectUser { device, users } => {
                 format!(
                     "Select user on {} for key installation ({} available):",
-                    machine, users.len()
+                    device, users.len()
                 )
             }
             Question::InstallKeyConfirm {
                 from_user,
-                from_machine,
+                from_device,
                 to_user,
-                to_machine,
+                to_device,
             } => {
                 format!(
                     "Install SSH key from {}@{} to {}@{}? [y/n]:",
-                    from_user, from_machine, to_user, to_machine
+                    from_user, from_device, to_user, to_device
                 )
             }
             Question::RemoveKeySelectConnection { connections } => {
@@ -149,12 +149,12 @@ impl PlainUi {
             (Question::SetupCd { .. }, "n") => Some(Action::SetupCdCancel),
             (Question::SetupCd { .. }, _) => Some(Action::SetupCdCancel),
             // Key installation/removal actions
-            (Question::InstallKeySelectMachine { .. }, "q") => Some(Action::InstallKeyCancel),
-            (Question::InstallKeySelectMachine { .. }, "n") => Some(Action::InstallKeyCancel),
-            (Question::InstallKeySelectMachine { .. }, _) => Some(Action::InstallKeyMode),
+            (Question::InstallKeySelectDevice { .. }, "q") => Some(Action::InstallKeyCancel),
+            (Question::InstallKeySelectDevice { .. }, "n") => Some(Action::InstallKeyCancel),
+            (Question::InstallKeySelectDevice { .. }, _) => Some(Action::InstallKeyMode),
             (Question::InstallKeySelectUser { .. }, "q") => Some(Action::InstallKeyCancel),
             (Question::InstallKeySelectUser { .. }, "n") => Some(Action::InstallKeyCancel),
-            (Question::InstallKeySelectUser { .. }, _machine) => {
+            (Question::InstallKeySelectUser { .. }, _device) => {
                 // This would require more context to handle properly
                 Some(Action::InstallKeyMode)
             }

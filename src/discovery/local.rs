@@ -1,6 +1,6 @@
 //! Local identity module
 //!
-//! This module handles local machine identification.
+//! This module handles local device identification.
 
 use std::env;
 use std::net::Ipv4Addr;
@@ -131,7 +131,7 @@ pub fn host_name() -> String {
             return n;
         }
     }
-    "machine".to_string()
+    "device".to_string()
 }
 
 /// Get the local IP address

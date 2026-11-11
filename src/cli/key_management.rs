@@ -19,10 +19,10 @@ const SSH_DIR: &str = ".ssh";
 #[allow(dead_code)]
 ///
 /// Creates an ed25519 key pair with empty passphrase and a descriptive comment.
-/// Key file name: `id_regroup_<from_user>@<to_machine>`
+/// Key file name: `id_regroup_<from_user>@<to_device>`
 ///
 /// Returns the path to the private key, or an error.
-pub fn generate_key_pair(from_user: &str, to_machine: &str) -> Result<PathBuf, String> {
+pub fn generate_key_pair(from_user: &str, to_device: &str) -> Result<PathBuf, String> {
     let home = std::env::var("HOME").map_err(|_| "HOME not set".to_string())?;
     let ssh_dir = PathBuf::from(&home).join(SSH_DIR);
     
@@ -32,7 +32,7 @@ pub fn generate_key_pair(from_user: &str, to_machine: &str) -> Result<PathBuf, S
         let _ = fs::set_permissions(&ssh_dir, fs::Permissions::from_mode(0o700));
     }
     
-    let key_name = format!("id_regroup_{}@{}", from_user, to_machine);
+    let key_name = format!("id_regroup_{}@{}", from_user, to_device);
     let key_path = ssh_dir.join(key_name);
     
     // Check if key already exists
@@ -49,7 +49,7 @@ pub fn generate_key_pair(from_user: &str, to_machine: &str) -> Result<PathBuf, S
         .arg("-f")
         .arg(&key_path)
         .arg("-C")
-        .arg(&format!("regroup:{}->{}@{}", from_user, from_user, to_machine))
+        .arg(&format!("regroup:{}->{}@{}", from_user, from_user, to_device))
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .output()
@@ -88,7 +88,7 @@ pub fn get_public_key(key_path: &Path) -> Result<String, String> {
         .map_err(|e| format!("Cannot read public key: {}", e))
 }
 
-/// Install a public key in authorized_keys on the local machine
+/// Install a public key in authorized_keys on the local device
 ///
 /// Adds the key with a descriptive comment for identification.
 pub fn install_authorized_key(public_key: &str, connection_id: &str) -> Result<(), String> {
@@ -159,7 +159,7 @@ pub fn remove_authorized_key(public_key: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Check if a machine is reachable via SSH
+/// Check if a device is reachable via SSH
 #[allow(dead_code)]
 pub fn is_reachable(host: &str, port: u16, user: &str) -> bool {
     crate::ui::log(&format!(
@@ -206,7 +206,7 @@ pub fn get_config_dir() -> PathBuf {
 /// Commit changes to the git repository
 pub fn commit_changes(config_dir: &Path, message: &str) -> Result<(), String> {
     // We need to add all changes in the connections directory
-    let connections_dir = config_dir.join("devices").join(get_local_machine_name()).join("connections");
+    let connections_dir = config_dir.join("devices").join(get_local_device_name()).join("connections");
     
     // Use git_add_and_commit_file for the directory (which will add all changes inside)
     git_add_and_commit_file(config_dir, &connections_dir, message)
@@ -217,7 +217,7 @@ pub fn commit_changes(config_dir: &Path, message: &str) -> Result<(), String> {
 
 /// Parse connection ID to extract components
 ///
-/// Expected format: "from_user->to_user@to_machine"
+/// Expected format: "from_user->to_user@to_device"
 pub fn parse_connection_id(connection_id: &str) -> Result<(String, String, String), String> {
     // Split by '->' first
     let parts: Vec<&str> = connection_id.splitn(2, "->").collect();
@@ -243,12 +243,12 @@ pub fn parse_connection_id(connection_id: &str) -> Result<(String, String, Strin
 
 /// Build connection ID from components
 #[allow(dead_code)]
-pub fn build_connection_id(from_user: &str, to_user: &str, to_machine: &str) -> String {
-    format!("{}->{}@{}", from_user, to_user, to_machine)
+pub fn build_connection_id(from_user: &str, to_user: &str, to_device: &str) -> String {
+    format!("{}->{}@{}", from_user, to_user, to_device)
 }
 
-/// Get the local machine name
-pub fn get_local_machine_name() -> String {
+/// Get the local device name
+pub fn get_local_device_name() -> String {
     std::env::var("HOSTNAME").unwrap_or_else(|_| {
         // Fallback: try to get from /etc/hostname
         fs::read_to_string("/etc/hostname").unwrap_or_else(|_| "unknown".to_string())

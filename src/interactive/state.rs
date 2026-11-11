@@ -6,9 +6,9 @@
 //! prompt. All decisions that affect what is written to disk live here.
 //!
 //! General messages go through `ui::log` (activity pane of the full-screen
-//! interface, stdout in plain mode); messages about one machine go through
+//! interface, stdout in plain mode); messages about one device go through
 //! `ui::log_device`, which the full-screen ui shows as an animated status on
-//! the machine's row. The current question stays visible as the bottom block
+//! the device's row. The current question stays visible as the bottom block
 //! at all times.
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -21,13 +21,13 @@ use crate::cli::{NameConflict,
     shell_rc_file, sync_git, trust_new_signing_key, unique_device_name, usage,
     wipe as wipe_config,
 };
-use crate::config::{CONFIG_DIR, GIT_DIR, Machine, load_config};
+use crate::config::{CONFIG_DIR, GIT_DIR, Device, load_config};
 use crate::discovery::beacon::BeaconDevice;
 use crate::ssh::config::update_block;
 use crate::ssh::keys::{SigningPublicKeyB64, SshPublicKey};
 use crate::ssh::public_key;
-use crate::ui::{self, Action, Device, Level, Question};
-use crate::ui::types::ActivePane;
+use crate::ui::{self, Action, Level, Question};
+use crate::ui::types::{ActivePane, UiDevice};
 
 /// How long each loop iteration waits for user input before checking the
 /// beacon channel again.
@@ -43,8 +43,8 @@ fn format_name_conflicts(conflicts: &[NameConflict]) -> String {
         .iter()
         .map(|conflict| {
             match conflict {
-                NameConflict::RegroupMachine { machine_name } => {
-                    format!("a device named '{}' already exists in regroup", machine_name)
+                NameConflict::RegroupDevice { device_name } => {
+                    format!("a device named '{}' already exists in regroup", device_name)
                 }
                 NameConflict::DeviceFileOnDisk => {
                     "a device file already exists on disk".to_string()
@@ -68,22 +68,22 @@ pub struct Context<'a> {
     pub home: &'a str,
     pub ssh_config: &'a Path,
     pub dry_run: bool,
-    /// This machine's SSH server public key: its unique identifier.
+    /// This device's SSH server public key: its unique identifier.
     pub local_public_key: &'a SshPublicKey,
     /// Initial verbose state (-v): extra information in the activity log;
     /// the user can toggle it at runtime with 'v'.
     pub verbose: bool,
     /// Force CLI mode (--cli): disable TUI and show all subprocess output.
     pub cli_mode: bool,
-    /// This machine's hostname, for the verbose identity line.
+    /// This device's hostname, for the verbose identity line.
     pub local_name: &'a str,
-    /// This machine's IP, for the verbose identity line.
+    /// This device's IP, for the verbose identity line.
     pub local_ip: Option<&'a str>,
 }
 
 /// Run the interactive loop until the user quits or the listener thread dies.
 ///
-/// `beacons` carries devices announced by other machines (already
+/// `beacons` carries devices announced by other devices (already
 /// signature-verified and age-checked by the listener). Returns the number
 /// of devices accepted this run.
 pub fn run(ctx: &Context, udp_port: u16, beacons: &Receiver<BeaconDevice>) -> usize {
@@ -100,12 +100,12 @@ pub fn run(ctx: &Context, udp_port: u16, beacons: &Receiver<BeaconDevice>) -> us
         );
         if ctx.local_public_key.is_empty() {
             ui::log(&format!(
-                "  . this machine: {who} (NO SSH SERVER - not announcing)"
+                "  . this device: {who} (NO SSH SERVER - not announcing)"
             ));
         } else {
             let key = ctx.local_public_key.as_str();
             ui::log(&format!(
-                "  . this machine: {who} (SSH key: {})",
+                "  . this device: {who} (SSH key: {})",
                 &key[..16.min(key.len())]
             ));
         }
@@ -180,9 +180,9 @@ pub fn run(ctx: &Context, udp_port: u16, beacons: &Receiver<BeaconDevice>) -> us
 pub struct InteractiveState {
     /// SSH public keys of accepted devices.
     known_keys: HashSet<SshPublicKey>,
-    /// Machine info by SSH public key for known devices.
-    key_to_machine: HashMap<SshPublicKey, Machine>,
-    /// Pinned Ed25519 signing keys (feature D): machines are keyed by their
+    /// Device info by SSH public key for known devices.
+    key_to_device: HashMap<SshPublicKey, Device>,
+    /// Pinned Ed25519 signing keys (feature D): devices are keyed by their
     /// SSH public key, and their beacons must be signed with the signing key
     /// pinned at first acceptance. A different key means reinstall (ask the
     /// user) or spoofing (reject).
@@ -197,10 +197,10 @@ pub struct InteractiveState {
     pending_keys: HashSet<SshPublicKey>,
     /// Which pane is currently active in the UI.
     active_pane: ActivePane,
-    /// Machine selected in the Detected panel (full-screen ui), by public
+    /// Device selected in the Detected panel (full-screen ui), by public
     /// key. None when the queue is empty.
     pending_selected: Option<SshPublicKey>,
-    /// Machine selected in the Added panel (full-screen ui), by name.
+    /// Device selected in the Added panel (full-screen ui), by name.
     added_selected: Option<String>,
     /// Last known IP for known devices, to avoid redundant notifications.
     known_ip: HashMap<SshPublicKey, String>,
@@ -220,9 +220,9 @@ pub struct InteractiveState {
     /// Setup-cd confirmation is pending (key 'c'): the ui asks for a final
     /// confirm before the 'regroup-cd' shell function is installed.
     setup_cd_pending: bool,
-    /// Install key mode: select target machine and user
+    /// Install key mode: select target device and user
     install_key_mode: bool,
-    /// Selected machine for key installation
+    /// Selected device for key installation
     install_key_target: Option<String>,
     /// Selected user for key installation
     install_key_user: Option<String>,
@@ -241,7 +241,7 @@ impl InteractiveState {
     fn new(ctx: &Context) -> Self {
         let mut state = Self {
             known_keys: HashSet::new(),
-            key_to_machine: HashMap::new(),
+            key_to_device: HashMap::new(),
             pinned_signing_keys: HashMap::new(),
             rejected_signing_keys: HashSet::new(),
             rotation_pending: None,
@@ -271,34 +271,34 @@ impl InteractiveState {
     /// Rebuild the lookup maps from the device files on disk (e.g. after a
     /// git sync pulled new device files).
     ///
-    /// Machines that disappeared from the repository were removed on
-    /// another machine: their local traces (~/.ssh/config block, git remote,
+    /// Devices that disappeared from the repository were removed on
+    /// another device: their local traces (~/.ssh/config block, git remote,
     /// last known_hosts IP) are cleaned up so the deletion propagates.
     fn reload(&mut self, ctx: &Context) {
-        let old = std::mem::take(&mut self.key_to_machine);
+        let old = std::mem::take(&mut self.key_to_device);
         let conf = load_config();
         self.known_keys = conf
-            .machines
+            .devices
             .iter()
             .map(|m| m.ssh_public_key.clone())
             .collect();
-        self.key_to_machine = conf
-            .machines
+        self.key_to_device = conf
+            .devices
             .iter()
             .map(|m| (m.ssh_public_key.clone(), m.clone()))
             .collect();
         self.pinned_signing_keys = conf
-            .machines
+            .devices
             .iter()
             .map(|m| (m.ssh_public_key.clone(), m.signing_public_key.clone()))
             .collect();
-        for (key, machine) in old {
-            if !self.key_to_machine.contains_key(&key) {
+        for (key, device) in old {
+            if !self.key_to_device.contains_key(&key) {
                 let last_ip = self.known_ip.get(&key).cloned();
-                remove_local_traces(ctx.home, ctx.ssh_config, &machine, last_ip.as_deref());
+                remove_local_traces(ctx.home, ctx.ssh_config, &device, last_ip.as_deref());
                 ui::log(&format!(
                     "  - {} was removed from the configuration (synced) — local traces cleaned",
-                    machine.name
+                    device.name
                 ));
                 self.known_ip.remove(&key);
             }
@@ -308,11 +308,11 @@ impl InteractiveState {
     /// The question to display, derived from the current state. Dry run
     /// never asks anything: pending devices are only logged. In plain mode
     /// the pending queue is asked one device at a time; the full-screen ui
-    /// adds machines from the Detected panel instead.
+    /// adds devices from the Detected panel instead.
     fn current_question(&self, ctx: &Context, plain: bool) -> Question {
         if self.wipe_pending {
             Question::Wipe {
-                count: self.key_to_machine.len(),
+                count: self.key_to_device.len(),
             }
         } else if self.setup_cd_pending {
             Question::SetupCd {
@@ -339,18 +339,18 @@ impl InteractiveState {
             // For now, use a simple question - full interactive selection comes later
             Question::InstallKeyConfirm {
                 from_user: std::env::var("USER").unwrap_or_else(|_| "unknown".to_string()),
-                from_machine: ctx.local_name.to_string(),
+                from_device: ctx.local_name.to_string(),
                 to_user: self.install_key_user.clone().unwrap_or_else(|| "unknown".to_string()),
-                to_machine: self.install_key_target.clone().unwrap_or_else(|| "unknown".to_string()),
+                to_device: self.install_key_target.clone().unwrap_or_else(|| "unknown".to_string()),
             }
         } else if self.remove_key_mode {
             // For now, use a simple question - full interactive selection comes later
             Question::RemoveKeyConfirm {
                 connection_id: self.remove_key_connection.clone().unwrap_or_else(|| "unknown".to_string()),
                 from_user: std::env::var("USER").unwrap_or_else(|_| "unknown".to_string()),
-                from_machine: ctx.local_name.to_string(),
+                from_device: ctx.local_name.to_string(),
                 to_user: "unknown".to_string(),
-                to_machine: "unknown".to_string(),
+                to_device: "unknown".to_string(),
             }
         } else if plain
             && !ctx.dry_run
@@ -365,13 +365,13 @@ impl InteractiveState {
         }
     }
 
-    /// The machines to show in the Detected panel: announced machines
+    /// The devices to show in the Detected panel: announced devices
     /// waiting for a decision, sorted by name.
-    fn detected_view(&self) -> Vec<Device> {
-        let mut devices: Vec<Device> = self
+    fn detected_view(&self) -> Vec<UiDevice> {
+        let mut devices: Vec<UiDevice> = self
             .pending_devices
             .iter()
-            .map(|d| Device {
+            .map(|d| UiDevice {
                 key: d.ssh_public_key.as_str().to_string(),
                 name: d.name.clone(),
                 ip: Some(d.ip.clone()),
@@ -382,13 +382,13 @@ impl InteractiveState {
         devices
     }
 
-    /// The machines to show in the Added panel: known machines with their
+    /// The devices to show in the Added panel: known devices with their
     /// last known IP, sorted by name.
-    fn added_view(&self) -> Vec<Device> {
-        let mut devices: Vec<Device> = self
-            .key_to_machine
+    fn added_view(&self) -> Vec<UiDevice> {
+        let mut devices: Vec<UiDevice> = self
+            .key_to_device
             .values()
-            .map(|m| Device {
+            .map(|m| UiDevice {
                 key: m.ssh_public_key.as_str().to_string(),
                 name: m.name.as_str().to_string(),
                 ip: self.known_ip.get(&m.ssh_public_key).cloned(),
@@ -406,23 +406,23 @@ impl InteractiveState {
     /// original loop).
     fn handle_beacon(&mut self, ctx: &Context, device: BeaconDevice) -> bool {
         // IMPORTANT: Filter out self-detection using SSH public key only.
-        // The SSH public key is the unique identifier for a machine.
+        // The SSH public key is the unique identifier for a device.
         // We cannot use hostname (Termux changes it) or IP (network changes).
         if device.ssh_public_key == *ctx.local_public_key {
             return true;
         }
 
-        // Every announcement from another machine pulses its row, so the
+        // Every announcement from another device pulses its row, so the
         // user sees the app receiving — including silent beacons from known
-        // machines with an unchanged IP.
+        // devices with an unchanged IP.
         ui::pulse_device(&device.ssh_public_key);
 
-        // Signing key pinning: a beacon from a known machine must be
+        // Signing key pinning: a beacon from a known device must be
         // signed with the key pinned when it was accepted.
         if let Some(pinned) = self.pinned_signing_keys.get(&device.ssh_public_key)
             && pinned.as_str() != device.signing_public_key.as_str()
         {
-            // Either the machine was reinstalled (regroup
+            // Either the device was reinstalled (regroup
             // regenerated its signing keys) or this is spoofing.
             let pair = (
                 device.ssh_public_key.clone(),
@@ -465,28 +465,28 @@ impl InteractiveState {
             // Known device with new IP: verify the host key at the new IP
             // before trusting it, then update SSH config and known_hosts.
             // A mismatch means the announced IP does not serve this
-            // machine's key (spoofing/MITM): keep the last verified IP.
-            if let Some(machine) = self.key_to_machine.get(&device.ssh_public_key)
+            // device's key (spoofing/MITM): keep the last verified IP.
+            if let Some(stored_device) = self.key_to_device.get(&device.ssh_public_key)
                 && !ctx.dry_run
             {
                 let verified = match public_key::compute_fingerprint_from_public_key(
-                    machine.ssh_public_key.as_str(),
+                    stored_device.ssh_public_key.as_str(),
                 ) {
                     Some(expected) => match public_key::verify_and_add_to_known_hosts(
                         &device.ip,
-                        device.port,
+                        stored_device.port,
                         &expected,
                     ) {
                         public_key::HostKeyVerification::Success => true,
                         public_key::HostKeyVerification::HostUnreachable => {
                             ui::log_device(
-                                &machine.ssh_public_key,
-                                machine.name.as_str(),
+                                &stored_device.ssh_public_key,
+                                stored_device.name.as_str(),
                                 Level::Warning,
                                 "unreachable — keeping last verified IP",
                                 Some(&format!(
                                     "[~] Known device: {} at {} — unreachable, keeping last verified IP",
-                                    machine.name.as_str(), device.ip
+                                    stored_device.name.as_str(), device.ip
                                 )),
                             );
                             false
@@ -494,13 +494,13 @@ impl InteractiveState {
                         public_key::HostKeyVerification::WriteError => {
                             // Verification passed; only the known_hosts write failed
                             ui::log_device(
-                                &machine.ssh_public_key,
-                                machine.name.as_str(),
+                                &stored_device.ssh_public_key,
+                                stored_device.name.as_str(),
                                 Level::Warning,
                                 "verified, but known_hosts write failed",
                                 Some(&format!(
                                     "WARNING: could not write {} to ~/.ssh/known_hosts",
-                                    machine.name.as_str()
+                                    stored_device.name.as_str()
                                 )),
                             );
                             true
@@ -510,13 +510,13 @@ impl InteractiveState {
                             actual,
                         } => {
                             ui::log_device(
-                                &machine.ssh_public_key,
-                                machine.name.as_str(),
+                                &stored_device.ssh_public_key,
+                                stored_device.name.as_str(),
                                 Level::Security,
                                 "host key MISMATCH — possible spoofing/MITM",
                                 Some(&format!(
                                     "[!] SECURITY: {} announces IP {} but serves a DIFFERENT host key — possible spoofing/MITM. SSH config NOT updated.\n    expected fingerprint: {}\n    actual fingerprint:   {}",
-                                    machine.name.as_str(), device.ip, expected, actual
+                                    stored_device.name.as_str(), device.ip, expected, actual
                                 )),
                             );
                             false
@@ -524,13 +524,13 @@ impl InteractiveState {
                     },
                     None => {
                         ui::log_device(
-                            &machine.ssh_public_key,
-                            machine.name.as_str(),
+                            &device.ssh_public_key,
+                            device.name.as_str(),
                             Level::Warning,
                             "cannot compute fingerprint — keeping last verified IP",
                             Some(&format!(
                                 "WARNING: cannot compute fingerprint of {}'s host key — keeping last verified IP",
-                                machine.name.as_str()
+                                device.name.as_str()
                             )),
                         );
                         false
@@ -540,11 +540,11 @@ impl InteractiveState {
                     let old_ip = self.known_ip.get(&device.ssh_public_key).cloned();
                     let _ = update_block(
                         ctx.ssh_config,
-                        machine.name.as_str(),
+                        stored_device.name.as_str(),
                         &device.ip,
-                        &machine.user,
-                        machine.port,
-                        machine.port_explicit,
+                        &stored_device.user,
+                        stored_device.port,
+                        stored_device.port_explicit,
                     );
                     // Clean the known_hosts entries of the old IP so stale
                     // addresses do not linger — unless another known device
@@ -557,8 +557,8 @@ impl InteractiveState {
                         && public_key::remove_known_host(&old_ip) > 0
                     {
                         ui::log_device(
-                            &machine.ssh_public_key,
-                            machine.name.as_str(),
+                            &device.ssh_public_key,
+                            device.name.as_str(),
                             Level::Info,
                             "cleaned old known_hosts entries",
                             Some(&format!(
@@ -567,13 +567,13 @@ impl InteractiveState {
                         );
                     }
                     ui::log_device(
-                        &machine.ssh_public_key,
-                        machine.name.as_str(),
+                        &device.ssh_public_key,
+                        device.name.as_str(),
                         Level::Success,
                         "IP updated — host key verified",
                         Some(&format!(
                             "[~] Known device: {} at {} (IP updated, host key verified)",
-                            machine.name.as_str(), device.ip
+                            device.name.as_str(), device.ip
                         )),
                     );
                 }
@@ -604,7 +604,7 @@ impl InteractiveState {
             return false;
         }
         self.pending_devices.push_back(device);
-        // Select the new machine so it can be added right away.
+        // Select the new device so it can be added right away.
         if self.pending_selected.is_none() {
             self.pending_selected = Some(self.pending_devices.back().unwrap().ssh_public_key.clone());
         }
@@ -766,14 +766,14 @@ impl InteractiveState {
             Action::WipeCancel => self.wipe_pending = false,
             Action::WipeConfirm => {
                 self.wipe_pending = false;
-                let machines: Vec<Machine> = self.key_to_machine.values().cloned().collect();
+                let devices: Vec<Device> = self.key_to_device.values().cloned().collect();
                 tui.with_clean_terminal(|| {
-                    wipe_config(ctx.home, ctx.ssh_config, &machines);
+                    wipe_config(ctx.home, ctx.ssh_config, &devices);
                 });
-                // Drop the wiped machines from memory, removing their
+                // Drop the wiped devices from memory, removing their
                 // known_hosts entries (last known IP) on the way — wipe
                 // itself leaves known_hosts alone (see its doc comment).
-                for (key, _) in std::mem::take(&mut self.key_to_machine) {
+                for (key, _) in std::mem::take(&mut self.key_to_device) {
                     if let Some(ip) = self.known_ip.remove(&key) {
                         public_key::remove_known_host(&ip);
                     }
@@ -864,7 +864,7 @@ impl InteractiveState {
     /// Sorted names of the devices that can be deleted (known ones).
     fn deletable_names(&self) -> Vec<String> {
         let mut names: Vec<String> = self
-            .key_to_machine
+            .key_to_device
             .values()
             .map(|m| m.name.as_str().to_string())
             .collect();
@@ -894,7 +894,7 @@ impl InteractiveState {
     }
 
     /// Move the selection of the Added panel to the next (or previous
-    /// when `forward` is false) known machine, in name order. With no
+    /// when `forward` is false) known device, in name order. With no
     /// selection, selects the first one.
     fn move_added_selection(&mut self, forward: bool) {
         let names = self.deletable_names();
@@ -914,7 +914,7 @@ impl InteractiveState {
     }
 
     /// Move the selection of the Detected panel to the next (or previous
-    /// when `forward` is false) pending machine, in name order. With no
+    /// when `forward` is false) pending device, in name order. With no
     /// selection, selects the first one.
     fn move_pending_selection(&mut self, forward: bool) {
         let mut sorted: Vec<&BeaconDevice> = self.pending_devices.iter().collect();
@@ -934,7 +934,7 @@ impl InteractiveState {
         self.pending_selected = Some(sorted[new_pos].ssh_public_key.clone());
     }
 
-    /// Point the Detected-panel selection at a sensible machine after the
+    /// Point the Detected-panel selection at a sensible device after the
     /// selected one left the queue (added or ignored).
     fn after_selection_change(&mut self) {
         self.pending_selected = None;
@@ -951,36 +951,36 @@ impl InteractiveState {
         let Some(name) = self.delete_selection.take() else {
             return;
         };
-        let Some(machine) = self
-            .key_to_machine
+        let Some(device) = self
+            .key_to_device
             .values()
             .find(|m| m.name.as_str() == name)
             .cloned()
         else {
             return;
         };
-        let key = machine.ssh_public_key.clone();
+        let key = device.ssh_public_key.clone();
         let last_ip = self.known_ip.get(&key).cloned();
         if tui.with_clean_terminal(|| {
-            remove_device(ctx.home, ctx.ssh_config, &machine, last_ip.as_deref())
+            remove_device(ctx.home, ctx.ssh_config, &device, last_ip.as_deref())
         }) {
             ui::log(&format!(
                 "  - Removed {} (device file, ~/.ssh/config block, git remote)",
-                machine.name
+                device.name
             ));
         } else {
             ui::log(&format!(
                 "  ! Could not fully remove {} — see warnings",
-                machine.name
+                device.name
             ));
         }
         self.known_keys.remove(&key);
-        self.key_to_machine.remove(&key);
+        self.key_to_device.remove(&key);
         self.pinned_signing_keys.remove(&key);
         self.known_ip.remove(&key);
     }
 
-    /// Add the machine selected in the Detected panel. A name collision
+    /// Add the device selected in the Detected panel. A name collision
     /// redirects to the rename question instead.
     fn accept_selected(&mut self, ctx: &Context, tui: &mut ui::Ui) {
         let Some(key) = self
@@ -1016,7 +1016,7 @@ impl InteractiveState {
 
     /// Accept `device`: a name collision redirects to the rename question.
     fn accept_device(&mut self, ctx: &Context, tui: &mut ui::Ui, device: BeaconDevice) {
-        // If the name is already used by another machine,
+        // If the name is already used by another device,
         // ask the user to pick a new one.
         if device_name_taken(&device.name, ctx.home, ctx.ssh_config) {
             let suggested = unique_device_name(&device.name, ctx.home, ctx.ssh_config);
@@ -1033,7 +1033,7 @@ impl InteractiveState {
         self.add_device(ctx, tui, device, name);
     }
 
-    /// Ignore the machine selected in the Detected panel: it is dropped
+    /// Ignore the device selected in the Detected panel: it is dropped
     /// from the queue and its beacons are ignored for the rest of the run.
     fn ignore_selected(&mut self) {
         let Some(key) = self
@@ -1083,51 +1083,51 @@ impl InteractiveState {
 
     /// Add `device` under `name`: write to disk and update the in-memory
     /// maps so future beacons for it are treated as a known device.
-    fn add_device(&mut self, ctx: &Context, tui: &mut ui::Ui, device: BeaconDevice, name: String) {
-        if let Some(machine) = tui.with_clean_terminal(|| {
+    fn add_device(&mut self, ctx: &Context, tui: &mut ui::Ui, beacon_device: BeaconDevice, name: String) {
+        if let Some(device) = tui.with_clean_terminal(|| {
             add_device_to_config(
                 ctx.home,
                 ctx.ssh_config,
-                &device,
+                &beacon_device,
                 &name,
                 &mut self.new_count,
             )
         }) {
             // Pin the signing key the device used when accepted
             self.pinned_signing_keys.insert(
-                device.ssh_public_key.clone(),
-                machine.signing_public_key.clone(),
+                beacon_device.ssh_public_key.clone(),
+                beacon_device.signing_public_key.clone(),
             );
-            self.known_keys.insert(device.ssh_public_key.clone());
-            self.key_to_machine
-                .insert(device.ssh_public_key.clone(), machine);
+            self.known_keys.insert(beacon_device.ssh_public_key.clone());
+            self.key_to_device
+                .insert(beacon_device.ssh_public_key.clone(), device);
             self.known_ip
-                .insert(device.ssh_public_key.clone(), device.ip.clone());
+                .insert(beacon_device.ssh_public_key.clone(), beacon_device.ip.clone());
         }
     }
     
-    /// Execute key installation on the first known machine
+    /// Execute key installation on the first known device
     fn execute_install_key(&mut self, ctx: &Context, ui: &mut ui::Ui) {
         let config_dir = Path::new(ctx.home).join(CONFIG_DIR).join(GIT_DIR);
         let current_user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
         
-        // Get the first known machine (or selected one)
-        let machines: Vec<Machine> = self.key_to_machine.values().cloned().collect();
-        if machines.is_empty() {
-            ui::log("No known machines to install a key to");
+        // Get the first known device (or selected one)
+        let devices: Vec<Device> = self.key_to_device.values().cloned().collect();
+        if devices.is_empty() {
+            ui::log("No known devices to install a key to");
             return;
         }
         
-        let target_machine_obj = &machines[0];
-        let target_machine = target_machine_obj.name.as_str();
-        let target_user = if target_machine_obj.user.is_empty() {
+        let target_device_obj = &devices[0];
+        let target_device = target_device_obj.name.as_str();
+        let target_user = if target_device_obj.user.is_empty() {
             current_user.clone()
         } else {
-            target_machine_obj.user.clone()
+            target_device_obj.user.clone()
         };
-        let target_port = target_machine_obj.port;
+        let target_port = target_device_obj.port;
         
-        ui::log(&format!("Installing key to {}@{}", target_user, target_machine));
+        ui::log(&format!("Installing key to {}@{}", target_user, target_device));
         
         let result = ui.with_clean_terminal(|| {
             crate::tui::key_actions::install_key_action(
@@ -1135,7 +1135,7 @@ impl InteractiveState {
                 &config_dir,
                 ctx.local_name,
                 &current_user,
-                target_machine,
+                target_device,
                 &target_user,
                 target_port,
             )
@@ -1157,7 +1157,7 @@ impl InteractiveState {
         }
     }
     
-    /// Execute key removal from the first known machine
+    /// Execute key removal from the first known device
     fn execute_remove_key(&mut self, ctx: &Context, ui: &mut ui::Ui) {
         let config_dir = Path::new(ctx.home).join(CONFIG_DIR).join(GIT_DIR);
         let current_user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
@@ -1178,12 +1178,12 @@ impl InteractiveState {
                     // Check if this is an outgoing connection (from current_user)
                     if filename.starts_with(&format!("{}->", current_user)) {
                         let connection_id = filename.trim_end_matches(".json").to_string();
-                        let (from_user, to_user, to_machine) = crate::cli::key_management::parse_connection_id(&connection_id)
+                        let (from_user, to_user, to_device) = crate::cli::key_management::parse_connection_id(&connection_id)
                             .unwrap_or_default();
                         
-                        // Look up the machine to get its port
-                        let target_port = self.key_to_machine.values()
-                            .find(|m| m.name.as_str() == to_machine)
+                        // Look up the device to get its port
+                        let target_port = self.key_to_device.values()
+                            .find(|m| m.name.as_str() == to_device)
                             .map(|m| m.port)
                             .unwrap_or(22);
                         
@@ -1196,7 +1196,7 @@ impl InteractiveState {
                                 ctx.local_name,
                                 &current_user,
                                 &from_user,
-                                &to_machine,
+                                &to_device,
                                 &to_user,
                                 target_port,
                                 &connection_id,
@@ -1236,19 +1236,19 @@ impl InteractiveState {
             return;
         };
         
-        let Some(target_machine) = self.key_to_machine.values().find(|m| m.name.as_str() == target_name).cloned() else {
+        let Some(target_device) = self.key_to_device.values().find(|m| m.name.as_str() == target_name).cloned() else {
             ui::log(&format!("Device '{}' not found", target_name));
             return;
         };
         
         let config_dir = Path::new(ctx.home).join(CONFIG_DIR).join(GIT_DIR);
         let current_user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
-        let target_user = if target_machine.user.is_empty() {
+        let target_user = if target_device.user.is_empty() {
             current_user.clone()
         } else {
-            target_machine.user.clone()
+            target_device.user.clone()
         };
-        let target_port = target_machine.port;
+        let target_port = target_device.port;
         
         ui::log(&format!("Installing key to {}@{}", target_user, target_name));
         
@@ -1290,7 +1290,7 @@ impl InteractiveState {
         let config_dir = Path::new(ctx.home).join(CONFIG_DIR).join(GIT_DIR);
         let current_user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
         
-        // Find first outgoing connection to the selected machine
+        // Find first outgoing connection to the selected device
         let connections_dir = config_dir.join("devices").join(ctx.local_name).join("connections");
         if !connections_dir.exists() {
             ui::log("No outgoing connections found");
@@ -1302,15 +1302,15 @@ impl InteractiveState {
                 let path = entry.path();
                 if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("json") {
                     let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                    // Check if this is an outgoing connection to the selected machine
+                    // Check if this is an outgoing connection to the selected device
                     if filename.contains(&format!("{}@", target_name)) {
                         let connection_id = filename.trim_end_matches(".json").to_string();
-                        let (from_user, to_user, to_machine) = crate::cli::key_management::parse_connection_id(&connection_id)
+                        let (from_user, to_user, to_device) = crate::cli::key_management::parse_connection_id(&connection_id)
                             .unwrap_or_default();
                         
-                        // Look up the machine to get its port
-                        let target_port = self.key_to_machine.values()
-                            .find(|m| m.name.as_str() == to_machine)
+                        // Look up the device to get its port
+                        let target_port = self.key_to_device.values()
+                            .find(|m| m.name.as_str() == to_device)
                             .map(|m| m.port)
                             .unwrap_or(22);
                         
@@ -1323,7 +1323,7 @@ impl InteractiveState {
                                 ctx.local_name,
                                 &current_user,
                                 &from_user,
-                                &to_machine,
+                                &to_device,
                                 &to_user,
                                 target_port,
                                 &connection_id,
@@ -1363,24 +1363,24 @@ impl InteractiveState {
             return;
         };
         
-        let Some(machine) = self.key_to_machine.values().find(|m| m.name.as_str() == name).cloned() else {
+        let Some(device) = self.key_to_device.values().find(|m| m.name.as_str() == name).cloned() else {
             ui::log(&format!("Device '{}' not found", name));
             return;
         };
         
-        let key = machine.ssh_public_key.clone();
+        let key = device.ssh_public_key.clone();
         let last_ip = self.known_ip.get(&key).cloned();
         
         if tui.with_clean_terminal(|| {
-            remove_device(ctx.home, ctx.ssh_config, &machine, last_ip.as_deref())
+            remove_device(ctx.home, ctx.ssh_config, &device, last_ip.as_deref())
         }) {
-            ui::log(&format!("  - Removed {} (device file, ~/.ssh/config block, git remote)", machine.name));
+            ui::log(&format!("  - Removed {} (device file, ~/.ssh/config block, git remote)", device.name));
         } else {
-            ui::log(&format!("  ! Could not fully remove {} — see warnings", machine.name));
+            ui::log(&format!("  ! Could not fully remove {} — see warnings", device.name));
         }
         
         self.known_keys.remove(&key);
-        self.key_to_machine.remove(&key);
+        self.key_to_device.remove(&key);
         self.pinned_signing_keys.remove(&key);
         self.known_ip.remove(&key);
         self.added_selected = None;

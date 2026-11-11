@@ -87,7 +87,7 @@ For known devices (already in the configuration):
 
 ## Local Identity
 
-The `local.rs` module detects the local machine's identity:
+The `local.rs` module detects the local device's identity:
 
 - **Hostname**: via `hostname` command or `std::env`
 - **IP address**: detected from network interfaces

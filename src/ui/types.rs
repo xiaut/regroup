@@ -4,9 +4,9 @@
 pub enum UiEvent {
     /// General message: activity pane (full-screen ui) or stdout.
     Global(String),
-    /// Machine-specific message: animated status on the machine's row.
-    Device {
-        /// SSH public key: identifies the machine's row.
+    /// UiDevice-specific message: animated status on the device's row.
+    UiDevice {
+        /// SSH public key: identifies the device's row.
         key: String,
         name: String,
         level: Level,
@@ -16,10 +16,10 @@ pub enum UiEvent {
         /// into the activity pane.
         detail: Option<String>,
     },
-    /// Beacon received from a machine: animate its row even when the
-    /// beacon changes nothing (known machine, same IP). No text output.
+    /// Beacon received from a device: animate its row even when the
+    /// beacon changes nothing (known device, same IP). No text output.
     Pulse {
-        /// SSH public key: identifies the machine's row.
+        /// SSH public key: identifies the device's row.
         key: String,
     },
 }
@@ -37,12 +37,12 @@ pub enum ActivePane {
     Logs,
 }
 
-/// How important a machine-specific message is; drives the row animation.
+/// How important a device-specific message is; drives the row animation.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Level {
     /// Cyan, steady: something happened, no action needed.
     Info,
-    /// Green background, steady: the machine's state improved.
+    /// Green background, steady: the device's state improved.
     Success,
     /// Yellow, blinking: attention needed (question block says more).
     Warning,
@@ -50,10 +50,10 @@ pub enum Level {
     Security,
 }
 
-/// One machine for the machine panels.
+/// One device for the device panels.
 #[derive(Clone)]
-pub struct Device {
-    /// SSH public key: identifies the row for per-machine messages.
+pub struct UiDevice {
+    /// SSH public key: identifies the row for per-device messages.
     pub key: String,
     pub name: String,
     pub ip: Option<String>,
@@ -67,7 +67,7 @@ pub enum Question {
     /// Nothing pending: only global keys.
     Idle,
     /// Add the front of the pending queue (plain mode only: the
-    /// full-screen ui adds machines from the Detected panel instead).
+    /// full-screen ui adds devices from the Detected panel instead).
     AddDevice {
         name: String,
         ip: String,
@@ -92,21 +92,21 @@ pub enum Question {
     SetupCd {
         file: String,
     },
-    /// Install SSH key: select target machine (key 'i')
-    InstallKeySelectMachine {
-        machines: Vec<String>,
+    /// Install SSH key: select target device (key 'i')
+    InstallKeySelectDevice {
+        devices: Vec<String>,
     },
     /// Install SSH key: select target user
     InstallKeySelectUser {
-        machine: String,
+        device: String,
         users: Vec<String>,
     },
     /// Install SSH key: confirm installation
     InstallKeyConfirm {
         from_user: String,
-        from_machine: String,
+        from_device: String,
         to_user: String,
-        to_machine: String,
+        to_device: String,
     },
     /// Remove SSH key: select connection (key 'r')
     RemoveKeySelectConnection {
@@ -116,9 +116,9 @@ pub enum Question {
     RemoveKeyConfirm {
         connection_id: String,
         from_user: String,
-        from_machine: String,
+        from_device: String,
         to_user: String,
-        to_machine: String,
+        to_device: String,
     },
 }
 
@@ -127,9 +127,9 @@ pub enum Question {
 pub enum Action {
     Quit,
     Sync,
-    /// Add the machine selected in the Detected panel.
+    /// Add the device selected in the Detected panel.
     Add,
-    /// Ignore the machine selected in the Detected panel (for this run).
+    /// Ignore the device selected in the Detected panel (for this run).
     Ignore,
     /// Add the front of the pending queue (plain mode).
     AddCurrent,
@@ -139,7 +139,7 @@ pub enum Action {
     RejectKey,
     Rename(String),
     SkipRename,
-    /// Enter delete mode (machine selection in the Added panel).
+    /// Enter delete mode (device selection in the Added panel).
     DeleteMode,
     /// Select previous in Detected panel (Detected pane navigation).
     PendingSelectPrev,

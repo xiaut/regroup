@@ -8,13 +8,13 @@ use std::path::Path;
 
 use serde_json::Value;
 
-use super::{DeviceName, Machine};
+use super::{DeviceName, Device};
 use super::json_helpers::int_value;
-use super::validation::validate_machine;
+use super::validation::validate_device;
 use crate::ssh::keys::{SigningPublicKeyB64, SshPublicKey};
 
 /// Load a single device configuration from a JSON file
-pub fn load_device_file(path: &Path) -> Result<Machine, String> {
+pub fn load_device_file(path: &Path) -> Result<Device, String> {
     let text = match fs::read_to_string(path) {
         Ok(t) => t,
         Err(e) => return Err(format!("cannot read: {}", e)),
@@ -92,7 +92,7 @@ pub fn load_device_file(path: &Path) -> Result<Machine, String> {
         }
     };
 
-    let machine = Machine {
+    let device = Device {
         name,
         ssh_public_key,
         signing_public_key,
@@ -101,39 +101,39 @@ pub fn load_device_file(path: &Path) -> Result<Machine, String> {
         port_explicit,
     };
 
-    // Validate the machine configuration
-    validate_machine(&machine)?;
+    // Validate the device configuration
+    validate_device(&device)?;
 
-    Ok(machine)
+    Ok(device)
 }
 
 /// Save a device configuration to a JSON file
-pub fn save_device_file(path: &Path, machine: &Machine) -> io::Result<()> {
+pub fn save_device_file(path: &Path, device: &Device) -> io::Result<()> {
     let mut obj = serde_json::Map::new();
     obj.insert(
         "name".to_string(),
-        serde_json::Value::String(machine.name.as_str().to_string()),
+        serde_json::Value::String(device.name.as_str().to_string()),
     );
     obj.insert(
         "ssh_public_key".to_string(),
-        serde_json::Value::String(machine.ssh_public_key.0.clone()),
+        serde_json::Value::String(device.ssh_public_key.0.clone()),
     );
     obj.insert(
         "signing_public_key".to_string(),
-        serde_json::Value::String(machine.signing_public_key.0.clone()),
+        serde_json::Value::String(device.signing_public_key.0.clone()),
     );
 
-    if !machine.user.is_empty() {
+    if !device.user.is_empty() {
         obj.insert(
             "user".to_string(),
-            serde_json::Value::String(machine.user.clone()),
+            serde_json::Value::String(device.user.clone()),
         );
     }
 
-    if machine.port_explicit {
+    if device.port_explicit {
         obj.insert(
             "port".to_string(),
-            serde_json::Value::Number(machine.port.into()),
+            serde_json::Value::Number(device.port.into()),
         );
     }
 
@@ -289,7 +289,7 @@ mod tests {
     fn save_device_file_roundtrip() {
         let dir = TempDir::new("roundtrip");
         let path = dir.path("roundtrip.json");
-        let machine = Machine {
+        let device = Device {
             name: DeviceName::new("roundtrip".to_string()).unwrap(),
             ssh_public_key: SshPublicKey::from("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFake"),
             signing_public_key: SigningPublicKeyB64::from("MCowBQYDK2VwAyEA=="),
@@ -298,19 +298,19 @@ mod tests {
             port_explicit: true,
         };
 
-        save_device_file(&path, &machine).expect("save must succeed");
+        save_device_file(&path, &device).expect("save must succeed");
         let loaded = load_device_file(&path).expect("saved device must load back");
-        assert_eq!(loaded.name.as_str(), machine.name.as_str());
-        assert_eq!(loaded.user, machine.user);
-        assert_eq!(loaded.port, machine.port);
+        assert_eq!(loaded.name.as_str(), device.name.as_str());
+        assert_eq!(loaded.user, device.user);
+        assert_eq!(loaded.port, device.port);
         assert!(loaded.port_explicit);
         assert_eq!(
             loaded.ssh_public_key.as_str(),
-            machine.ssh_public_key.as_str()
+            device.ssh_public_key.as_str()
         );
         assert_eq!(
             loaded.signing_public_key.as_str(),
-            machine.signing_public_key.as_str()
+            device.signing_public_key.as_str()
         );
     }
 }

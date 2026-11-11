@@ -13,16 +13,16 @@ use std::path::{Path, PathBuf};
 
 use super::{device_dir, USERS_DIR};
 
-/// A user known to run on a machine
+/// A user known to run on a device
 #[derive(Clone, Debug, PartialEq)]
-pub struct MachineUser {
+pub struct DeviceUser {
     /// Login name (file name inside `users/`).
     pub name: String,
     /// RFC3339 timestamp of the first time this user ran regroup here.
     pub first_seen: String,
 }
 
-impl MachineUser {
+impl DeviceUser {
     pub fn new(name: &str, first_seen: &str) -> Self {
         Self {
             name: name.to_string(),
@@ -31,9 +31,9 @@ impl MachineUser {
     }
 }
 
-/// Path of a user file: `devices/<machine>/users/<sanitized user>.json`.
-pub fn user_file_path(config_dir: &Path, machine: &str, user: &str) -> PathBuf {
-    device_dir(config_dir, machine)
+/// Path of a user file: `devices/<device>/users/<sanitized user>.json`.
+pub fn user_file_path(config_dir: &Path, device: &str, user: &str) -> PathBuf {
+    device_dir(config_dir, device)
         .join(USERS_DIR)
         .join(format!("{}.json", sanitize(user)))
 }
@@ -44,17 +44,17 @@ fn sanitize(name: &str) -> String {
     name.replace('@', "_").replace('/', "_").replace(' ', "_")
 }
 
-/// Create the user file on the local machine if it does not exist yet.
+/// Create the user file on the local device if it does not exist yet.
 ///
 /// Returns true when the file was created (the caller commits it), false
 /// when it already existed. Existing files are never rewritten: a user
 /// entry is created once and then left alone.
-pub fn ensure_local_user_file(config_dir: &Path, machine: &str, user: &str) -> io::Result<bool> {
-    let path = user_file_path(config_dir, machine, user);
+pub fn ensure_local_user_file(config_dir: &Path, device: &str, user: &str) -> io::Result<bool> {
+    let path = user_file_path(config_dir, device, user);
     if path.exists() {
         return Ok(false);
     }
-    let entry = MachineUser::new(user, &chrono::Utc::now().to_rfc3339());
+    let entry = DeviceUser::new(user, &chrono::Utc::now().to_rfc3339());
     let parent = path
         .parent()
         .ok_or_else(|| io::Error::other("user file path has no parent directory"))?;
@@ -67,14 +67,14 @@ pub fn ensure_local_user_file(config_dir: &Path, machine: &str, user: &str) -> i
     Ok(true)
 }
 
-/// Load all users known on a machine, sorted by name. Files that fail to
+/// Load all users known on a device, sorted by name. Files that fail to
 /// parse are skipped by the caller's warning policy (see load_config).
 #[allow(
     dead_code,
-    reason = "used by the upcoming per-user connection procedures; remote machines' user lists arrive through git sync"
+    reason = "used by the upcoming per-user connection procedures; remote devices' user lists arrive through git sync"
 )]
-pub fn load_machine_users(config_dir: &Path, machine: &str) -> io::Result<Vec<MachineUser>> {
-    let dir = device_dir(config_dir, machine).join(USERS_DIR);
+pub fn load_device_users(config_dir: &Path, device: &str) -> io::Result<Vec<DeviceUser>> {
+    let dir = device_dir(config_dir, device).join(USERS_DIR);
     let mut users = Vec::new();
     if !dir.exists() {
         return Ok(users);
@@ -98,7 +98,7 @@ pub fn load_machine_users(config_dir: &Path, machine: &str) -> io::Result<Vec<Ma
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        users.push(MachineUser::new(name, &first_seen));
+        users.push(DeviceUser::new(name, &first_seen));
     }
     users.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(users)
@@ -120,7 +120,7 @@ mod tests {
         let dir = temp_dir("once");
         assert!(ensure_local_user_file(&dir, "ordi", "alice").unwrap());
         assert!(!ensure_local_user_file(&dir, "ordi", "alice").unwrap());
-        let users = load_machine_users(&dir, "ordi").unwrap();
+        let users = load_device_users(&dir, "ordi").unwrap();
         assert_eq!(users.len(), 1);
         assert_eq!(users[0].name, "alice");
         assert!(!users[0].first_seen.is_empty());
@@ -143,9 +143,9 @@ mod tests {
         let dir = temp_dir("sorted");
         assert!(ensure_local_user_file(&dir, "ordi", "bob").unwrap());
         assert!(ensure_local_user_file(&dir, "ordi", "alice").unwrap());
-        let users = load_machine_users(&dir, "ordi").unwrap();
+        let users = load_device_users(&dir, "ordi").unwrap();
         assert_eq!(users.iter().map(|u| u.name.as_str()).collect::<Vec<_>>(), ["alice", "bob"]);
-        assert!(load_machine_users(&dir, "laptop").unwrap().is_empty());
+        assert!(load_device_users(&dir, "laptop").unwrap().is_empty());
         let _ = fs::remove_dir_all(&dir);
     }
 }

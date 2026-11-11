@@ -1,30 +1,30 @@
 //! Configuration validation module
 //!
-//! This module handles validation of machine configurations.
+//! This module handles validation of device configurations.
 
-use super::Machine;
+use super::Device;
 
-/// Validate a machine configuration
-pub fn validate_machine(machine: &Machine) -> Result<(), String> {
+/// Validate a device configuration
+pub fn validate_device(device: &Device) -> Result<(), String> {
     // Check for placeholder SSH public key
-    if machine.ssh_public_key.as_str() == "SSH-PUBLIC-KEY-PLACEHADER"
-        || machine.ssh_public_key.is_empty()
+    if device.ssh_public_key.as_str() == "SSH-PUBLIC-KEY-PLACEHADER"
+        || device.ssh_public_key.is_empty()
     {
         return Err(format!(
             "Device '{}' has a placeholder or empty SSH public key. Please ensure the SSH server is running and the key can be detected.",
-            machine.name.as_str()
+            device.name.as_str()
         ));
     }
 
     // Validate hostname - reject localhost and other invalid names
-    let name_lower = machine.name.as_str().to_lowercase();
+    let name_lower = device.name.as_str().to_lowercase();
     if name_lower == "localhost"
         || name_lower == "localhost.localdomain"
         || name_lower == "127.0.0.1"
     {
         return Err(format!(
             "Device name '{}' is invalid. Hostname cannot be 'localhost' or '127.0.0.1'. Please use the actual hostname.",
-            machine.name.as_str()
+            device.name.as_str()
         ));
     }
 

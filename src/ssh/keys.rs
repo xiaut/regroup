@@ -25,7 +25,7 @@ use std::fmt;
 
 /// Wrapper for SSH server public key (full key, e.g., "ssh-rsa AAAAB3NzaC1yc2E..." or "ssh-ed25519 AAAAC3...")
 ///
-/// This is the UNIQUE identifier for a machine. Machines are identified by their SSH public key,
+/// This is the UNIQUE identifier for a device. Devices are identified by their SSH public key,
 /// not by hostname (which can change in Termux) or IP address (which can change with network).
 #[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]
@@ -63,8 +63,8 @@ impl From<&str> for SshPublicKey {
 
 /// Wrapper for SSH fingerprint (hash of the public key, e.g., SHA256:... or MD5:...)
 ///
-/// Fingerprints are used for display and verification, but NOT for machine identification.
-/// Machine identification MUST use the full SSH public key, not the fingerprint.
+/// Fingerprints are used for display and verification, but NOT for device identification.
+/// Device identification MUST use the full SSH public key, not the fingerprint.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]
 pub struct SshFingerprint(pub String);
@@ -90,7 +90,7 @@ impl From<&str> for SshFingerprint {
 /// Wrapper for ed25519 signing public key in base64 format
 ///
 /// This is used for signing beacon messages. It's separate from the SSH public key
-/// which is used for machine identification.
+/// which is used for device identification.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]
 pub struct SigningPublicKeyB64(pub String);

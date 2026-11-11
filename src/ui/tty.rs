@@ -13,7 +13,7 @@ use ratatui::layout::{Constraint, Layout};
 use ratatui::DefaultTerminal;
 
 use super::render::{key_label, render_all_panes, render_help, render_question, KeyFlash, QuestionCtx, RowFlash};
-use super::types::{ActivePane, Action, Device, Question, UiEvent};
+use super::types::{ActivePane, Action, Question, UiDevice, UiEvent};
 
 /// Calculate how many lines a text will occupy when wrapped to fit a given width.
 /// For hint-like text with "   " (three spaces) separators, treats each token as non-breakable.
@@ -148,21 +148,21 @@ fn calculate_question_height(question: &Question, ctx: &QuestionCtx, width: u16)
                 "[y] confirm   [n] cancel".to_string(),
             )
         }
-        Question::InstallKeySelectMachine { machines } => {
+        Question::InstallKeySelectDevice { devices } => {
             (
-                format!("Select target machine ({} available)", machines.len()),
+                format!("Select target device ({} available)", devices.len()),
                 "[Up/Dn] select   [y] confirm   [n] cancel".to_string(),
             )
         }
-        Question::InstallKeySelectUser { machine, users } => {
+        Question::InstallKeySelectUser { device, users } => {
             (
-                format!("Select user on {machine} ({} available)", users.len()),
+                format!("Select user on {device} ({} available)", users.len()),
                 "[Up/Dn] select   [Enter] confirm   [Esc] back".to_string(),
             )
         }
-        Question::InstallKeyConfirm { from_user, from_machine, to_user, to_machine } => {
+        Question::InstallKeyConfirm { from_user, from_device, to_user, to_device } => {
             (
-                format!("Install key from {}@{} to {}@{}?", from_user, from_machine, to_user, to_machine),
+                format!("Install key from {}@{} to {}@{}?", from_user, from_device, to_user, to_device),
                 "[y] confirm   [n] cancel".to_string(),
             )
         }
@@ -172,9 +172,9 @@ fn calculate_question_height(question: &Question, ctx: &QuestionCtx, width: u16)
                 "[Up/Dn] select   [y] confirm   [n] cancel".to_string(),
             )
         }
-        Question::RemoveKeyConfirm { connection_id, from_user, from_machine, to_user, to_machine } => {
+        Question::RemoveKeyConfirm { connection_id, from_user, from_device, to_user, to_device } => {
             (
-                format!("Remove key {} ({}@{}) from {}@{}?", connection_id, from_user, from_machine, to_user, to_machine),
+                format!("Remove key {} ({}@{}) from {}@{}?", connection_id, from_user, from_device, to_user, to_device),
                 "[y] confirm   [n] cancel".to_string(),
             )
         }
@@ -206,10 +206,10 @@ pub struct TtyUi {
     pub question: Question,
     /// Text typed for the rename question.
     pub input: String,
-    /// Machines announced but not accepted yet (Detected panel).
-    pub detected: Vec<Device>,
-    /// Machines in the configuration (Added panel).
-    pub added: Vec<Device>,
+    /// Devices announced but not accepted yet (Detected panel).
+    pub detected: Vec<UiDevice>,
+    /// Devices in the configuration (Added panel).
+    pub added: Vec<UiDevice>,
     /// Row of the Detected panel highlighted by the selection (passed from state).
     pub detected_selected: Option<usize>,
     /// Row of the Added panel highlighted by the selection (passed from state).
@@ -218,7 +218,7 @@ pub struct TtyUi {
     pub delete_selected: Option<usize>,
     /// Which pane is currently active for navigation and actions.
     pub active_pane: ActivePane,
-    /// Whether the help panel is shown (key '?'): it replaces the machine
+    /// Whether the help panel is shown (key '?'): it replaces the device
     /// panels and the logs pane; the question block stays interactive.
     pub show_help: bool,
     /// Lines scrolled up from the bottom of the help panel; 0 follows it.
@@ -226,7 +226,7 @@ pub struct TtyUi {
     /// Verbose mode: reported in the logs pane title and the status
     /// hints. The interactive loop keeps it in sync with its own state.
     pub verbose: bool,
-    /// Animated per-machine statuses, by SSH public key.
+    /// Animated per-device statuses, by SSH public key.
     pub flashes: HashMap<String, RowFlash>,
     /// Rows currently pulsing after a received beacon, by SSH public key.
     pub pulses: HashMap<String, Instant>,
@@ -242,7 +242,7 @@ impl Drop for TtyUi {
         for event in self.log_rx.try_iter() {
             match event {
                 UiEvent::Global(msg) => println!("{msg}"),
-                UiEvent::Device {
+                UiEvent::UiDevice {
                     name,
                     msg,
                     detail,
@@ -272,7 +272,7 @@ impl TtyUi {
     }
 
     /// Move messages logged since the last draw into the pane, capped.
-    /// General messages become activity lines; machine-specific messages
+    /// General messages become activity lines; device-specific messages
     /// become row flashes (security messages are additionally mirrored into
     /// the activity pane so they do not vanish with the animation).
     pub fn drain_log(&mut self) {
@@ -283,7 +283,7 @@ impl TtyUi {
                         self.log.push(line.to_string());
                     }
                 }
-                UiEvent::Device {
+                UiEvent::UiDevice {
                     key,
                     level,
                     msg,
@@ -314,14 +314,14 @@ impl TtyUi {
         if excess > 0 {
             self.log.drain(..excess);
         }
-        // Keep only recent pulses of machines that are still displayed.
+        // Keep only recent pulses of devices that are still displayed.
         let now = Instant::now();
         self.pulses.retain(|key, t| {
             (self.detected.iter().any(|d| d.key == *key)
                 || self.added.iter().any(|d| d.key == *key))
                 && now.duration_since(*t) < Duration::from_millis(super::logging::PULSE_MS)
         });
-        // Keep only recent flashes of machines that are still displayed.
+        // Keep only recent flashes of devices that are still displayed.
         self.flashes.retain(|key, f| {
             (self.detected.iter().any(|d| d.key == *key)
                 || self.added.iter().any(|d| d.key == *key))
@@ -342,7 +342,7 @@ impl TtyUi {
     }
 
     /// Translate one key press into an action. Scroll keys are handled here
-    /// and do not produce actions. Up/Down select a machine in the active
+    /// and do not produce actions. Up/Down select a device in the active
     /// panel. Tab switches between panes. Every press is recorded so the hint
     /// line can highlight the key.
     pub fn key_action(&mut self, key: KeyEvent) -> Option<Action> {

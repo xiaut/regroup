@@ -1,4 +1,4 @@
-// regroup — find machines by their SSH host key fingerprint and update ~/.ssh/config.
+// regroup — find devices by their SSH host key fingerprint and update ~/.ssh/config.
 //
 // Configuration is stored in ~/.regroup-config/ git repository where each device
 // owns a directory devices/<name>/ (device.json, its known users, its
@@ -21,8 +21,8 @@
 //                 ./regroup wipe [--yes]   (delete the whole configuration)
 //                 ./regroup -v             (verbose: toggle at runtime with 'v' in interactive mode)
 //                 ./regroup selftest       (external tools + ssh-keygen fingerprint checks)
-//                 ./regroup receive-install-key (internal: install SSH key on target machine)
-//                 ./regroup receive-remove-key  (internal: remove SSH key from target machine)
+//                 ./regroup receive-install-key (internal: install SSH key on target device)
+//                 ./regroup receive-remove-key  (internal: remove SSH key from target device)
 //                 ./regroup -h             (this help)
 //
 // Interactive commands:
@@ -30,8 +30,8 @@
 //   s               - sync git (pull from remotes, push to remotes)
 //   d               - delete a known device (panel selection, Enter confirms)
 //   w               - wipe the whole configuration (Enter confirms)
-//   i               - install SSH key to a machine (first known machine)
-//   r               - remove SSH key from a machine (first outgoing connection)
+//   i               - install SSH key to a device (first known device)
+//   r               - remove SSH key from a device (first outgoing connection)
 //   v               - toggle verbose mode (identity + git sync details in the activity log)
 //   ?               - show/hide the help panel (full-screen mode)
 //   q               - quit the program
@@ -192,8 +192,8 @@ fn main() {
 
     // --- device removal / full wipe (non-interactive) ---
     if let Some(name) = &remove_name {
-        let machine = conf
-            .machines
+        let device = conf
+            .devices
             .iter()
             .find(|m| m.name.as_str() == name)
             .cloned()
@@ -201,14 +201,14 @@ fn main() {
         if !assume_yes
             && !confirm(&format!(
                 "Remove {}? (device file, ~/.ssh/config block, git remote)",
-                machine.name
+                device.name
             ))
         {
             println!("Aborted.");
             return;
         }
-        if remove_device(&home, &ssh_config, &machine, None) {
-            println!("Removed {}.", machine.name);
+        if remove_device(&home, &ssh_config, &device, None) {
+            println!("Removed {}.", device.name);
         } else {
             std::process::exit(2);
         }
@@ -223,22 +223,22 @@ fn main() {
             println!("Aborted.");
             return;
         }
-        wipe_config(&home, &ssh_config, &conf.machines);
+        wipe_config(&home, &ssh_config, &conf.devices);
         return;
     }
 
     // --- local identity ---
-    // IMPORTANT: We need the SSH *server* public key to uniquely identify this machine.
+    // IMPORTANT: We need the SSH *server* public key to uniquely identify this device.
     // This is CRITICAL for self-detection filtering.
     // - Hostname CANNOT be used (Termux randomizes it on each launch)
     // - IP address CANNOT be used (changes with network)
-    // - SSH public key IS PERSISTENT and uniquely identifies a machine
+    // - SSH public key IS PERSISTENT and uniquely identifies a device
     // Without a valid SSH server public key, the device cannot be uniquely identified
     // and should NOT announce itself (as it cannot accept SSH connections anyway).
     let local_name = host_name();
     let local_ip = my_ip();
 
-    // Get SSH server PUBLIC KEY (full key, not fingerprint) - this is the UNIQUE identifier for this machine
+    // Get SSH server PUBLIC KEY (full key, not fingerprint) - this is the UNIQUE identifier for this device
     // Returns None if no SSH server is installed/configured
     // NOTE: We use get_ssh_server_public_key() NOT get_ssh_server_fingerprint()
     // because the beacon format expects the full public key, not the fingerprint.
@@ -251,7 +251,7 @@ fn main() {
                 "WARNING: No SSH server host key found. This device will NOT announce itself."
             );
             eprintln!(
-                "         Other devices can still discover and connect to this machine if they have its IP."
+                "         Other devices can still discover and connect to this device if they have its IP."
             );
             eprintln!(
                 "         To fix: Install and configure an SSH server (e.g., 'pkg install openssh' in Termux)."
@@ -270,11 +270,11 @@ fn main() {
     let running_listener = running.clone();
     let running_announcer = running.clone();
 
-    // SSH port and user this machine's server listens on: taken from our own device config
+    // SSH port and user this device's server listens on: taken from our own device config
     // (set by the user if the server does not use the default 22), 22 otherwise.
-    let local_machine = conf.machines.iter().find(|m| m.name.as_str() == local_name);
-    let local_ssh_port = local_machine.map(|m| m.port).unwrap_or(22);
-    let local_user = local_machine.map(|m| m.user.clone()).unwrap_or_else(|| {
+    let local_device = conf.devices.iter().find(|m| m.name.as_str() == local_name);
+    let local_ssh_port = local_device.map(|m| m.port).unwrap_or(22);
+    let local_user = local_device.map(|m| m.user.clone()).unwrap_or_else(|| {
         std::env::var("USER").unwrap_or_else(|_| std::env::var("LOGNAME").unwrap_or_default())
     });
 

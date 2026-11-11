@@ -28,10 +28,10 @@ pub struct Context<'a> {
     pub home: &'a str,                  // User's home directory
     pub ssh_config: &'a Path,           // Path to ~/.ssh/config
     pub dry_run: bool,                  // If true, no modifications
-    pub local_public_key: &'a SshPublicKey, // This machine's SSH key
+    pub local_public_key: &'a SshPublicKey, // This device's SSH key
     pub verbose: bool,                  // Verbose mode
-    pub local_name: &'a str,            // This machine's hostname
-    pub local_ip: Option<&'a str>,       // This machine's IP
+    pub local_name: &'a str,            // This device's hostname
+    pub local_ip: Option<&'a str>,       // This device's IP
 }
 ```
 
@@ -63,8 +63,8 @@ It returns the number of devices accepted during the run.
 
 Each received beacon goes through `InteractiveState::handle_beacon()`:
 
-1. **Self-filtering**: Ignore beacons from this machine (using SSH public key)
-2. **Pulse**: Animate the machine's row (user sees the app receiving)
+1. **Self-filtering**: Ignore beacons from this device (using SSH public key)
+2. **Pulse**: Animate the device's row (user sees the app receiving)
 3. **Signing key pinning**: For known devices, verify the beacon's signing key matches the pinned key
    - If different: prompt user to trust new key (reinstall) or reject (spoofing)
 4. **Known device**: Check if IP changed
@@ -83,7 +83,7 @@ All mutable state of the interactive loop:
 pub struct InteractiveState {
     // Known devices
     pub known_keys: HashSet<SshPublicKey>,
-    pub key_to_machine: HashMap<SshPublicKey, Machine>,
+    pub key_to_machine: HashMap<SshPublicKey, Device>,
     pub pinned_signing_keys: HashMap<SshPublicKey, SigningPublicKeyB64>,
     
     // Signing key rotation
@@ -136,7 +136,7 @@ pub struct InteractiveState {
 `InteractiveState::reload(ctx: &Context)`:
 - Rebuilds lookup maps from device files on disk
 - Useful after git sync pulls new device files
-- Cleans up local traces for machines removed by peers
+- Cleans up local traces for devices removed by peers
 
 ## Views
 
@@ -155,15 +155,15 @@ Determines what question to display based on the current state:
 
 ### `detected_view()`
 
-Returns machines to show in the Detected panel:
+Returns devices to show in the Detected panel:
 - Pending devices (announced but not accepted)
 - Sorted by name
 - With SSH public key as identifier
 
 ### `added_view()`
 
-Returns machines to show in the Added panel:
-- Known machines from configuration
+Returns devices to show in the Added panel:
+- Known devices from configuration
 - With last known IP from state
 - Sorted by name
 

@@ -16,14 +16,14 @@
 pub mod name;
 pub use name::DeviceName;
 
-/// Represents a machine/device in the network
+/// Represents a device in the network
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub struct Machine {
+pub struct Device {
     pub name: DeviceName,
-    /// Unique identifier of the machine: its SSH *server* host public key.
+    /// Unique identifier of the device: its SSH *server* host public key.
     /// Typed to prevent confusion with fingerprints or signing keys.
     pub ssh_public_key: crate::ssh::keys::SshPublicKey,
-    /// Ed25519 signing public key (base64) this machine used in its beacon
+    /// Ed25519 signing public key (base64) this device used in its beacon
     /// when it was accepted: future beacons must be signed with this same
     /// key (spoofing detection, reinstall confirmation). Written by regroup
     /// when the device file is created or the key is re-trusted.
@@ -40,12 +40,12 @@ pub struct GlobalSettings {
     pub wait_secs: u64,
 }
 
-/// Global configuration containing all settings and machines
+/// Global configuration containing all settings and devices
 #[derive(Clone, Debug)]
 pub struct Conf {
     pub udp_port: u16,
     pub wait_secs: u64,
-    pub machines: Vec<Machine>,
+    pub devices: Vec<Device>,
 }
 
 // ============================================================
