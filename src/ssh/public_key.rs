@@ -108,13 +108,19 @@ fn get_server_public_key_from_files() -> Option<SshPublicKey> {
 /// Use ssh-keyscan to get the server host public key from localhost
 fn get_server_public_key_via_keyscan() -> Option<SshPublicKey> {
     // Try to scan localhost for SSH host keys
-    let scan = Command::new("ssh-keyscan")
+    let mut scan_cmd = Command::new("ssh-keyscan");
+    scan_cmd
         .arg("-T")
         .arg("3")
         .arg("127.0.0.1")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output();
+        .stdout(Stdio::piped());
+    
+    // In CLI mode, show stderr; otherwise suppress it
+    if !crate::cli::is_cli_mode() {
+        scan_cmd.stderr(Stdio::null());
+    }
+    
+    let scan = scan_cmd.output();
 
     let raw = match scan {
         Ok(o) if o.status.success() && !o.stdout.is_empty() => o.stdout,
@@ -178,8 +184,12 @@ pub fn compute_fingerprint_from_public_key(public_key: &str) -> Option<SshFinger
     cmd.arg("-lf")
         .arg("-")
         .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
+        .stdout(Stdio::piped());
+    
+    // In CLI mode, show stderr; otherwise suppress it
+    if !crate::cli::is_cli_mode() {
+        cmd.stderr(Stdio::null());
+    }
 
     let mut child = match cmd.spawn() {
         Ok(c) => c,
@@ -248,15 +258,21 @@ pub enum HostKeyVerification {
 /// Returns the raw keyscan output (lines of "host keytype key"), or an error
 /// if the host is unreachable.
 fn keyscan(ip: &str, port: u16) -> std::io::Result<String> {
-    let output = Command::new("ssh-keyscan")
+    let mut cmd = Command::new("ssh-keyscan");
+    cmd
         .arg("-T")
         .arg("3")
         .arg("-p")
         .arg(port.to_string())
         .arg(ip)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output();
+        .stdout(Stdio::piped());
+    
+    // In CLI mode, show stderr; otherwise suppress it
+    if !crate::cli::is_cli_mode() {
+        cmd.stderr(Stdio::null());
+    }
+    
+    let output = cmd.output();
 
     match output {
         Ok(o) if o.status.success() && !o.stdout.is_empty() => String::from_utf8(o.stdout)

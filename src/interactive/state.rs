@@ -42,6 +42,8 @@ pub struct Context<'a> {
     /// Initial verbose state (-v): extra information in the activity log;
     /// the user can toggle it at runtime with 'v'.
     pub verbose: bool,
+    /// Force CLI mode (--cli): disable TUI and show all subprocess output.
+    pub cli_mode: bool,
     /// This machine's hostname, for the verbose identity line.
     pub local_name: &'a str,
     /// This machine's IP, for the verbose identity line.
@@ -54,7 +56,7 @@ pub struct Context<'a> {
 /// signature-verified and age-checked by the listener). Returns the number
 /// of devices accepted this run.
 pub fn run(ctx: &Context, udp_port: u16, beacons: &Receiver<BeaconDevice>) -> usize {
-    let mut tui = ui::Ui::start();
+    let mut tui = ui::Ui::start(ctx.cli_mode);
     let mut state = InteractiveState::new(ctx);
     ui::log(&format!("Listening for devices on UDP port {udp_port}..."));
     // Verbose identity line: through ui::log so the full-screen ui shows it

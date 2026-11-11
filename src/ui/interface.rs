@@ -20,9 +20,9 @@ pub enum Ui {
 
 impl Ui {
     /// Start the interface: full-screen when stdout is a terminal, plain
-    /// otherwise.
-    pub fn start() -> Ui {
-        if io::stdout().is_terminal() {
+    /// otherwise. When `force_cli` is true, always use plain mode.
+    pub fn start(force_cli: bool) -> Ui {
+        if !force_cli && io::stdout().is_terminal() {
             let terminal = ratatui::init();
             let (tx, log_rx) = mpsc::channel();
             let _ = LOG_TX.set(tx);

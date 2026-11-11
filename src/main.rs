@@ -78,6 +78,7 @@ fn main() {
     let mut remove_name: Option<String> = None;
     let mut wipe = false;
     let mut assume_yes = false;
+    let mut cli_mode = false;
     
     // Handle subcommands that don't need the full initialization
     if !args.is_empty() {
@@ -134,6 +135,8 @@ fn main() {
             wipe = true;
         } else if a == "--yes" || a == "-y" {
             assume_yes = true;
+        } else if a == "--cli" {
+            cli_mode = true;
         } else {
             eprintln!("ERROR: unknown option: {}", a);
             usage();
@@ -275,6 +278,9 @@ fn main() {
         std::env::var("USER").unwrap_or_else(|_| std::env::var("LOGNAME").unwrap_or_default())
     });
 
+    // Set global CLI mode flag so subprocesses know to show their output
+    cli::set_cli_mode(cli_mode);
+
     // Start beacon listener in background (always listen for other devices)
     // Signature verification, beacon age check and IP consistency check are
     // performed inside listen_beacons_continuous; only valid beacons reach the queue.
@@ -326,6 +332,7 @@ fn main() {
             dry_run,
             local_public_key: &local_public_key,
             verbose,
+            cli_mode,
             local_name: &local_name,
             local_ip: local_ip.as_deref(),
         },
