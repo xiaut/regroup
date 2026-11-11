@@ -157,7 +157,7 @@ fn calculate_question_height(question: &Question, ctx: &QuestionCtx, width: u16)
         Question::InstallKeySelectUser { device, users } => {
             (
                 format!("Select user on {device} ({} available)", users.len()),
-                "[Up/Dn] select   [Enter] confirm   [Esc] back".to_string(),
+                "[Up/Dn] select   [Enter] confirm   [q] back".to_string(),
             )
         }
         Question::InstallKeyConfirm { from_user, from_device, to_user, to_device } => {

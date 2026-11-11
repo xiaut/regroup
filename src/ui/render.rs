@@ -810,25 +810,25 @@ pub fn render_question(
                         if ctx.pending > 0 {
                             (
                                 "Detected devices".to_string(),
-                                format!("[Esc] no pane   [Up/Dn] select   [a] add   [n] ignore   [?] help   [q] quit"),
+                                "[q] no pane   [Up/Dn] select   [a] add   [n] ignore   [?] help".to_string(),
                             )
                         } else {
                             (
                                 "Detected devices".to_string(),
-                                "[Esc] no pane   [?] help   [q] quit".to_string(),
+                                "[q] no pane   [?] help".to_string(),
                             )
                         }
                     }
                     ActivePane::Added => {
                         (
                             "Added devices".to_string(),
-                            "[Esc] no pane   [Up/Dn] select   [i] install key   [r] remove key   [d] delete   [s] sync   [w] wipe   [c] setup-cd   [?] help   [q] quit".to_string(),
+                            "[q] no pane   [Up/Dn] select   [i] install key   [r] remove key   [d] delete   [s] sync   [w] wipe   [c] setup-cd   [?] help".to_string(),
                         )
                     }
                     ActivePane::Logs => {
                         (
                             if ctx.verbose { "Logs - verbose".to_string() } else { "Logs".to_string() },
-                            "[Esc] no pane   [Up/Dn] scroll line   [PgUp/PgDn] scroll page   [v] toggle verbose   [?] help   [q] quit".to_string(),
+                            "[q] no pane   [Up/Dn] scroll line   [PgUp/PgDn] scroll page   [v] toggle verbose   [?] help".to_string(),
                         )
                     }
                 };
@@ -859,7 +859,7 @@ pub fn render_question(
             super::types::Question::Rename { name, suggested } => (
                 "Name already used",
                 Color::Cyan,
-                format!("New name for {name} ([Enter] = {suggested}, [Esc] = skip)"),
+                format!("New name for {name} ([Enter] = {suggested}, [q] = skip)"),
                 Line::from(format!("> {}", ctx.input)),
             ),
             super::types::Question::Delete { name } => (
@@ -901,7 +901,7 @@ pub fn render_question(
                 Color::Green,
                 format!("Select user on {device} ({} available)", users.len()),
                 hint_spans(
-                    "[Up/Dn] select   [Enter] confirm   [Esc] back",
+                    "[Up/Dn] select   [Enter] confirm   [q] back",
                     ctx.key_flash,
                 ),
             ),
