@@ -477,6 +477,9 @@ pub fn add_device_to_config(
     }
 
     // Fallback: use beacon data
+    // Note: We couldn't pull the device's authoritative device.json, so we create
+    // a placeholder from the beacon data. This will be replaced when the device
+    // pushes its own device.json and we pull it.
     let machine = Machine {
         name: name.to_string(),
         ssh_public_key: device.ssh_public_key.clone(),
@@ -486,7 +489,32 @@ pub fn add_device_to_config(
         port_explicit: true,
     };
 
+    // Save placeholder device file so the device persists across restarts.
+    // This is a temporary measure until we can pull the device's authoritative data.
+    // The placeholder will be replaced by the device's own device.json on the next
+    // successful pull.
+    let dir = crate::config::device_dir(&config_dir, name);
+    if let Err(e) = fs::create_dir_all(&dir) {
+        warn(&format!("could not create device directory for {}: {}", name, e));
+        return None;
+    }
+    if let Err(e) = save_device_file(&device_path, &machine) {
+        warn(&format!("could not save placeholder device config for {}: {}", name, e));
+        return None;
+    }
+    if let Err(e) = git_add_and_commit_file(
+        &config_dir,
+        &device_path,
+        &format!("Add placeholder for device {}", name),
+    ) {
+        warn(&format!("could not commit placeholder for {}: {}", name, e));
+    }
+
     if update_ssh_config(ssh_config, name, &device.ip, &machine) {
+        crate::ui::log(&format!(
+            "  ! Added {} with placeholder data — will update from device on next sync",
+            name
+        ));
         *new_count += 1;
         Some(machine)
     } else {
@@ -561,21 +589,17 @@ pub fn trust_new_signing_key(home: &str, device: &BeaconDevice) {
         }
     }
 
-    // Fallback: update locally (ONLY case where we write another device's file)
-    let mut updated_machine = machine.clone();
-    updated_machine.signing_public_key = device.signing_public_key.clone();
-
-    if let Err(e) = save_device_file(&device_path, &updated_machine) {
-        warn(&format!("could not update signing key for {}: {}", machine.name, e));
-        return;
-    }
-    if let Err(e) = git_add_and_commit_file(
-        &config_dir,
-        &device_path,
-        &format!("Update signing key for {}", machine.name),
-    ) {
-        warn(&format!("could not commit signing key update for {}: {}", machine.name, e));
-    }
+    // Fallback: We couldn't pull the updated device.json with the new signing key.
+    // The signing key will be updated naturally when the device's own device.json
+    // (with the new key) is pulled in a future sync. No local write needed.
+    //
+    // If this is a reinstall scenario, the user should ensure the device has
+    // committed its new device.json with the updated signing key, then sync.
+    warn(&format!(
+        "Could not verify new signing key for {} — device.json may not have been updated yet. \
+         The signing key will be updated when the device pushes its new config.",
+        machine.name
+    ))
 }
 
 // ============================================================
