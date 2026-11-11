@@ -105,6 +105,12 @@ pub fn run(ctx: &Context, udp_port: u16, beacons: &Receiver<BeaconDevice>) -> us
         tui.set_question(state.current_question(ctx, plain));
         let detected = state.detected_view();
         let added = state.added_view();
+        
+        // Initialize added_selected if not set and there are added devices
+        if state.added_selected.is_none() && !added.is_empty() {
+            state.added_selected = Some(added[0].name.clone());
+        }
+        
         let selected = state
             .pending_selected
             .as_ref()
@@ -656,6 +662,18 @@ impl InteractiveState {
                     self.move_delete_selection(true);
                 }
             }
+            Action::PendingSelectPrev => {
+                self.move_pending_selection(false);
+            }
+            Action::PendingSelectNext => {
+                self.move_pending_selection(true);
+            }
+            Action::AddedSelectPrev => {
+                self.move_added_selection(false);
+            }
+            Action::AddedSelectNext => {
+                self.move_added_selection(true);
+            }
             Action::SelectPrev => {
                 if self.delete_selection.is_some() {
                     self.move_delete_selection(false);
@@ -805,6 +823,26 @@ impl InteractiveState {
             None => 0,
         };
         self.delete_selection = Some(names[new_pos].clone());
+    }
+
+    /// Move the selection of the Added panel to the next (or previous
+    /// when `forward` is false) known machine, in name order. With no
+    /// selection, selects the first one.
+    fn move_added_selection(&mut self, forward: bool) {
+        let names = self.deletable_names();
+        if names.is_empty() {
+            self.added_selected = None;
+            return;
+        }
+        let pos = names
+            .iter()
+            .position(|n| Some(n) == self.added_selected.as_ref());
+        let new_pos = match pos {
+            Some(p) if forward => (p + 1).min(names.len() - 1),
+            Some(p) => p.saturating_sub(1),
+            None => 0,
+        };
+        self.added_selected = Some(names[new_pos].clone());
     }
 
     /// Move the selection of the Detected panel to the next (or previous

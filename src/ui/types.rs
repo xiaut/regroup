@@ -141,6 +141,14 @@ pub enum Action {
     SkipRename,
     /// Enter delete mode (machine selection in the Added panel).
     DeleteMode,
+    /// Select previous in Detected panel (Detected pane navigation).
+    PendingSelectPrev,
+    /// Select next in Detected panel (Detected pane navigation).
+    PendingSelectNext,
+    /// Select previous in Added panel (Added pane navigation).
+    AddedSelectPrev,
+    /// Select next in Added panel (Added pane navigation).
+    AddedSelectNext,
     SelectPrev,
     SelectNext,
     DeleteConfirm,

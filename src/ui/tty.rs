@@ -111,11 +111,11 @@ pub struct TtyUi {
     pub detected: Vec<Device>,
     /// Machines in the configuration (Added panel).
     pub added: Vec<Device>,
-    /// Row of the Detected panel highlighted by the selection.
+    /// Row of the Detected panel highlighted by the selection (passed from state).
     pub detected_selected: Option<usize>,
-    /// Row of the Added panel highlighted by the selection.
+    /// Row of the Added panel highlighted by the selection (passed from state).
     pub added_selected: Option<usize>,
-    /// Row of the Added panel highlighted in delete mode.
+    /// Row of the Added panel highlighted in delete mode (passed from state).
     pub delete_selected: Option<usize>,
     /// Which pane is currently active for navigation and actions.
     pub active_pane: ActivePane,
@@ -404,19 +404,13 @@ impl TtyUi {
             match key.code {
                 crossterm::event::KeyCode::Up => {
                     if !self.detected.is_empty() {
-                        self.detected_selected = Some(self.detected_selected.map_or(0, |s| s.saturating_sub(1)));
-                        return None;
+                        return Some(Action::PendingSelectPrev);
                     }
-                    return None;
                 }
                 crossterm::event::KeyCode::Down => {
                     if !self.detected.is_empty() {
-                        self.detected_selected = Some(self.detected_selected.map_or(0, |s| {
-                            (s + 1).min(self.detected.len() - 1)
-                        }));
-                        return None;
+                        return Some(Action::PendingSelectNext);
                     }
-                    return None;
                 }
                 crossterm::event::KeyCode::Char('a') => {
                     return self.detected_selected.map(|_| Action::Add);
@@ -433,19 +427,13 @@ impl TtyUi {
             match key.code {
                 crossterm::event::KeyCode::Up => {
                     if !self.added.is_empty() {
-                        self.added_selected = Some(self.added_selected.map_or(0, |s| s.saturating_sub(1)));
-                        return None;
+                        return Some(Action::AddedSelectPrev);
                     }
-                    return None;
                 }
                 crossterm::event::KeyCode::Down => {
                     if !self.added.is_empty() {
-                        self.added_selected = Some(self.added_selected.map_or(0, |s| {
-                            (s + 1).min(self.added.len() - 1)
-                        }));
-                        return None;
+                        return Some(Action::AddedSelectNext);
                     }
-                    return None;
                 }
                 crossterm::event::KeyCode::Char('i') => {
                     return self.added_selected.map(|_| Action::InstallKeyToSelected);
@@ -505,12 +493,6 @@ impl TtyUi {
                     // Only switch to Detected if we're not already there
                     if self.active_pane != ActivePane::Detected {
                         self.active_pane = ActivePane::Detected;
-                        if self.detected.is_empty() {
-                            self.detected_selected = None;
-                        } else {
-                            self.detected_selected = Some(0);
-                        }
-                        self.added_selected = None;
                         self.log_scroll = 0;
                         return None;
                     }
@@ -519,12 +501,6 @@ impl TtyUi {
                     // Only switch to Added if we're not already there
                     if self.active_pane != ActivePane::Added {
                         self.active_pane = ActivePane::Added;
-                        if self.added.is_empty() {
-                            self.added_selected = None;
-                        } else {
-                            self.added_selected = Some(0);
-                        }
-                        self.detected_selected = None;
                         self.log_scroll = 0;
                         return None;
                     }
@@ -534,8 +510,6 @@ impl TtyUi {
                     if self.active_pane != ActivePane::Logs {
                         self.active_pane = ActivePane::Logs;
                         self.log_scroll = 0;
-                        self.detected_selected = None;
-                        self.added_selected = None;
                         return None;
                     }
                 }
