@@ -28,7 +28,7 @@ use crate::ssh::config::update_block;
 use crate::ssh::keys::{SigningPublicKeyB64, SshPublicKey};
 use crate::ssh::public_key;
 use crate::ui::{self, Action, Level, Question};
-use crate::ui::types::{ActivePane, UiDevice, UiUser, UserStatus};
+use crate::ui::types::{ActivePane, Navigation, UiDevice, UiUser, UserStatus};
 
 /// How long each loop iteration waits for user input before checking the
 /// beacon channel again.
@@ -214,6 +214,7 @@ pub fn run(ctx: &Context, udp_port: u16, beacons: &Receiver<BeaconDevice>) -> us
         tui.set_added_selected(added_selected);
         tui.set_users(users, users_selected);
         tui.set_active_pane(state.active_pane);
+        tui.set_navigation(state.navigation);
         tui.set_verbose(state.verbose);
         tui.draw();
     }
@@ -241,6 +242,8 @@ pub struct InteractiveState {
     pending_keys: HashSet<SshPublicKey>,
     /// Which pane is currently active in the UI.
     active_pane: ActivePane,
+    /// Navigation state: focus + depth in the context hierarchy.
+    navigation: Navigation,
     /// Device selected in the Detected panel (full-screen ui), by public
     /// key. None when the queue is empty.
     pending_selected: Option<SshPublicKey>,
@@ -292,6 +295,7 @@ impl InteractiveState {
             pending_devices: VecDeque::new(),
             pending_keys: HashSet::new(),
             active_pane: ActivePane::main_menu(),
+            navigation: Navigation::overview(),
             pending_selected: None,
             added_selected: None,
             known_ip: HashMap::new(),

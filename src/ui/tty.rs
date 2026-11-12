@@ -13,7 +13,7 @@ use ratatui::layout::{Constraint, Layout};
 use ratatui::DefaultTerminal;
 
 use super::render::{key_label, render_all_panes, render_help, render_question, KeyFlash, QuestionCtx, RowFlash};
-use super::types::{ActivePane, Action, Question, UiDevice, UiEvent, UiUser, UserStatus};
+use super::types::{ActivePane, Action, NavFocus, Navigation, Question, UiDevice, UiEvent, UiUser, UserStatus};
 
 /// Calculate how many lines a text will occupy when wrapped to fit a given width.
 /// For hint-like text with "   " (three spaces) separators, treats each token as non-breakable.
@@ -245,7 +245,9 @@ pub struct TtyUi {
     pub users: Vec<UiUser>,
     /// Row of the Users panel highlighted by the selection (passed from state).
     pub users_selected: Option<usize>,
-    /// Which pane is currently active for navigation and actions.
+    /// Navigation state: focus + depth in the context hierarchy.
+    pub navigation: Navigation,
+    /// Which pane is currently active for navigation and actions (derived from navigation).
     pub active_pane: ActivePane,
     /// Whether the help panel is shown (key '?'): it replaces the device
     /// panels and the logs pane; the question block stays interactive.
@@ -370,22 +372,81 @@ impl TtyUi {
         }
     }
 
-    /// Translate one key press into an action. Scroll keys are handled here
-    /// and do not produce actions. Up/Down select a device in the active
-    /// panel. Tab switches between panes. Every press is recorded so the hint
-    /// line can highlight the key.
+    /// Translate one key press into an action.
+    ///
+    /// New navigation model (docs/navigation.md):
+    /// - Arrows move directionally: Left (Detected), Right (Added), Down (Logs)
+    /// - Enter goes one level deeper
+    /// - Esc goes one level back
+    /// - Character keys ('d', 'a', 'l') still work for backward compatibility
+    ///
+    /// Scroll keys are handled here and do not produce actions.
+    /// Up/Down select a device in the active panel.
+    /// Every press is recorded so the hint line can highlight the key.
     pub fn key_action(&mut self, key: KeyEvent) -> Option<Action> {
+        // Record key press for hint highlighting
         if let Some(label) = key_label(key.code) {
             self.key_flash = Some(KeyFlash {
                 key: label,
                 start: Instant::now(),
             });
         }
+        
+        // Ctrl+C or Ctrl+D always quits
         if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL)
             && matches!(key.code, crossterm::event::KeyCode::Char('c') | crossterm::event::KeyCode::Char('d'))
         {
             return Some(Action::Quit);
         }
+        
+        let code = key.code;
+        let has_detected = !self.detected.is_empty();
+        let has_added = !self.added.is_empty();
+        let has_users = !self.users.is_empty();
+        
+        // New navigation model: handle directional navigation first
+        // This implements the hierarchy from docs/navigation.md
+        let new_nav = self.navigation.handle_key(code, has_detected, has_added, has_users);
+        if new_nav != self.navigation {
+            // Navigation changed - update state and sync active_pane
+            let old_focus = self.navigation.focus;
+            self.navigation = new_nav;
+            self.active_pane = new_nav.active_pane();
+            
+            // Clear selections when switching focus
+            if new_nav.focus != old_focus {
+                match new_nav.focus {
+                    NavFocus::Detected => {
+                        self.added_selected = None;
+                        self.users_selected = None;
+                    }
+                    NavFocus::Added => {
+                        self.detected_selected = None;
+                        self.users_selected = None;
+                    }
+                    NavFocus::Users => {
+                        self.detected_selected = None;
+                    }
+                    NavFocus::Logs => {
+                        self.detected_selected = None;
+                        self.added_selected = None;
+                    }
+                    NavFocus::Center => {
+                        self.detected_selected = None;
+                        self.added_selected = None;
+                        self.users_selected = None;
+                    }
+                }
+            }
+            return None;
+        }
+        
+        // Handle list navigation (Up/Down in lists)
+        if let Some(action) = self.navigation.list_nav_action(code) {
+            return Some(action);
+        }
+        
+        // Check if we're in a modal question
         let in_delete = matches!(self.question, Question::Delete(_, _));
         let in_wipe = matches!(self.question, Question::Wipe(_, _));
         let in_setup = matches!(self.question, Question::SetupCd(_, _));
@@ -791,6 +852,7 @@ impl TtyUi {
                     frame,
                     main_area,
                     *active_pane,
+                    self.navigation.focus,
                     detected,
                     *detected_selected,
                     added,

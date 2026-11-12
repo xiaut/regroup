@@ -358,6 +358,7 @@ pub fn render_all_panes(
     frame: &mut Frame,
     area: Rect,
     active_pane: ActivePane,
+    navigation_focus: super::types::NavFocus,
     detected: &[super::types::UiDevice],
     detected_selected: Option<usize>,
     added: &[super::types::UiDevice],
@@ -540,6 +541,11 @@ pub fn render_all_panes(
         }
         ActivePane::MainMenu(_) => {
             // Show all three panes when in MainMenu
+            // Highlight the panel that has focus
+            let detected_selected_focus = matches!(navigation_focus, super::types::NavFocus::Detected);
+            let added_selected_focus = matches!(navigation_focus, super::types::NavFocus::Added);
+            let logs_selected_focus = matches!(navigation_focus, super::types::NavFocus::Logs);
+            
             if width >= min_width_for_side_by_side {
                 // Layout: Detected | Added (top row), Logs (bottom row)
                 let top_height = height / 2;
@@ -563,7 +569,11 @@ pub fn render_all_panes(
 
                 // Render Detected pane
                 let detected_theme = PanelTheme::new("Detected", Color::Yellow, "detected");
-                let detected_border_style = Style::new().fg(Color::Yellow);
+                let detected_border_style = if detected_selected_focus {
+                    Style::new().fg(Color::Yellow).bold()
+                } else {
+                    Style::new().fg(Color::Yellow)
+                };
 
                 let detected_rows = detected.iter().enumerate().map(|(i, d)| {
                     let now = Instant::now();
@@ -617,7 +627,11 @@ pub fn render_all_panes(
 
                 // Render Added pane
                 let added_theme = PanelTheme::new("Added", Color::Green, "known");
-                let added_border_style = Style::new().fg(Color::Green);
+                let added_border_style = if added_selected_focus {
+                    Style::new().fg(Color::Green).bold()
+                } else {
+                    Style::new().fg(Color::Green)
+                };
 
                 let added_rows = added.iter().enumerate().map(|(i, d)| {
                     let now = Instant::now();
@@ -671,7 +685,11 @@ pub fn render_all_panes(
 
                 // Render Logs pane
                 let logs_title = if verbose { "Logs — verbose" } else { "Logs" };
-                let logs_border_style = Style::new().fg(Color::Cyan);
+                let logs_border_style = if logs_selected_focus {
+                    Style::new().fg(Color::Cyan).bold()
+                } else {
+                    Style::new().fg(Color::Cyan)
+                };
                 let logs_block = Block::bordered()
                     .title(logs_title)
                     .border_type(BorderType::Plain)
@@ -708,7 +726,11 @@ pub fn render_all_panes(
 
                 // Render Detected pane
                 let detected_theme = PanelTheme::new("Detected", Color::Yellow, "detected");
-                let detected_border_style = Style::new().fg(Color::Yellow);
+                let detected_border_style = if detected_selected_focus {
+                    Style::new().fg(Color::Yellow).bold()
+                } else {
+                    Style::new().fg(Color::Yellow)
+                };
 
                 let detected_rows = detected.iter().enumerate().map(|(i, d)| {
                     let now = Instant::now();
@@ -762,7 +784,11 @@ pub fn render_all_panes(
 
                 // Render Added pane
                 let added_theme = PanelTheme::new("Added", Color::Green, "known");
-                let added_border_style = Style::new().fg(Color::Green);
+                let added_border_style = if added_selected_focus {
+                    Style::new().fg(Color::Green).bold()
+                } else {
+                    Style::new().fg(Color::Green)
+                };
 
                 let added_rows = added.iter().enumerate().map(|(i, d)| {
                     let now = Instant::now();
@@ -816,7 +842,11 @@ pub fn render_all_panes(
 
                 // Render Logs pane
                 let logs_title = if verbose { "Logs — verbose" } else { "Logs" };
-                let logs_border_style = Style::new().fg(Color::Cyan);
+                let logs_border_style = if logs_selected_focus {
+                    Style::new().fg(Color::Cyan).bold()
+                } else {
+                    Style::new().fg(Color::Cyan)
+                };
                 let logs_block = Block::bordered()
                     .title(logs_title)
                     .border_type(BorderType::Plain)

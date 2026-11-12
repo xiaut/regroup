@@ -54,6 +54,196 @@ pub enum UiEvent {
     },
 }
 
+/// New navigation model (docs/navigation.md).
+///
+/// The user is virtually at the center of the screen.
+/// Arrows move directionally: Left (Detected), Right (Added), Down (Logs).
+/// Enter goes deeper, Esc goes back.
+/// Users sub-panel is nested inside Added (reached by Right from Added fullscreen).
+///
+/// Navigation focus: which direction from center.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum NavFocus {
+    /// At center, no panel engaged - all panels visible (overview)
+    Center,
+    /// Focus on Detected panel (left from center)
+    Detected,
+    /// Focus on Added panel (right from center)
+    Added,
+    /// Focus on Users sub-panel (nested inside Added, right from Added fullscreen)
+    Users,
+    /// Focus on Logs panel (down from center)
+    Logs,
+}
+
+/// Navigation depth: how engaged we are with the focused panel.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum NavDepth {
+    /// Panel is selected/highlighted (first step from center)
+    Selected,
+    /// Panel is fullscreen (second step from center)
+    Fullscreen,
+}
+
+/// Complete navigation state: focus + depth.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct Navigation {
+    pub focus: NavFocus,
+    pub depth: Option<NavDepth>,
+}
+
+impl Default for NavFocus {
+    fn default() -> Self {
+        NavFocus::Center
+    }
+}
+
+impl Navigation {
+    /// Create overview state (center, no panel engaged).
+    pub const fn overview() -> Self {
+        Self {
+            focus: NavFocus::Center,
+            depth: None,
+        }
+    }
+
+    /// Check if this is the overview state.
+    pub fn is_overview(&self) -> bool {
+        self.focus == NavFocus::Center && self.depth.is_none()
+    }
+
+    /// Check if a panel is at Selected depth.
+    pub fn is_selected(&self) -> bool {
+        self.depth == Some(NavDepth::Selected)
+    }
+
+    /// Check if a panel is at Fullscreen depth.
+    pub fn is_fullscreen(&self) -> bool {
+        self.depth == Some(NavDepth::Fullscreen)
+    }
+
+    /// Check if we're in the Users sub-panel.
+    pub fn in_users(&self) -> bool {
+        self.focus == NavFocus::Users
+    }
+
+    /// Check if we're in the Logs panel.
+    pub fn in_logs(&self) -> bool {
+        self.focus == NavFocus::Logs
+    }
+
+    /// Check if we can navigate in the specified direction.
+    pub fn can_navigate(&self, direction: NavDirection) -> bool {
+        use NavDirection::*;
+        match direction {
+            Left => matches!(self.focus, NavFocus::Detected),
+            Right => matches!(self.focus, NavFocus::Added) || matches!(self.focus, NavFocus::Center),
+            Down => matches!(self.focus, NavFocus::Center),
+            Up => matches!(self.focus, NavFocus::Logs),
+        }
+    }
+
+    /// Handle a navigation key press, return the new navigation state.
+    pub fn handle_key(self, key: KeyCode, has_detected: bool, has_added: bool, has_users: bool) -> Self {
+        use KeyCode::*;
+        use NavDepth::*;
+        use NavFocus::*;
+
+        match (self.focus, self.depth, key) {
+            // From Center (overview)
+            (Center, None, Left) if has_detected => Navigation { focus: Detected, depth: Some(Selected) },
+            (Center, None, Right) if has_added => Navigation { focus: Added, depth: Some(Selected) },
+            (Center, None, Down) => Navigation { focus: Logs, depth: Some(Selected) },
+            (Center, None, Up) => self,
+            (Center, None, Enter) => self, // Needs direction first
+            (Center, None, Esc) => self,
+
+            // Esc: always go back
+            (Detected, Some(Selected), Esc) => Navigation::overview(),
+            (Detected, Some(Fullscreen), Esc) => Navigation { focus: Detected, depth: Some(Selected) },
+            (Added, Some(Selected), Esc) => Navigation::overview(),
+            (Added, Some(Fullscreen), Esc) => Navigation { focus: Added, depth: Some(Selected) },
+            (Users, Some(Fullscreen), Esc) => Navigation { focus: Added, depth: Some(Fullscreen) },
+            (Logs, Some(Selected), Esc) => Navigation::overview(),
+            (Logs, Some(Fullscreen), Esc) => Navigation { focus: Logs, depth: Some(Selected) },
+
+            // Enter: go one level deeper
+            (Detected, Some(Selected), Enter) => Navigation { focus: Detected, depth: Some(Fullscreen) },
+            (Added, Some(Selected), Enter) => Navigation { focus: Added, depth: Some(Fullscreen) },
+            (Added, Some(Fullscreen), Enter) if has_users => Navigation { focus: Users, depth: Some(Fullscreen) },
+            (Logs, Some(Selected), Enter) => Navigation { focus: Logs, depth: Some(Fullscreen) },
+
+            // Left arrow: move left
+            (Detected, Some(Selected), Left) => Navigation::overview(),
+            (Detected, Some(Fullscreen), Left) => Navigation { focus: Detected, depth: Some(Selected) },
+            (Added, Some(Selected), Left) => Navigation::overview(),
+            (Added, Some(Fullscreen), Left) => Navigation { focus: Added, depth: Some(Selected) },
+            (Users, Some(Fullscreen), Left) => Navigation { focus: Added, depth: Some(Fullscreen) },
+
+            // Right arrow: move right
+            (Center, None, Right) if has_added => Navigation { focus: Added, depth: Some(Selected) },
+            (Detected, Some(Selected), Right) => Navigation { focus: Detected, depth: Some(Fullscreen) },
+            (Added, Some(Selected), Right) => Navigation { focus: Added, depth: Some(Fullscreen) },
+            (Added, Some(Fullscreen), Right) if has_users => Navigation { focus: Users, depth: Some(Fullscreen) },
+            (Logs, Some(Selected), Right) => Navigation { focus: Logs, depth: Some(Fullscreen) },
+
+            // Down arrow
+            (Logs, Some(Selected), Down) => Navigation { focus: Logs, depth: Some(Fullscreen) },
+
+            // Up arrow
+            (Logs, Some(Fullscreen), Up) => Navigation { focus: Logs, depth: Some(Selected) },
+
+            // Other cases: no navigation change
+            _ => self,
+        }
+    }
+
+    /// Get list navigation action for Up/Down in lists.
+    /// Only returns actions when in Fullscreen depth (not Selected).
+    pub fn list_nav_action(&self, key: KeyCode) -> Option<Action> {
+        use KeyCode::*;
+        
+        // List navigation only works in Fullscreen depth
+        if !self.is_fullscreen() {
+            return None;
+        }
+
+        match (self.focus, key) {
+            (NavFocus::Detected, Up) => Some(Action::PendingSelectPrev),
+            (NavFocus::Detected, Down) => Some(Action::PendingSelectNext),
+            (NavFocus::Added, Up) => Some(Action::AddedSelectPrev),
+            (NavFocus::Added, Down) => Some(Action::AddedSelectNext),
+            (NavFocus::Users, Up) => Some(Action::UsersSelectPrev),
+            (NavFocus::Users, Down) => Some(Action::UsersSelectNext),
+            _ => None,
+        }
+    }
+
+    /// Get the corresponding ActivePane for this navigation state.
+    /// For Selected depth, returns MainMenu to show the dashboard with the panel highlighted.
+    /// For Fullscreen depth, returns the specific pane to show it full-screen.
+    pub fn active_pane(&self) -> ActivePane {
+        match (self.focus, self.depth) {
+            (NavFocus::Center, _) => ActivePane::main_menu(),
+            (NavFocus::Detected, Some(NavDepth::Fullscreen)) => ActivePane::detected(),
+            (NavFocus::Added, Some(NavDepth::Fullscreen)) => ActivePane::added(),
+            (NavFocus::Users, Some(NavDepth::Fullscreen)) => ActivePane::users(false),
+            (NavFocus::Logs, Some(NavDepth::Fullscreen)) => ActivePane::logs(),
+            // For Selected depth, return MainMenu to show dashboard with panel highlighted
+            _ => ActivePane::main_menu(),
+        }
+    }
+}
+
+/// Direction for navigation.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum NavDirection {
+    Left,
+    Right,
+    Up,
+    Down,
+}
+
 /// Which pane is currently active for navigation and actions.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ActivePane {
@@ -266,6 +456,11 @@ pub enum Action {
 pub static MAIN_MENU_PANE: Pane = Pane {
     name: "Main menu",
     bindings: &[
+        KeyBinding::new(KeyCode::Enter, "Enter", "select"),
+        KeyBinding::new(KeyCode::Esc, "Esc", "back"),
+        KeyBinding::new(KeyCode::Left, "Left", "Detected"),
+        KeyBinding::new(KeyCode::Right, "Right", "Added"),
+        KeyBinding::new(KeyCode::Down, "Dn", "Logs"),
         KeyBinding::new(KeyCode::Char('d'), "d", "Detected"),
         KeyBinding::new(KeyCode::Char('a'), "a", "Added"),
         KeyBinding::new(KeyCode::Char('l'), "l", "Logs"),
@@ -277,11 +472,13 @@ pub static MAIN_MENU_PANE: Pane = Pane {
 pub static DETECTED_PANE: Pane = Pane {
     name: "Detected devices",
     bindings: &[
-        KeyBinding::new(KeyCode::Char('q'), "q", "no pane"),
+        KeyBinding::new(KeyCode::Enter, "Enter", "fullscreen"),
+        KeyBinding::new(KeyCode::Esc, "Esc", "back"),
         KeyBinding::new(KeyCode::Up, "Up", "select"),
         KeyBinding::new(KeyCode::Down, "Dn", "select"),
         KeyBinding::new(KeyCode::Char('a'), "a", "add"),
         KeyBinding::new(KeyCode::Char('n'), "n", "ignore"),
+        KeyBinding::new(KeyCode::Char('q'), "q", "no pane"),
         KeyBinding::new(KeyCode::Char('?'), "?", "help"),
     ],
 };
@@ -289,7 +486,8 @@ pub static DETECTED_PANE: Pane = Pane {
 pub static ADDED_PANE: Pane = Pane {
     name: "Added devices",
     bindings: &[
-        KeyBinding::new(KeyCode::Char('q'), "q", "no pane"),
+        KeyBinding::new(KeyCode::Enter, "Enter", "fullscreen"),
+        KeyBinding::new(KeyCode::Esc, "Esc", "back"),
         KeyBinding::new(KeyCode::Up, "Up", "select"),
         KeyBinding::new(KeyCode::Down, "Dn", "select"),
         KeyBinding::new(KeyCode::Right, "Right", "users"),
@@ -297,6 +495,7 @@ pub static ADDED_PANE: Pane = Pane {
         KeyBinding::new(KeyCode::Char('s'), "s", "sync"),
         KeyBinding::new(KeyCode::Char('w'), "w", "wipe"),
         KeyBinding::new(KeyCode::Char('c'), "c", "setup-cd"),
+        KeyBinding::new(KeyCode::Char('q'), "q", "no pane"),
         KeyBinding::new(KeyCode::Char('?'), "?", "help"),
     ],
 };
@@ -305,7 +504,8 @@ pub static ADDED_PANE: Pane = Pane {
 pub static USERS_PANE_CONFIRMED: Pane = Pane {
     name: "Users",
     bindings: &[
-        KeyBinding::new(KeyCode::Char('q'), "q", "no pane"),
+        KeyBinding::new(KeyCode::Enter, "Enter", "select"),
+        KeyBinding::new(KeyCode::Esc, "Esc", "back"),
         KeyBinding::new(KeyCode::Up, "Up", "select"),
         KeyBinding::new(KeyCode::Down, "Dn", "select"),
         KeyBinding::new(KeyCode::Left, "Left", "machines"),
@@ -313,6 +513,7 @@ pub static USERS_PANE_CONFIRMED: Pane = Pane {
         KeyBinding::new(KeyCode::Char('r'), "r", "remove key"),
         KeyBinding::new(KeyCode::Char('a'), "a", "add temp user"),
         KeyBinding::new(KeyCode::Char('s'), "s", "sync"),
+        KeyBinding::new(KeyCode::Char('q'), "q", "no pane"),
         KeyBinding::new(KeyCode::Char('?'), "?", "help"),
     ],
 };
@@ -322,13 +523,15 @@ pub static USERS_PANE_CONFIRMED: Pane = Pane {
 pub static USERS_PANE_TEMPORARY: Pane = Pane {
     name: "Users",
     bindings: &[
-        KeyBinding::new(KeyCode::Char('q'), "q", "no pane"),
+        KeyBinding::new(KeyCode::Enter, "Enter", "select"),
+        KeyBinding::new(KeyCode::Esc, "Esc", "back"),
         KeyBinding::new(KeyCode::Up, "Up", "select"),
         KeyBinding::new(KeyCode::Down, "Dn", "select"),
         KeyBinding::new(KeyCode::Left, "Left", "machines"),
         KeyBinding::new(KeyCode::Char('a'), "a", "add temp user"),
         KeyBinding::new(KeyCode::Char('x'), "x", "remove temp user"),
         KeyBinding::new(KeyCode::Char('s'), "s", "sync"),
+        KeyBinding::new(KeyCode::Char('q'), "q", "no pane"),
         KeyBinding::new(KeyCode::Char('?'), "?", "help"),
     ],
 };
@@ -336,12 +539,14 @@ pub static USERS_PANE_TEMPORARY: Pane = Pane {
 pub static LOGS_PANE: Pane = Pane {
     name: "Logs",
     bindings: &[
-        KeyBinding::new(KeyCode::Char('q'), "q", "no pane"),
+        KeyBinding::new(KeyCode::Enter, "Enter", "fullscreen"),
+        KeyBinding::new(KeyCode::Esc, "Esc", "back"),
         KeyBinding::new(KeyCode::Up, "Up", "scroll line"),
         KeyBinding::new(KeyCode::Down, "Dn", "scroll line"),
         KeyBinding::new(KeyCode::PageUp, "PgUp", "scroll page"),
         KeyBinding::new(KeyCode::PageDown, "PgDn", "scroll page"),
         KeyBinding::new(KeyCode::Char('v'), "v", "toggle verbose"),
+        KeyBinding::new(KeyCode::Char('q'), "q", "no pane"),
         KeyBinding::new(KeyCode::Char('?'), "?", "help"),
     ],
 };
@@ -476,4 +681,13 @@ impl Question {
     pub fn add_temp_user(device: String) -> Self {
         Question::AddTempUser(ADD_TEMP_USER_QUESTION, device)
     }
+}
+
+/// Direction for navigation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Direction {
+    Up,
+    Down,
+    Left,
+    Right,
 }
