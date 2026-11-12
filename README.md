@@ -9,8 +9,9 @@ Find devices by their SSH host key and update `~/.ssh/config`.
   state (`device.json`), its known users (`users/<user>.json`) and its
   connections (`connections/`)
 - Devices are identified by their **SSH public key** (hostnames and IPs can change)
-- Devices announce themselves via **signed UDP beacons** (Ed25519); regroup
-  listens continuously and prompts for each new device
+- Devices announce themselves via **signed UDP beacons** (Ed25519) carrying
+  device data only — name, keys, IP, port; regroup listens continuously and
+  prompts for each new device. No user data is ever announced on the network
 - Git remotes are **automatically configured** for all other devices (using hostnames)
 - Devices only ever write inside their own directory (`users/` and
   `connections/`); `device.json` can also be written by a device that
@@ -127,11 +128,15 @@ This handles:
 
 1. **Remote URLs** use the format: `user@hostname:~/.regroup-config/git`
 
-   Devices without a `user` field (e.g. added via beacon) fall back to the
-   current local user for the remote URL; set `"user"` in the device file to
-   override. Remotes pointing at a regroup config repository are removed when
-   the corresponding device disappears from the config; other remotes (e.g.
-   a backup repo you added yourself) are left untouched.
+   Beacons carry no user data (users are configuration, not discovery), so the
+   SSH user of a device comes from its configuration: the first user it
+   declared in `users/` (arrived through git sync), or a **temporary user**
+   you add from the Users panel of the interactive ui (in memory only, just
+   enough to build the remote URL and run the first sync). Devices with no
+   known user are skipped until one is known. Remotes pointing at a regroup
+   config repository are removed when the corresponding device disappears
+   from the config; other remotes (e.g. a backup repo you added yourself) are
+   left untouched.
 
 2. **Sync operations** (triggered with 's' in interactive mode):
    - `git pull` from all remotes
@@ -191,7 +196,7 @@ Config repository structure (~/.regroup-config/git/):
   settings.json                     (optional: udp_port, wait_secs)
   devices/
     <hostname>/                     (one directory per device)
-      device.json                  (latest known state: name, ssh_public_key, user, port)
+      device.json                  (latest known state: name, ssh_public_key, port)
       users/<user>.json             (known users of the device, written by the device itself)
       connections/<conn>.json       (connections of the device, owner-scoped)
 
@@ -213,7 +218,6 @@ the latest known state:
   "name": "hostname",
   "ssh_public_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA...",
   "signing_public_key": "MCowBQYDK2VwAyEA...",
-  "user": "username",
   "port": 22
 }
 ```
@@ -222,8 +226,10 @@ Fields:
 - `name`: Device hostname (auto-detected) - **required**
 - `ssh_public_key`: SSH server host public key (OpenSSH format) - **required**; this is the unique identifier of a device (hostnames and IPs can change)
 - `signing_public_key`: Ed25519 signing public key (base64, **required**) — written by regroup when the device file is created; beacons signed with any other key trigger a confirmation prompt (reinstall or spoofing)
-- `user`: SSH username (defaults to current user for auto-created devices, omitted if empty)
 - `port`: SSH port (defaults to 22; devices discovered via beacon keep their announced port, e.g. Termux's 8022)
+
+There is no `user` field: users live in `users/<user>.json`, written by the
+device itself (one file per user that runs regroup there).
 
 **Important**: Devices are identified by their **SSH public key**, not by hostname or IP address. This allows the system to handle host name and IP changes automatically.
 
@@ -349,8 +355,7 @@ cat > ~/.regroup-config/git/devices/newdevice/device.json << EOF
 {
   "name": "newdevice",
   "ssh_public_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA...",
-  "signing_public_key": "MCowBQYDK2VwAyEA...",
-  "user": "username"
+  "signing_public_key": "MCowBQYDK2VwAyEA..."
 }
 EOF
 

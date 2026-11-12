@@ -7,7 +7,7 @@ use std::io::{self, Write};
 use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
 
-use super::types::{Action, Question, REMOVE_KEY_CONFIRM_QUESTION};
+use super::types::{Action, Question};
 
 /// Plain line-based fallback for non-terminal stdout, mirroring the
 /// interface the tool had before the full-screen ui.
@@ -91,35 +91,8 @@ impl PlainUi {
                     .collect();
                 format!("Install 'regroup-cd' in ~/{file}? [{}]:", hints.join("/"))
             }
-            Question::InstallKeySelectDevice(_, devices) => {
-                format!(
-                    "Select target device for key installation ({} available):",
-                    devices.len()
-                )
-            }
-            Question::InstallKeySelectUser(_, device, users) => {
-                format!(
-                    "Select user on {} for key installation ({} available):",
-                    device, users.len()
-                )
-            }
-            Question::InstallKeyConfirm(def, from_user, from_device, to_user, to_device) => {
-                let hints: Vec<String> = def.bindings.iter()
-                    .map(|b| format!("{}", b.label))
-                    .collect();
-                format!(
-                    "Install SSH key from {}@{} to {}@{}? [{}]:",
-                    from_user, from_device, to_user, to_device, hints.join("/")
-                )
-            }
-            Question::RemoveKeySelectConnection(_, connections) => {
-                format!("Select connection to remove ({} available):", connections.len())
-            }
-            Question::RemoveKeyConfirm(_, connection_id, ..) => {
-                let hints: Vec<String> = REMOVE_KEY_CONFIRM_QUESTION.bindings.iter()
-                    .map(|b| format!("{}", b.label))
-                    .collect();
-                format!("Remove SSH key {connection_id}? [{}]:", hints.join("/"))
+            Question::AddTempUser(_, device) => {
+                format!("Temporary user on {device} (empty = cancel):")
             }
         }
     }
@@ -167,25 +140,8 @@ impl PlainUi {
             (Question::SetupCd(_, _), "y") => Some(Action::SetupCdConfirm),
             (Question::SetupCd(_, _), "n") => Some(Action::SetupCdCancel),
             (Question::SetupCd(_, _), _) => Some(Action::SetupCdCancel),
-            // Key installation/removal actions
-            (Question::InstallKeySelectDevice(_, _), "q") => Some(Action::InstallKeyCancel),
-            (Question::InstallKeySelectDevice(_, _), "n") => Some(Action::InstallKeyCancel),
-            (Question::InstallKeySelectDevice(_, _), _) => Some(Action::InstallKeyMode),
-            (Question::InstallKeySelectUser(_, _, _), "q") => Some(Action::InstallKeyCancel),
-            (Question::InstallKeySelectUser(_, _, _), "n") => Some(Action::InstallKeyCancel),
-            (Question::InstallKeySelectUser(_, _, _), _device) => {
-                // This would require more context to handle properly
-                Some(Action::InstallKeyMode)
-            }
-            (Question::InstallKeyConfirm(_, _, _, _, _), "y") => Some(Action::InstallKeyConfirm),
-            (Question::InstallKeyConfirm(_, _, _, _, _), "n") => Some(Action::InstallKeyCancel),
-            (Question::InstallKeyConfirm(_, _, _, _, _), _) => Some(Action::InstallKeyCancel),
-            (Question::RemoveKeySelectConnection(_, _), "q") => Some(Action::RemoveKeyCancel),
-            (Question::RemoveKeySelectConnection(_, _), "n") => Some(Action::RemoveKeyCancel),
-            (Question::RemoveKeySelectConnection(_, _), _) => Some(Action::RemoveKeyMode),
-            (Question::RemoveKeyConfirm(_, _, _, _, _, _), "y") => Some(Action::RemoveKeyConfirm),
-            (Question::RemoveKeyConfirm(_, _, _, _, _, _), "n") => Some(Action::RemoveKeyCancel),
-            (Question::RemoveKeyConfirm(_, _, _, _, _, _), _) => Some(Action::RemoveKeyCancel),
+            (Question::AddTempUser(_, _), "") => Some(Action::CancelTempUser),
+            (Question::AddTempUser(_, _), name) => Some(Action::TempUserName(name.to_string())),
         }
     }
 }

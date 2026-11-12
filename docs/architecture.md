@@ -4,7 +4,7 @@
 
 A **regroup** process does three things simultaneously:
 
-1. **Announce** itself every `wait_secs` on all interfaces (signed UDP beacon: name, SSH host public key, signing key, user, port)
+1. **Announce** itself every `wait_secs` on all interfaces (signed UDP beacon: name, SSH host public key, signing key, port — no user data)
 2. **Listen** for other devices' beacons; unknown devices appear in the interactive UI's "Detected" panel and are added on acceptance
 3. **Sync** its configuration with peers through the git repository in `~/.regroup-config/git/` (remotes are auto-configured per known device)
 
@@ -33,7 +33,7 @@ A **regroup** process does three things simultaneously:
 #### Beacon Protocol
 - UDP-based discovery on a configurable port (default: 9876)
 - Beacons are signed to prevent spoofing
-- Contains: device name, SSH public key, signing public key, user, port, IP
+- Contains: device name, SSH public key, signing public key, port, IP
 - Beacon age is checked to filter out stale announcements
 
 #### Configuration Storage
@@ -74,7 +74,7 @@ Threads communicate via channels (MPSC for beacon notifications, UI events).
 │   ├── settings.json        # Global settings (udp_port, wait_secs)
 │   └── devices/
 │       └── <device-name>/
-│           ├── device.json          # Device metadata (name, keys, user, port)
+│           ├── device.json          # Device metadata (name, keys, port)
 │           ├── users/
 │           │   └── <user>.json      # Known users on this device
 │           └── connections/

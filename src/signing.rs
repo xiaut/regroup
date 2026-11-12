@@ -241,18 +241,20 @@ pub fn verify_signature(
 /// Sign a beacon message
 ///
 /// Creates the signed beacon string in the format:
-/// "name\tsigning_public_key_b64\tssh_public_key\tuser\tip\tport\ttimestamp\tsignature_b64"
+/// "name\tsigning_public_key_b64\tssh_public_key\tip\tport\ttimestamp\tsignature_b64"
+///
+/// The beacon carries device data only: the users of a device are
+/// configuration (devices/<name>/users/), never announced on the network.
 pub fn sign_beacon(
     name: &str,
     ssh_public_key: &SshPublicKey,
-    user: &str,
     ip: &str,
     port: u16,
     timestamp: &str,
     signing_key: &SigningKey,
 ) -> Result<String, String> {
-    // Create the message to sign: "name|ssh_public_key|user|ip|port|timestamp"
-    let message = format!("{}|{}|{}|{}|{}|{}", name, ssh_public_key, user, ip, port, timestamp);
+    // Create the message to sign: "name|ssh_public_key|ip|port|timestamp"
+    let message = format!("{}|{}|{}|{}|{}", name, ssh_public_key, ip, port, timestamp);
 
     // Sign the message
     let signature_b64 = sign_message(&message, signing_key)?;
@@ -265,28 +267,28 @@ pub fn sign_beacon(
     let signing_public_key_b64 = base64_engine.encode(verifying_key.to_bytes());
 
     // Create the beacon string with tab-separated fields
-    // Format: name\tsigning_public_key_b64\tssh_public_key\tuser\tip\tport\ttimestamp\tsignature_b64
+    // Format: name\tsigning_public_key_b64\tssh_public_key\tip\tport\ttimestamp\tsignature_b64
     Ok(format!(
-        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
-        name, signing_public_key_b64, ssh_public_key, user, ip, port, timestamp, signature_b64
+        "{}\t{}\t{}\t{}\t{}\t{}\t{}",
+        name, signing_public_key_b64, ssh_public_key, ip, port, timestamp, signature_b64
     ))
 }
 
 /// Verify a beacon signature
 ///
 /// Parses a beacon string and verifies its signature
-/// Returns (name, ssh_public_key, user, ip, port) if valid, or an error
+/// Returns (name, ssh_public_key, ip, port) if valid, or an error
 pub fn verify_beacon(
     beacon_str: &str,
     expected_signing_public_key: Option<&VerifyingKey>,
-) -> Result<(String, SshPublicKey, String, String, u16), String> {
+) -> Result<(String, SshPublicKey, String, u16), String> {
     let parts: Vec<&str> = beacon_str.split('\t').collect();
 
-    // Expected format: name\tsigning_public_key_b64\tssh_public_key\tuser\tip\tport\ttimestamp\tsignature_b64
-    // That's 8 fields total
-    if parts.len() != 8 {
+    // Expected format: name\tsigning_public_key_b64\tssh_public_key\tip\tport\ttimestamp\tsignature_b64
+    // That's 7 fields total
+    if parts.len() != 7 {
         return Err(format!(
-            "invalid beacon format: expected 8 fields, got {}",
+            "invalid beacon format: expected 7 fields, got {}",
             parts.len()
         ));
     }
@@ -294,13 +296,12 @@ pub fn verify_beacon(
     let name = parts[0].to_string();
     let signing_public_key_b64 = parts[1];
     let ssh_public_key = SshPublicKey::from(parts[2]);
-    let user = parts[3].to_string();
-    let ip = parts[4].to_string();
-    let port: u16 = parts[5]
+    let ip = parts[3].to_string();
+    let port: u16 = parts[4]
         .parse()
         .map_err(|_| "invalid port number".to_string())?;
-    let timestamp = parts[6].to_string();
-    let signature_b64 = SignatureB64::from(parts[7]);
+    let timestamp = parts[5].to_string();
+    let signature_b64 = SignatureB64::from(parts[6]);
 
     // Decode the signing public key
     let base64_engine = base64::engine::general_purpose::STANDARD;
@@ -337,13 +338,13 @@ pub fn verify_beacon(
     }
 
     // Reconstruct the message to verify
-    let message = format!("{}|{}|{}|{}|{}|{}", name, ssh_public_key, user, ip, port, timestamp);
+    let message = format!("{}|{}|{}|{}|{}", name, ssh_public_key, ip, port, timestamp);
 
     // Verify the signature
     let is_valid = verify_signature(&message, &signature_b64, &signing_public_key)?;
 
     if is_valid {
-        Ok((name, ssh_public_key, user, ip, port))
+        Ok((name, ssh_public_key, ip, port))
     } else {
         Err("invalid signature".to_string())
     }
@@ -393,7 +394,7 @@ mod tests {
 
     fn signed_beacon() -> (String, SigningKey) {
         let (signing_key, _) = generate_keypair().expect("keypair generation");
-        let beacon = sign_beacon("selftest", &ssh_key(), "", "10.1.2.3", 22, "0", &signing_key)
+        let beacon = sign_beacon("selftest", &ssh_key(), "10.1.2.3", 22, "0", &signing_key)
             .expect("beacon signing");
         (beacon, signing_key)
     }
@@ -403,11 +404,10 @@ mod tests {
         let (beacon, signing_key) = signed_beacon();
         let verifying_key = signing_key.verifying_key();
 
-        let (name, key, user, ip, port) =
+        let (name, key, ip, port) =
             verify_beacon(&beacon, Some(&verifying_key)).expect("a beacon we signed must verify");
         assert_eq!(name, "selftest");
         assert_eq!(key.as_str(), ssh_key().as_str());
-        assert_eq!(user, "");
         assert_eq!(ip, "10.1.2.3");
         assert_eq!(port, 22);
     }
@@ -439,14 +439,14 @@ mod tests {
         // Not enough fields
         assert!(verify_beacon("only\tthree\tfields", None).is_err());
         // Malformed signing key (base64 that decodes to 3 bytes, not 32)
-        let malformed = "selftest\tAAAA\tssh-ed25519 AAAA\tuser\t10.1.2.3\t22\t0\tAAAA";
+        let malformed = "selftest\tAAAA\tssh-ed25519 AAAA\t10.1.2.3\t22\t0\tAAAA";
         assert!(verify_beacon(malformed, None).is_err());
         // Non-numeric port
         let (beacon, _) = signed_beacon();
         let parts: Vec<&str> = beacon.split('\t').collect();
         let bad_port = format!(
-            "{}\t{}\t{}\t{}\t{}\txx\t{}\t{}",
-            parts[0], parts[1], parts[2], parts[3], parts[4], parts[6], parts[7]
+            "{}\t{}\t{}\t{}\txx\t{}\t{}",
+            parts[0], parts[1], parts[2], parts[3], parts[5], parts[6]
         );
         assert!(verify_beacon(&bad_port, None).is_err());
     }

@@ -216,7 +216,7 @@ fn draw_device_list(
         .iter()
         .enumerate()
         .map(|(i, d)| {
-            let label = format!("{} ({})", d.name, d.user);
+            let label = d.name.to_string();
             let style = if i == selected {
                 Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
             } else {

@@ -10,7 +10,7 @@ use std::time::Duration;
 use super::logging::LOG_TX;
 use super::plain::PlainUi;
 use super::tty::TtyUi;
-use super::types::{ActivePane, Action, Question, UiDevice};
+use super::types::{ActivePane, Action, Question, UiDevice, UiUser};
 
 /// The interface used by the interactive loop.
 pub enum Ui {
@@ -38,6 +38,8 @@ impl Ui {
                 detected_selected: None,
                 added_selected: None,
                 delete_selected: None,
+                users: Vec::new(),
+                users_selected: None,
                 active_pane: ActivePane::main_menu(),
                 show_help: false,
                 help_scroll: 0,
@@ -86,6 +88,15 @@ impl Ui {
     pub fn set_added_selected(&mut self, selected: Option<usize>) {
         if let Ui::Tty(ui) = self {
             ui.added_selected = selected;
+        }
+    }
+
+    /// Update the Users panel: the users of the machine selected in the
+    /// Added panel, and the selected row (ignored in plain mode).
+    pub fn set_users(&mut self, users: Vec<UiUser>, selected: Option<usize>) {
+        if let Ui::Tty(ui) = self {
+            ui.users = users;
+            ui.users_selected = selected;
         }
     }
 

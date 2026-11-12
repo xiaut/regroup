@@ -73,15 +73,11 @@ pub fn create_device_config(config_dir: &Path) -> Result<Device, String> {
         Err(e) => return Err(format!("cannot initialize signing keys: {}", e)),
     };
 
-    // Determine the current user
-    let current_user = env::var("USER").unwrap_or_else(|_| env::var("LOGNAME").unwrap_or_default());
-
     let device = Device {
         name: DeviceName::new(hostname.clone())
             .ok_or_else(|| format!("hostname '{}' is empty or whitespace", hostname))?,
         ssh_public_key,
         signing_public_key,
-        user: current_user,
         port: 22,
         port_explicit: false,
     };

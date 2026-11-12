@@ -132,7 +132,9 @@ ssh://<user>@<ip>:<port>/.regroup-config/git
 ```
 
 Where:
-- `<user>`: The user associated with the device
+- `<user>`: The device's SSH user, resolved from its configuration — a
+  temporary user added this run (interactive Users panel) or the first user
+  the device declared in `users/`; never announced on the network
 - `<ip>`: The device's IP address
 - `<port>`: The SSH port (default: 22)
 
@@ -154,7 +156,7 @@ Git-related errors:
 use crate::git::{sync_git, list_remotes};
 
 // Sync with all peers
-sync_git("/home/user", true);
+sync_git("/home/user", true, &temp_users);
 
 // List configured remotes
 let remotes = list_remotes().unwrap();

@@ -3,6 +3,7 @@
 //! This module handles command-line interface functionality.
 
 use std::env;
+use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -136,7 +137,7 @@ pub fn run_selftest() -> ! {
 /// The full help text, shared by `regroup -h` and the interactive help
 /// panel (key '?' in the full-screen ui, 'h' in plain mode).
 pub fn usage_text() -> &'static str {
-    "regroup — find devices by their SSH host key and update ~/.ssh/config.\nDevices announce themselves via signed UDP beacons; regroup listens for them\ncontinuously and prompts for each new device.\n\nConfiguration is stored in ~/.regroup-config/git/ (a git repository) where\neach device owns a directory devices/<name>/ holding its latest known\nstate (device.json) and its lists (known users, connections). Git remotes\ncan be configured for all other devices to enable decentralized sync\n(press 's' in interactive mode to pull from and push to them).\n\nUsage:\n  ./regroup                continuous interactive mode, update ~/.ssh/config\n  ./regroup test           dry run: nothing is modified\n  ./regroup remove <name>  remove a device (device dir, ~/.ssh/config block, git remote)\n  ./regroup wipe [--yes]   delete the entire regroup configuration\n  ./regroup -v             verbose (toggle at runtime with 'v' in interactive mode)\n  ./regroup --cli         CLI mode: force plain text UI, no TUI\n  ./regroup selftest       built-in checks (external tools, ssh-keygen fingerprint)\n  ./regroup setup-cd       install 'regroup-cd' shell function to change to config directory\n  ./regroup -h             this help\n\nInteractive commands (full-screen mode):\n  Up/Dn           - select a device in the Detected panel\n  Enter/y         - add the selected device (it moves to the Added panel)\n  n               - ignore the selected device (its beacons are ignored this run)\n  s               - sync git (pull from remotes, push to remotes)\n  d               - delete a known device (select in the Added panel, Enter confirms, q cancels)\n  w               - wipe the whole configuration (Enter confirms, q cancels)\n  i               - install SSH key to a device (first known device)\n  r               - remove SSH key from a device (first outgoing connection)\n  c               - install the 'regroup-cd' shell function (Enter confirms, q cancels)\n  v               - toggle verbose mode (this device's identity, git sync details in the activity log)\n  PgUp/PgDn       - scroll the activity log\n  ?               - show/hide this help panel\n  q               - quit the program\n\nConfig repository structure (~/.regroup-config/git/):\n  settings.json                     (optional: udp_port, wait_secs)\n  devices/\n    <hostname>/                     (one directory per device)\n      device.json                  (latest known state: name, ssh_public_key, user, port)\n      users/<user>.json             (known users of the device, written by the device itself)\n      connections/<conn>.json       (connections of the device, owner-scoped)\n\nExit codes:\n  0  normal exit\n  1  selftest failure\n  2  configuration or environment error"
+    "regroup — find devices by their SSH host key and update ~/.ssh/config.\nDevices announce themselves via signed UDP beacons (name, keys, IP, port —\nno user data); regroup listens for them continuously and prompts for each new\ndevice. Users are configuration, not discovery: each machine declares the\nusers that run regroup in its own directory, synced via git.\n\nConfiguration is stored in ~/.regroup-config/git/ (a git repository) where\neach device owns a directory devices/<name>/ holding its latest known\nstate (device.json) and its lists (known users, connections). Git remotes\ncan be configured for all other devices to enable decentralized sync\n(press 's' in interactive mode to pull from and push to them).\n\nUsage:\n  ./regroup                continuous interactive mode, update ~/.ssh/config\n  ./regroup test           dry run: nothing is modified\n  ./regroup remove <name>  remove a device (device dir, ~/.ssh/config block, git remote)\n  ./regroup wipe [--yes]   delete the entire regroup configuration\n  ./regroup -v             verbose (toggle at runtime with 'v' in interactive mode)\n  ./regroup --cli         CLI mode: force plain text UI, no TUI\n  ./regroup selftest       built-in checks (external tools, ssh-keygen fingerprint)\n  ./regroup setup-cd       install 'regroup-cd' shell function to change to config directory\n  ./regroup -h             this help\n\nInteractive commands (full-screen mode):\n  d / a / l       - switch to the Detected / Added / Logs pane\n  Up/Dn           - select a machine in the active panel\n  Right           - from the Added panel, open the Users panel of the selected\n                    machine (machine+user actions need a selected user)\n  Left            - from the Users panel, back to the machines\n  a               - (Detected) add the selected device\n  n               - (Detected) ignore the selected device (beacons ignored this run)\n  i / r           - (Users, confirmed user) install / remove an SSH key to\n                    user@machine\n  a / x           - (Users) add / remove a temporary user (in memory only,\n                    until a git sync brings the machine's declared users)\n  Enter/y         - confirm (add device, delete, wipe, rename)\n  n               - cancel a confirmation\n  d               - (Added) delete the selected machine\n  s               - sync git (pull from remotes, push to remotes)\n  w               - wipe the whole configuration (Enter confirms, q cancels)\n  c               - install the 'regroup-cd' shell function (Enter confirms, q cancels)\n  v               - toggle verbose mode (this device's identity, git sync details in the activity log)\n  PgUp/PgDn       - scroll the activity log\n  ?               - show/hide this help panel\n  q               - quit the program\n\nConfig repository structure (~/.regroup-config/git/):\n  settings.json                     (optional: udp_port, wait_secs)\n  devices/\n    <hostname>/                     (one directory per device)\n      device.json                  (latest known state: name, ssh_public_key, port)\n      users/<user>.json             (known users of the device, written by the device itself)\n      connections/<conn>.json       (connections of the device, owner-scoped)\n\nExit codes:\n  0  normal exit\n  1  selftest failure\n  2  configuration or environment error"
 }
 
 /// Print usage information
@@ -376,22 +377,13 @@ pub fn add_device_to_config(
 ) -> Option<Device> {
     let config_dir = config_dir_of(home);
 
-    // Determine the user for the remote URL
-    let user = if device.user.is_empty() {
-        env::var("USER")
-            .or_else(|_| env::var("LOGNAME"))
-            .unwrap_or_default()
-    } else {
-        device.user.clone()
-    };
-
-    if user.is_empty() {
-        warn(&format!("no SSH user configured for {} — cannot add git remote", name));
-        return None;
-    }
-
-    let remote_url = format!("{}@{}:~/{}/{}", user, name, CONFIG_DIR, GIT_DIR);
     let device_path = crate::config::device_file_path(&config_dir, name);
+
+    // The beacon carries no user (users are configuration, not discovery):
+    // nothing is known about the users of this machine yet. The git remote
+    // and the first pull therefore happen later, once a user is known —
+    // either a temporary one added from the Users panel, or a confirmed one
+    // pulled by a sync (see sync_git_remotes).
 
     // SECURITY: verify host key BEFORE adding anything
     let host_key_ok = match public_key::compute_fingerprint_from_public_key(device.ssh_public_key.as_str()) {
@@ -432,13 +424,6 @@ pub fn add_device_to_config(
         return None;
     }
 
-    // Add git remote for the device
-    if let Err(e) = git::remote::git_add_remote(&config_dir, name, &remote_url) {
-        warn(&format!("could not add git remote for {}: {}", name, e));
-        return None;
-    }
-    crate::ui::log(&format!("  + Added git remote for {}", name));
-
     // Try to load existing device.json (from previous pull)
     if device_path.exists() {
         if let Ok(existing_device) = crate::config::device::load_device_file(&device_path) {
@@ -453,30 +438,6 @@ pub fn add_device_to_config(
         }
     }
 
-    // Try to pull the device's authoritative device.json
-    match git::sync::git_pull_remote(&config_dir, name) {
-        Ok(_) => {
-            if device_path.exists() {
-                if let Ok(existing_device) = crate::config::device::load_device_file(&device_path) {
-                    if existing_device.ssh_public_key == device.ssh_public_key {
-                        if update_ssh_config(ssh_config, name, &device.ip, &existing_device) {
-                            crate::ui::log(&format!("  + Pulled device config for {} from its repository", name));
-                            *new_count += 1;
-                            return Some(existing_device);
-                        }
-                    } else {
-                        warn(&format!("pulled device.json for {} has different SSH key than beacon", name));
-                    }
-                }
-            }
-            // Device hasn't set up its config yet - will appear on next sync
-            crate::ui::log(&format!("  ! Device {} accepted but device.json not yet available — will appear after first sync from device", name));
-        }
-        Err(e) => {
-            crate::ui::log(&format!("  ! Could not pull from {}: {} — device will appear on next sync", name, e));
-        }
-    }
-
     // Fallback: use beacon data
     // Note: We couldn't pull the device's authoritative device.json, so we create
     // a placeholder from the beacon data. This will be replaced when the device
@@ -486,7 +447,6 @@ pub fn add_device_to_config(
             .expect("name must be non-empty as checked by device_name_taken"),
         ssh_public_key: device.ssh_public_key.clone(),
         signing_public_key: device.signing_public_key.clone(),
-        user: device.user.clone(),
         port: device.port,
         port_explicit: true,
     };
@@ -517,6 +477,10 @@ pub fn add_device_to_config(
             "  ! Added {} with placeholder data — will update from device on next sync",
             name
         ));
+        crate::ui::log(&format!(
+            "  . No user known on {} yet — add a temporary user (Users panel) and press 's' to sync",
+            name
+        ));
         *new_count += 1;
         Some(placeholder_device)
     } else {
@@ -526,7 +490,7 @@ pub fn add_device_to_config(
 
 /// Helper to update SSH config and log success/failure
 fn update_ssh_config(ssh_config: &Path, name: &str, ip: &str, device: &Device) -> bool {
-    match update_block(ssh_config, name, ip, &device.user, device.port, device.port_explicit) {
+    match update_block(ssh_config, name, ip, device.port, device.port_explicit) {
         Ok(_) => {
             crate::ui::log(&format!("  + Added {} -> {} (~/.ssh/config updated)", name, ip));
             true
@@ -611,7 +575,7 @@ pub fn trust_new_signing_key(home: &str, device: &BeaconDevice) {
 /// Sync the git configuration repository: configure remotes for all known
 /// devices (except self), then pull from all remotes and push to all remotes.
 /// In verbose mode, the per-remote pull/push results are logged.
-pub fn sync_git(home: &str, verbose: bool) {
+pub fn sync_git(home: &str, verbose: bool, temp_users: &HashMap<String, String>) {
     // The git repository lives in ~/.regroup-config/git (not the root directory)
     let config_dir = PathBuf::from(home).join(CONFIG_DIR).join(GIT_DIR);
 
@@ -627,7 +591,7 @@ pub fn sync_git(home: &str, verbose: bool) {
 
     // Configure remotes for all known devices before syncing: pull/push can
     // only reach devices that already have a remote.
-    let remote_errors = configure_remotes(&config_dir);
+    let remote_errors = configure_remotes(&config_dir, temp_users);
     for error in &remote_errors {
         warn(&format!("[sync] {}", error));
     }
@@ -648,7 +612,7 @@ pub fn sync_git(home: &str, verbose: bool) {
 
     // A pull may have brought device files for devices we did not know yet:
     // configure their remotes so the next sync reaches them too.
-    let remote_errors = configure_remotes(&config_dir);
+    let remote_errors = configure_remotes(&config_dir, temp_users);
     for error in &remote_errors {
         warn(&format!("[sync] {}", error));
     }
@@ -790,7 +754,25 @@ pub fn wipe(home: &str, ssh_config: &Path, devices: &[Device]) {
 /// Self-detection uses both the hostname and the SSH public key: a stale
 /// device file written under an old hostname (hostnames can change, e.g.
 /// Termux) must not come back as a remote pointing at ourselves.
-fn configure_remotes(config_dir: &Path) -> Vec<String> {
+/// The SSH user used for a device's git remote URL: a temporary user added
+/// this run (Users panel) wins; otherwise the first user the device declared
+/// in its configuration (users/, arrived through git sync). Devices with no
+/// known user are skipped: their remote is created once a user is known.
+fn resolve_ssh_users(config_dir: &Path, devices: &[Device], temp_users: &HashMap<String, String>) -> HashMap<String, String> {
+    let mut users = HashMap::new();
+    for device in devices {
+        if let Some(temp) = temp_users.get(device.name.as_str()) {
+            users.insert(device.name.as_str().to_string(), temp.clone());
+        } else if let Ok(known) = crate::config::users::load_device_users(config_dir, device.name.as_str())
+            && let Some(first) = known.first()
+        {
+            users.insert(device.name.as_str().to_string(), first.name.clone());
+        }
+    }
+    users
+}
+
+fn configure_remotes(config_dir: &Path, temp_users: &HashMap<String, String>) -> Vec<String> {
     let conf = load_config();
     let local_name = host_name();
     let local_ssh_public_key = public_key::get_ssh_server_public_key();
@@ -801,7 +783,8 @@ fn configure_remotes(config_dir: &Path) -> Vec<String> {
             m.name.as_str() != local_name && local_ssh_public_key.as_ref() != Some(&m.ssh_public_key)
         })
         .collect();
-    git::sync_git_remotes(config_dir, &devices, &local_name)
+    let ssh_users = resolve_ssh_users(config_dir, &devices, temp_users);
+    git::sync_git_remotes(config_dir, &devices, &local_name, &ssh_users)
 }
 
 #[cfg(test)]
@@ -829,7 +812,6 @@ mod tests {
             name: crate::config::DeviceName::new("known".to_string()).unwrap(),
             ssh_public_key: crate::ssh::keys::SshPublicKey::from("ssh-rsa AAAA"),
             signing_public_key: crate::ssh::keys::SigningPublicKeyB64::from("MCowBQYDK2VwAyEA=="),
-            user: String::new(),
             port: 22,
             port_explicit: false,
         };

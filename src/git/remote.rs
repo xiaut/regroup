@@ -2,7 +2,6 @@
 //!
 //! This module handles git remote operations.
 
-use std::env;
 use std::io;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -167,6 +166,7 @@ pub fn sync_git_remotes(
     repo_path: &Path,
     devices: &[Device],
     local_hostname: &str,
+    ssh_users: &std::collections::HashMap<String, String>,
 ) -> Vec<String> {
     let mut errors = Vec::new();
 
@@ -205,23 +205,16 @@ pub fn sync_git_remotes(
             continue; // Skip self
         }
 
-        // The remote URL needs an SSH user. Devices discovered via beacon carry
-        // their user field; fall back to the current local user if empty.
-        // "user" in the device file overrides it.
-        let user = if device.user.is_empty() {
-            env::var("USER")
-                .or_else(|_| env::var("LOGNAME"))
-                .unwrap_or_default()
-        } else {
-            device.user.clone()
-        };
-        if user.is_empty() {
+        // The remote URL needs an SSH user. Users are configuration, never
+        // announced: the caller resolves each device's user (a temporary one
+        // added this run, or one the device declared in its users/ directory).
+        let Some(user) = ssh_users.get(device.name.as_str()) else {
             errors.push(format!(
-                "no SSH user configured for {} — set \"user\" in its device file to sync with it",
+                "no user known on {} — add a temporary user (Users panel) to sync with it",
                 device.name.as_str()
             ));
             continue;
-        }
+        };
 
         // Construct SSH URL for the device's config git repository (using hostname, not IP)
         let remote_url = format!("{}@{}:~/{}/{}", user, device.name.as_str(), CONFIG_DIR, GIT_DIR);
