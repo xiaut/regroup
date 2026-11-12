@@ -233,8 +233,9 @@ The TUI interface uses **ratatui** (formerly tui-rs) with **crossterm** for term
   A **Users sub-panel** is nested inside this panel for the selected machine;
   it lists the machine's users with their status (temporary — to confirm /
   confirmed / SSH key installed). It is a sub-context of the machine, not a
-  sibling panel: `Enter` on the machine enters the sub-panel (first user
-  selected), `Esc` returns to the machine level. Machine+user actions
+  machine, not a sibling panel: continuing with `Right` past the Added panel
+  (selected, then fullscreen) enters the sub-panel (first user selected),
+  and `Left` returns to the machine level. Machine+user actions
   (install/remove SSH key) live there and only appear for a confirmed user;
   a temporary user only allows the git sync that brings the machine's
   declared users. See [navigation.md](../navigation.md).
@@ -289,9 +290,9 @@ Add device2 (192.168.1.101) to config? [y/N/q/s]: n
 | `r` | Remove SSH key |
 | `v` | Toggle verbose mode |
 | `?` | Toggle help panel |
-| `Up/Dn` | Move focus within the context, then between panels, then zoom/unzoom fullscreen (see [navigation.md](../navigation.md)) |
-| `Enter` | Enter the focused sub-context (e.g. Users sub-panel of the selected machine in the Added panel) |
-| `Esc` | Go back one level in the context hierarchy |
+| `Up/Dn/Left/Right` | Walk directionally from the virtual center: overview → panel selected → fullscreen → sub-panel; opposite key rewinds (see [navigation.md](../navigation.md)) |
+| `Enter` | Last resort: enter a sub-context when arrows are consumed (e.g. logs fullscreen) |
+| `Esc` | Last resort: go back one level when arrows are consumed |
 | `PgUp/PgDn` | Scroll activity pane |
 
 ### In Detected Panel

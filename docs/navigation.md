@@ -5,87 +5,108 @@ navigation. It describes the target model; the code is being migrated to it.
 
 ## Principles
 
-The interface is a hierarchy of **contexts**. Navigation is uniform:
+The user is **virtually positioned at the center of the screen** when no
+panel is engaged. Arrows move the user **directionally**: a key points toward
+the panel in that direction, and each further press in the same direction
+goes one step deeper. The opposite arrow rewinds one step at a time.
 
-- **`Esc`** — go back one level in the context hierarchy (leave a
-  sub-context, close a mode, deselect).
-- **`Enter`** — enter the sub-context of the focused item (machine → its
-  users, panel → fullscreen, list → detail).
-- **Arrows** — move focus within the current context, and between sibling
-  panels when the current context has no further item in that direction.
+- **Arrows** — primary navigation: direction toward a panel, then deeper
+  into it (selection, fullscreen, sub-panel). Inside a list, `Up`/`Down`
+  move the selection and **wrap around** (loop) at the ends.
+- **`Enter`** — last resort only: enter a sub-context when the arrows are
+  already consumed by the content (e.g. zooming the fullscreen logs).
+- **`Esc`** — last resort only: go back one level when the arrows are
+  already consumed by the content.
 
-The same physical action always has the same meaning at the same level; the
-user never needs to learn per-panel navigation keys.
+Navigation is deliberately decomposed into small, explicit steps: selecting
+a panel does nothing by itself beyond highlighting it; each press has one
+visible effect.
+
+## Panel States
+
+A panel has exactly **three states**:
+
+1. **Overview** — the dashboard is displayed, no panel engaged (user at the
+   virtual center).
+2. **Selected** — the panel is highlighted (focus), nothing more.
+3. **Fullscreen** — the panel fills the screen and its content becomes
+   navigable (list selection, scrolling).
+
+The same arrow key walks through these states in order; the opposite arrow
+walks back.
 
 ## Context Hierarchy
 
 ```
-Main screen (all panels visible)
-├── Detected panel
-│   └── (device rows; Up/Dn select)
-├── Added panel (known devices)
-│   └── machine row
+Main screen (dashboard overview)
+├── Detected panel (left)
+│   └── (device rows; Up/Dn select, wrapping)
+├── Added panel (right)
+│   └── machine rows (Up/Dn select, wrapping)
 │       └── Users sub-panel   ← nested INSIDE the Added panel
-│           └── (user rows; Up/Dn select)
-└── Activity panel
+│           └── (user rows; Up/Dn select, wrapping)
+└── Activity panel (bottom)
     └── fullscreen view (scrolling)
 ```
 
-The **Users sub-panel is part of the Added panel**, not a sibling panel. It is
-a sub-context of the selected machine: `Enter` on a machine enters it, `Esc`
-returns to the machine level. There is no lateral panel switch to reach it.
+The **Users sub-panel is part of the Added panel**, not a sibling panel. It
+is a sub-context of the selected machine, reached by continuing in the same
+direction (`Right` from the Added panel); `Left` returns to the machine
+level. There is no lateral panel switch to reach it.
 
-## Panel Focus and Fullscreen via Arrows
+## Scenarios
 
-`Up`/`Down` move focus between the stacked zones of the main screen
-(Detected → Added → Activity). Pushing focus further in the same direction
-zooms:
+### Side panels (Detected left, Added right)
 
-| State | `Down` | `Up` |
-|-------|--------|------|
-| No panel focused | Focus the first panel (Detected) | — |
-| Detected focused | Focus the panel below (Added) | Deselect focus |
-| Added focused | Focus the panel below (Activity) | Focus the panel above (Detected) |
-| Activity focused | Expand Activity fullscreen | Focus the panel above (Added) |
-| Activity fullscreen | — (scroll) | Collapse fullscreen back to focused |
+Starting from the center (overview), pressing `Right` walks toward the
+right panel, one step per press:
 
-So the fullscreen toggle is just "one more arrow": e.g. `Down`, `Down` on the
-bottom panel makes it fullscreen; `Up`, `Up` restores the layout and then
-drops the selection. The same applies symmetrically to the other panels when
-they support a fullscreen view.
+| Press | State |
+|-------|-------|
+| `Right` | Added panel **selected** (highlighted only) |
+| `Right` | Added panel **fullscreen**, machine list active (first machine selected) |
+| `Right` | **Users sub-panel** of the selected machine (first user selected) |
+| `Left` | Back to the machine list (Users left) |
+| `Left` | Back to Added selected |
+| `Left` | Back to the center, overview |
 
-## Exceptions: Esc/Enter Instead of Arrows
+Symmetrically, `Left` from the center selects the Detected panel, and
+further presses walk into it; `Right` rewinds.
 
-When arrows already carry a meaning inside a context, the fullscreen
-enter/exit must not steal them; use `Enter`/`Esc` there instead.
+### Bottom panel (Activity) and fullscreen zoom
 
-The canonical case is the **Activity (logs) panel fullscreen**: once
-fullscreen, `Up`/`Down` (and `PgUp`/`PgDn`) scroll the log content, so
-`Enter` expands it and `Esc` collapses it back. In contexts where arrows
-only move selection (device lists), arrows alone drive zoom as described
-above.
+| Press | State |
+|-------|-------|
+| `Down` | Activity panel **selected** |
+| `Down` | Activity **fullscreen** |
+| `Up` | Back to Activity selected (fullscreen left) |
+| `Up` | Back to the center, overview |
 
-Rule of thumb: inside a context, arrows belong to the content; crossing
-context boundaries is done by pushing the arrow past the end of the content
-— unless the content consumes the arrow in a open-ended way (scrolling), in
-which case `Enter`/`Esc` are the boundary keys.
+### Exception: fullscreen logs
 
-## Entering Sub-Contexts
+Once the Activity panel is fullscreen, `Up`/`Down` (and `PgUp`/`PgDn`)
+scroll the content — the arrow cannot be used to zoom out anymore. This is
+where the last-resort keys apply:
 
-| Context | `Enter` | `Esc` |
-|---------|---------|-------|
-| Added panel, machine selected | Enter the machine's Users sub-panel (first user selected) | Leave the panel / cancel current mode |
-| Users sub-panel | Confirm the action on the selected user (e.g. install/remove SSH key) | Back to the machine level |
-| Detected panel, device selected | Add the device | — |
-| Any confirmation prompt | Confirm | Cancel |
+- `Enter` — expand the logs fullscreen
+- `Esc` — collapse back to the dashboard
+
+### List selection
+
+Inside a fullscreen panel (machines, users, detected devices), `Up`/`Down`
+move the selection and **wrap around**: past the last item the selection
+loops back to the first, and vice versa. The selection never leaves its
+list; changing panels or zooming is done with the directional presses
+described above.
 
 ## Summary Table
 
 | Key | Meaning |
 |-----|---------|
-| `Esc` | Back one level in the context hierarchy |
-| `Enter` | Enter the focused sub-context / confirm |
-| `Up`/`Down` | Move focus within the context, then between panels, then zoom/unzoom fullscreen |
+| `Up`/`Down`/`Left`/`Right` | Walk directionally: overview → panel selected → fullscreen → sub-panel; opposite key rewinds |
+| `Up`/`Down` (in a list) | Move selection, wrapping around at the ends |
+| `Enter` | Last resort: enter a sub-context when arrows are consumed (e.g. logs fullscreen zoom) |
+| `Esc` | Last resort: go back one level when arrows are consumed |
 | `PgUp`/`PgDn` | Scroll scrollable content (activity pane, help) |
 
 Character shortcuts (`q` quit, `s` sync, `d` delete, `w` wipe, `c` setup-cd,
