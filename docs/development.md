@@ -185,7 +185,7 @@ foo.rs → foo/mod.rs + foo/one.rs + foo/two.rs
 
 ### Error Handling
 
-- **Interactive loop**: Log errors via `ui::log` (appears in activity pane)
+- **Interactive loop**: Log errors via `ui::log` (appears in Logs pane)
 - **CLI subcommands**: Use `die` with exit code 2
 - **Self-test failures**: Exit with code 1
 
@@ -283,8 +283,8 @@ Or toggle at runtime with `v` key in interactive mode.
 
 ### Logging
 
-All UI messages appear in the activity pane. For debugging:
-- Check the activity pane for warning and error messages
+All UI messages appear in the Logs pane. For debugging:
+- Check the Logs pane for warning and error messages
 - Security messages are highlighted in red
 - Use verbose mode for additional details
 

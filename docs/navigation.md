@@ -45,7 +45,7 @@ Main screen (dashboard overview)
 │   └── machine rows (Up/Dn select, wrapping)
 │       └── Users sub-panel   ← nested INSIDE the Added panel
 │           └── (user rows; Up/Dn select, wrapping)
-└── Activity panel (bottom)
+└── Logs panel (bottom)
     └── fullscreen view (scrolling)
 ```
 
@@ -78,23 +78,21 @@ right panel, one step per press:
 Symmetrically, `Left` from the center selects the Detected panel, and
 further presses walk into it; `Right` rewinds.
 
-### Bottom panel (Activity) and fullscreen zoom
+### Bottom panel (Logs) and fullscreen zoom
 
 | Press | State |
 |-------|-------|
-| `Down` | Activity panel **selected** |
-| `Down` | Activity **fullscreen** |
-| `Up` | Back to Activity selected (fullscreen left) |
+| `Down` | Logs panel **selected** |
+| `Down` | Logs **fullscreen** |
+| `Up` | Back to Logs selected (fullscreen left) |
 | `Up` | Back to the center, overview |
 
 ### Exception: fullscreen logs
 
-Once the Activity panel is fullscreen, `Up`/`Down` (and `PgUp`/`PgDn`)
+Once the Logs panel is fullscreen, `Up`/`Down` (and `PgUp`/`PgDn`)
 scroll the content — the arrow cannot be used to zoom out anymore. This is
-where the last-resort keys apply:
-
-- `Enter` — expand the logs fullscreen
-- `Esc` — collapse back to the dashboard
+where the last-resort keys apply: **`Esc` is the only way to leave the
+fullscreen Logs panel** (collapse back to the dashboard).
 
 ### List selection
 
@@ -110,9 +108,9 @@ described above.
 |-----|---------|
 | `Up`/`Down`/`Left`/`Right` | Walk directionally: overview → panel selected → fullscreen → sub-panel; opposite key rewinds |
 | `Up`/`Down` (in a list) | Move selection, wrapping around at the ends |
-| `Enter` | Last resort: enter a sub-context when arrows are consumed (e.g. logs fullscreen zoom) |
-| `Esc` | Last resort: go back one level when arrows are consumed |
-| `PgUp`/`PgDn` | Scroll scrollable content (activity pane, help) |
+| `Enter` | Last resort: enter a sub-context when arrows are consumed |
+| `Esc` | Last resort: go back one level when arrows are consumed (only exit from the fullscreen Logs panel) |
+| `PgUp`/`PgDn` | Scroll scrollable content (Logs pane, help) |
 
 Character shortcuts (`q` quit, `s` sync, `d` delete, `w` wipe, `c` setup-cd,
 `k` connections, `v` verbose, `?` help) remain unchanged; they act as

@@ -6,7 +6,7 @@ The `ui` module provides the terminal user interface for interactive mode.
 
 This module implements two UI backends with the same interface:
 
-1. **Full-screen TUI** (ratatui): A rich terminal interface with device panels, activity log, and question display
+1. **Full-screen TUI** (ratatui): A rich terminal interface with device panels, Logs panel, and question display
 2. **Plain fallback**: A simple line-based interface for non-terminal output (piped to files or other commands)
 
 The module automatically selects the appropriate backend based on whether stdout is a terminal.
@@ -48,7 +48,7 @@ Messages sent through the logging channel:
 
 ```rust
 pub enum UiEvent {
-    Global(String),           // General message for activity pane
+    Global(String),           // General message for Logs pane
     Device {                 // Device-specific message
         key: String,           // SSH public key (identifies device)
         name: String,
@@ -155,7 +155,7 @@ Display a general message:
 pub fn log(msg: &str)
 ```
 
-- In full-screen mode: appears in the activity pane
+- In full-screen mode: appears in the Logs pane
 - In plain mode: printed to stdout
 
 ### `log_device()`
@@ -174,7 +174,7 @@ pub fn log_device(
 
 - In full-screen mode: animated status on the device's row
 - In plain mode: printed as "name: msg" or detail
-- Security messages also appear in the activity pane
+- Security messages also appear in the Logs pane
 
 ### `pulse_device()`
 
@@ -214,7 +214,7 @@ The TUI interface uses **ratatui** (formerly tui-rs) with **crossterm** for term
 │  │ dev1  │ 1.2.3.4│ │ dev2  │ 5.6.7.8│ │
 │  └─────────────────┘ └─────────────────┘ │
 ├─────────────────────────────────────────┤
-│  [Activity]                              │
+│  [Logs]                              │
 │  Device dev1 detected                    │
 │  Device dev2 IP updated                  │
 ├─────────────────────────────────────────┤
@@ -239,7 +239,7 @@ The TUI interface uses **ratatui** (formerly tui-rs) with **crossterm** for term
   (install/remove SSH key) live there and only appear for a confirmed user;
   a temporary user only allows the git sync that brings the machine's
   declared users. See [navigation.md](../navigation.md).
-- **Activity pane** (middle): General messages and logs
+- **Logs pane** (middle): General messages and logs
 - **Question block** (bottom): Current question and available actions
 
 ### Narrow Screen Layout
@@ -257,7 +257,7 @@ On screens narrower than 80 characters, panels stack vertically:
 │  │ Name  │ IP      │ Port │ Status     ││
 │  └─────────────────────────────────────┘│
 ├─────────────────────────────────────────┤
-│  [Activity]                              │
+│  [Logs]                              │
 ├─────────────────────────────────────────┤
 │  [Status]                                │
 └─────────────────────────────────────────┘
@@ -292,8 +292,8 @@ Add device2 (192.168.1.101) to config? [y/N/q/s]: n
 | `?` | Toggle help panel |
 | `Up/Dn/Left/Right` | Walk directionally from the virtual center: overview → panel selected → fullscreen → sub-panel; opposite key rewinds (see [navigation.md](../navigation.md)) |
 | `Enter` | Last resort: enter a sub-context when arrows are consumed (e.g. logs fullscreen) |
-| `Esc` | Last resort: go back one level when arrows are consumed |
-| `PgUp/PgDn` | Scroll activity pane |
+| `Esc` | Last resort: go back one level when arrows are consumed; only exit from the fullscreen Logs panel |
+| `PgUp/PgDn` | Scroll Logs pane |
 
 ### In Detected Panel
 
@@ -358,6 +358,6 @@ Press `?` to show the help panel, which displays the CLI usage text with section
 ## Verbose Mode
 
 When verbose mode is enabled (toggle with `v`):
-- Shows identity information in the activity pane
+- Shows identity information in the Logs pane
 - Displays git sync details
-- Activity pane title shows "Activity — verbose"
+- Logs pane title shows "Logs — verbose"
