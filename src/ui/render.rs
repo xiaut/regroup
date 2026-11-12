@@ -444,7 +444,14 @@ pub fn render_all_panes(
             .areas(area);
 
             let added_theme = PanelTheme::new("Added", Color::Green, "known");
-            let added_border_style = Style::new().fg(Color::Green);
+            // A deactivated panel (another panel is active) gets gray
+            // borders; the active one keeps its theme color.
+            let added_active = matches!(active_pane, ActivePane::Added(_));
+            let added_border_style = if added_active {
+                Style::new().fg(Color::Green)
+            } else {
+                Style::new().fg(Color::DarkGray)
+            };
             
             let added_rows = added.iter().enumerate().map(|(i, d)| {
                 let now = Instant::now();
@@ -491,7 +498,7 @@ pub fn render_all_panes(
             .block(
                 Block::bordered()
                     .title(format!("Added — {}", added.len()))
-                    .border_type(if matches!(active_pane, ActivePane::Added(_)) {
+                    .border_type(if added_active {
                         BorderType::Double
                     } else {
                         BorderType::Plain
