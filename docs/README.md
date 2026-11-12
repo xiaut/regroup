@@ -13,6 +13,7 @@ Configuration is stored in `~/.regroup-config/git/` (a git repository) where eac
 | Document | Description |
 |----------|-------------|
 | [Architecture](architecture.md) | Big picture, data flow, how regroup works |
+| [Navigation](navigation.md) | TUI navigation model: Esc/arrows/Enter context hierarchy |
 | [Storage Rules](storage.md) | Configuration structure, write ownership, conflict resolution |
 | [Modules](modules/) | Module-specific documentation |
 | [Development](development.md) | Coding rules, conventions, build & test |

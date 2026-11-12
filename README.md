@@ -103,11 +103,11 @@ On every run, regroup enters continuous interactive mode:
 
 The interactive ui shows two device panels side by side — **Detected** on
 the left (announced, waiting for a decision), **Added** on the right (in the
-configuration) — above an activity log and the current question. General
-messages (git syncs, dry run) go to the activity log; messages about one
+configuration) — above an Logs panel and the current question. General
+messages (git syncs, dry run) go to the Logs panel; messages about one
 device (IP updates, signing-key changes, security warnings) appear as a
 brief animated status on that device's row instead of cluttering the log.
-Security warnings are additionally kept in the activity log so they cannot
+Security warnings are additionally kept in the Logs panel so they cannot
 be missed.
 
 This handles:
@@ -189,7 +189,7 @@ Interactive commands (full-screen mode):
   d               - delete a known device (select in the Added panel, Enter confirms, Esc cancels)
   w               - wipe the whole configuration (Enter confirms, Esc cancels)
   c               - install the 'regroup-cd' shell function (Enter confirms, Esc cancels)
-  PgUp/PgDn       - scroll the activity log
+  PgUp/PgDn       - scroll the Logs panel
   q               - quit the program
 
 Config repository structure (~/.regroup-config/git/):

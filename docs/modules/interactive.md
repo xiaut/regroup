@@ -253,7 +253,8 @@ Returns devices to show in the Added panel:
 ### Deleting Devices
 
 1. User selects device from Added panel (machine action), or machine+user
-   actions go through the Users sub-panel (Right) with a user selected
+   actions go through the Users sub-panel (directional `Right` past the
+   fullscreen Added panel) with a user selected
 2. Confirm deletion
 3. Remove device file from configuration
 4. Remove SSH config Host block
