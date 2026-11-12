@@ -83,53 +83,13 @@ fn calculate_question_height(question: &Question, ctx: &QuestionCtx, width: u16)
             )
         }
         Question::Idle(_) => {
-            let (status_line, hint) = match ctx.active_pane {
-                ActivePane::MainMenu(pane) => {
-                    let hint = pane.bindings.iter()
-                        .map(|b| format!("[{}] {}", b.label, b.description))
-                        .collect::<Vec<_>>()
-                        .join("   ");
-                    (pane.name.to_string(), hint)
-                }
-                ActivePane::Detected(pane) if ctx.pending > 0 => {
-                    // For Detected with pending, we need special bindings that include add/ignore
-                    // This is a special case, so we'll keep the hardcoded hint for now
-                    // In a full refactor, we'd have DetectedWithPending as a separate variant
-                    (
-                        pane.name.to_string(),
-                        "[q] no pane   [Up/Dn] select   [a] add   [n] ignore   [?] help".to_string(),
-                    )
-                }
-                ActivePane::Detected(pane) => {
-                    let hint = pane.bindings.iter()
-                        .map(|b| format!("[{}] {}", b.label, b.description))
-                        .collect::<Vec<_>>()
-                        .join("   ");
-                    (pane.name.to_string(), hint)
-                }
-                ActivePane::Added(pane) => {
-                    let hint = pane.bindings.iter()
-                        .map(|b| format!("[{}] {}", b.label, b.description))
-                        .collect::<Vec<_>>()
-                        .join("   ");
-                    (pane.name.to_string(), hint)
-                }
-                ActivePane::Users(pane) => {
-                    let hint = pane.bindings.iter()
-                        .map(|b| format!("[{}] {}", b.label, b.description))
-                        .collect::<Vec<_>>()
-                        .join("   ");
-                    (pane.name.to_string(), hint)
-                }
-                ActivePane::Logs(pane) => {
-                    let name = if ctx.verbose { "Logs - verbose" } else { pane.name };
-                    let hint = pane.bindings.iter()
-                        .map(|b| format!("[{}] {}", b.label, b.description))
-                        .collect::<Vec<_>>()
-                        .join("   ");
-                    (name.to_string(), hint)
-                }
-            };
+            // Hint line driven by navigation state, same as render_question
+            let status_line = ctx.active_pane.name().to_string();
+            let hints = ctx.navigation.hints(ctx.has_users, ctx.confirmed_user);
+            let hint = hints.iter()
+                .map(|h| format!("[{}] {}", h.keys, h.description))
+                .collect::<Vec<_>>()
+                .join("   ");
             (status_line, hint)
         }
         Question::AddDevice(def, name, ip) => {
@@ -824,12 +784,19 @@ impl TtyUi {
         let mut cursor = None;
         terminal.draw(|frame| {
             // Calculate the height needed for the question block
+            let has_users = !users.is_empty();
+            let confirmed_user = users_selected
+                .and_then(|i| users.get(i))
+                .is_some_and(|u| u.status != UserStatus::Temporary);
             let question_ctx = QuestionCtx {
                 input,
                 pending: detected.len(),
                 help: *show_help,
                 verbose: *verbose,
                 active_pane: *active_pane,
+                navigation: *navigation,
+                has_users,
+                confirmed_user,
                 key_flash: key_flash.as_ref(),
             };
             let question_height = calculate_question_height(question, &question_ctx, frame.area().width);

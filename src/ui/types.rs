@@ -16,6 +16,16 @@ impl KeyBinding {
     }
 }
 
+/// A hint entry for the action bar: one or more equivalent keys that
+/// trigger the same action, shown as `[Enter/Right] fullscreen`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Hint {
+    /// Key labels joined with `/`, e.g. "Enter/Right".
+    pub keys: &'static str,
+    /// What the key does, e.g. "fullscreen".
+    pub description: &'static str,
+}
+
 /// Pane definition: name and its key bindings
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Pane {
@@ -189,8 +199,8 @@ impl Navigation {
             // Down arrow
             (Logs, Some(Selected), Down) => Navigation { focus: Logs, depth: Some(Fullscreen) },
 
-            // Up arrow
-            (Logs, Some(Fullscreen), Up) => Navigation { focus: Logs, depth: Some(Selected) },
+            // Note: in Logs/Fullscreen, Up/Down scroll the content (handled
+            // outside handle_key); only Esc exits fullscreen logs.
 
             // Other cases: no navigation change
             _ => self,
@@ -230,6 +240,117 @@ impl Navigation {
             (NavFocus::Logs, Some(NavDepth::Fullscreen)) => ActivePane::logs(),
             // For Selected depth, return MainMenu to show dashboard with panel highlighted
             _ => ActivePane::main_menu(),
+        }
+    }
+
+    /// Hints for the action bar: the keys that actually work in this state.
+    /// Each Hint groups equivalent keys (e.g. "Enter/Right" for "go deeper").
+    /// These must match what `handle_key` and `list_nav_action` accept.
+    pub fn hints(&self, has_users: bool, confirmed_user: bool) -> &'static [Hint] {
+        use NavDepth::*;
+        use NavFocus::*;
+        match (self.focus, self.depth) {
+            // Overview: directional entry into panels
+            (Center, None) => &[
+                Hint { keys: "Left", description: "Detected" },
+                Hint { keys: "Right", description: "Added" },
+                Hint { keys: "Dn", description: "Logs" },
+                Hint { keys: "d", description: "Detected" },
+                Hint { keys: "a", description: "Added" },
+                Hint { keys: "l", description: "Logs" },
+                Hint { keys: "?", description: "help" },
+                Hint { keys: "q", description: "quit" },
+            ],
+            // Detected selected: go fullscreen or back
+            (Detected, Some(Selected)) => &[
+                Hint { keys: "Enter/Right", description: "fullscreen" },
+                Hint { keys: "Esc/Left", description: "back" },
+                Hint { keys: "?", description: "help" },
+            ],
+            // Detected fullscreen: list selection + actions
+            (Detected, Some(Fullscreen)) => &[
+                Hint { keys: "Esc/Left", description: "back" },
+                Hint { keys: "Up/Dn", description: "select" },
+                Hint { keys: "a", description: "add" },
+                Hint { keys: "n", description: "ignore" },
+                Hint { keys: "q", description: "no pane" },
+                Hint { keys: "?", description: "help" },
+            ],
+            // Added selected
+            (Added, Some(Selected)) => &[
+                Hint { keys: "Enter/Right", description: "fullscreen" },
+                Hint { keys: "Esc/Left", description: "back" },
+                Hint { keys: "?", description: "help" },
+            ],
+            // Added fullscreen: machines list + actions + users sub-panel
+            (Added, Some(Fullscreen)) => {
+                if has_users {
+                    &[
+                        Hint { keys: "Enter/Right", description: "users" },
+                        Hint { keys: "Esc/Left", description: "back" },
+                        Hint { keys: "Up/Dn", description: "select" },
+                        Hint { keys: "d", description: "delete" },
+                        Hint { keys: "s", description: "sync" },
+                        Hint { keys: "w", description: "wipe" },
+                        Hint { keys: "c", description: "setup-cd" },
+                        Hint { keys: "q", description: "no pane" },
+                        Hint { keys: "?", description: "help" },
+                    ]
+                } else {
+                    &[
+                        Hint { keys: "Esc/Left", description: "back" },
+                        Hint { keys: "Up/Dn", description: "select" },
+                        Hint { keys: "d", description: "delete" },
+                        Hint { keys: "s", description: "sync" },
+                        Hint { keys: "w", description: "wipe" },
+                        Hint { keys: "c", description: "setup-cd" },
+                        Hint { keys: "q", description: "no pane" },
+                        Hint { keys: "?", description: "help" },
+                    ]
+                }
+            }
+            // Users sub-panel fullscreen
+            (Users, Some(Fullscreen)) => {
+                if confirmed_user {
+                    &[
+                        Hint { keys: "Esc/Left", description: "machines" },
+                        Hint { keys: "Up/Dn", description: "select" },
+                        Hint { keys: "i", description: "install key" },
+                        Hint { keys: "r", description: "remove key" },
+                        Hint { keys: "a", description: "add temp user" },
+                        Hint { keys: "s", description: "sync" },
+                        Hint { keys: "q", description: "no pane" },
+                        Hint { keys: "?", description: "help" },
+                    ]
+                } else {
+                    &[
+                        Hint { keys: "Esc/Left", description: "machines" },
+                        Hint { keys: "Up/Dn", description: "select" },
+                        Hint { keys: "a", description: "add temp user" },
+                        Hint { keys: "x", description: "remove temp user" },
+                        Hint { keys: "s", description: "sync" },
+                        Hint { keys: "q", description: "no pane" },
+                        Hint { keys: "?", description: "help" },
+                    ]
+                }
+            }
+            // Logs selected
+            (Logs, Some(Selected)) => &[
+                Hint { keys: "Enter/Right/Dn", description: "fullscreen" },
+                Hint { keys: "Esc", description: "back" },
+                Hint { keys: "?", description: "help" },
+            ],
+            // Logs fullscreen: arrows scroll, only Esc exits
+            (Logs, Some(Fullscreen)) => &[
+                Hint { keys: "Esc", description: "back" },
+                Hint { keys: "Up/Dn", description: "scroll" },
+                Hint { keys: "PgUp/PgDn", description: "scroll page" },
+                Hint { keys: "v", description: "verbose" },
+                Hint { keys: "q", description: "no pane" },
+                Hint { keys: "?", description: "help" },
+            ],
+            // Fallback
+            _ => &[],
         }
     }
 }

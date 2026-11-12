@@ -65,6 +65,12 @@ pub struct QuestionCtx<'a> {
     pub verbose: bool,
     /// Which pane is currently active.
     pub active_pane: super::types::ActivePane,
+    /// Current navigation state (focus + depth), drives the hint line.
+    pub navigation: super::types::Navigation,
+    /// Whether the Users panel has users (drives Added-pane hints).
+    pub has_users: bool,
+    /// Whether the selected user is confirmed (drives Users-pane hints).
+    pub confirmed_user: bool,
     /// Last key press, highlighted in the hint line while recent.
     pub key_flash: Option<&'a KeyFlash>,
 }
@@ -198,6 +204,8 @@ pub fn key_label(code: KeyCode) -> Option<String> {
         KeyCode::Esc => Some("Esc".to_string()),
         KeyCode::Up => Some("Up".to_string()),
         KeyCode::Down => Some("Dn".to_string()),
+        KeyCode::Left => Some("Left".to_string()),
+        KeyCode::Right => Some("Right".to_string()),
         KeyCode::PageUp => Some("PgUp".to_string()),
         KeyCode::PageDown => Some("PgDn".to_string()),
         _ => None,
@@ -926,46 +934,14 @@ pub fn render_question(
     } else {
         match question {
             super::types::Question::Idle(def) => {
-                use super::types::ActivePane;
-                // Hint lines depend on the active pane
-                let (status_line, hint) = match ctx.active_pane {
-                    ActivePane::MainMenu(pane) => {
-                        let hint = pane.bindings.iter()
-                            .map(|b| format!("[{}] {}", b.label, b.description))
-                            .collect::<Vec<_>>()
-                            .join("   ");
-                        (pane.name.to_string(), hint)
-                    }
-                    ActivePane::Detected(pane) => {
-                        let hint = pane.bindings.iter()
-                            .map(|b| format!("[{}] {}", b.label, b.description))
-                            .collect::<Vec<_>>()
-                            .join("   ");
-                        (pane.name.to_string(), hint)
-                    }
-                    ActivePane::Added(pane) => {
-                        let hint = pane.bindings.iter()
-                            .map(|b| format!("[{}] {}", b.label, b.description))
-                            .collect::<Vec<_>>()
-                            .join("   ");
-                        (pane.name.to_string(), hint)
-                    }
-                    ActivePane::Users(pane) => {
-                        let hint = pane.bindings.iter()
-                            .map(|b| format!("[{}] {}", b.label, b.description))
-                            .collect::<Vec<_>>()
-                            .join("   ");
-                        (pane.name.to_string(), hint)
-                    }
-                    ActivePane::Logs(pane) => {
-                        let name = if ctx.verbose { "Logs - verbose" } else { pane.name };
-                        let hint = pane.bindings.iter()
-                            .map(|b| format!("[{}] {}", b.label, b.description))
-                            .collect::<Vec<_>>()
-                            .join("   ");
-                        (name.to_string(), hint)
-                    }
-                };
+                // Hint line driven by the navigation state: shows the keys
+                // that actually work in the current focus + depth.
+                let status_line = ctx.active_pane.name().to_string();
+                let hints = ctx.navigation.hints(ctx.has_users, ctx.confirmed_user);
+                let hint = hints.iter()
+                    .map(|h| format!("[{}] {}", h.keys, h.description))
+                    .collect::<Vec<_>>()
+                    .join("   ");
                 (
                     def.title,
                     Color::Blue,
