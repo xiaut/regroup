@@ -28,7 +28,7 @@ use crate::ssh::config::update_block;
 use crate::ssh::keys::{SigningPublicKeyB64, SshPublicKey};
 use crate::ssh::public_key;
 use crate::ui::{self, Action, Level, Question};
-use crate::ui::types::{ActivePane, Navigation, UiDevice, UiUser, UserStatus};
+use crate::ui::types::{ActivePane, NavDepth, NavFocus, Navigation, UiDevice, UiUser, UserStatus};
 
 /// How long each loop iteration waits for user input before checking the
 /// beacon channel again.
@@ -130,6 +130,15 @@ pub fn run(ctx: &Context, udp_port: u16, beacons: &Receiver<BeaconDevice>) -> us
             && state.handle_action(ctx, &mut tui, action)
         {
             break;
+        }
+
+        // Sync navigation state from TtyUi back to state (navigation keys
+        // update the TtyUi directly and return no action)
+        if let Some(nav) = tui.navigation() {
+            if nav != state.navigation {
+                state.navigation = nav;
+                state.active_pane = nav.active_pane();
+            }
         }
 
         // The display always reflects the state after processing.
@@ -647,6 +656,7 @@ impl InteractiveState {
         match action {
             Action::Quit => return true,
             Action::BackToMainMenu => {
+                self.navigation = Navigation::overview();
                 self.active_pane = ActivePane::main_menu();
                 self.pending_selected = None;
                 self.added_selected = None;
@@ -757,6 +767,7 @@ impl InteractiveState {
                 }
             }
             Action::SwitchToDetected => {
+                self.navigation = Navigation { focus: NavFocus::Detected, depth: Some(NavDepth::Fullscreen) };
                 self.active_pane = ActivePane::detected();
                 self.added_selected = None;
                 // Initialize pending_selected if there are pending devices
@@ -765,6 +776,7 @@ impl InteractiveState {
                 }
             }
             Action::SwitchToAdded => {
+                self.navigation = Navigation { focus: NavFocus::Added, depth: Some(NavDepth::Fullscreen) };
                 self.active_pane = ActivePane::added();
                 self.pending_selected = None;
             }
@@ -772,12 +784,14 @@ impl InteractiveState {
                 // Only reachable from the Added pane with a machine
                 // selected (the tty gates the key). No user is selected
                 // yet: the display loop selects the first one.
+                self.navigation = Navigation { focus: NavFocus::Users, depth: Some(NavDepth::Fullscreen) };
                 self.active_pane = ActivePane::users(false);
                 self.users_selected = None;
             }
             Action::BackToAdded => {
                 // Leaving the sub-panel drops the user selection; the
                 // machine stays selected.
+                self.navigation = Navigation { focus: NavFocus::Added, depth: Some(NavDepth::Fullscreen) };
                 self.active_pane = ActivePane::added();
                 self.users_selected = None;
             }
@@ -802,6 +816,7 @@ impl InteractiveState {
                 self.remove_temp_user();
             }
             Action::SwitchToLogs => {
+                self.navigation = Navigation { focus: NavFocus::Logs, depth: Some(NavDepth::Fullscreen) };
                 self.active_pane = ActivePane::logs();
                 self.pending_selected = None;
                 self.added_selected = None;

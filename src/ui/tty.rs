@@ -13,7 +13,7 @@ use ratatui::layout::{Constraint, Layout};
 use ratatui::DefaultTerminal;
 
 use super::render::{key_label, render_all_panes, render_help, render_question, KeyFlash, QuestionCtx, RowFlash};
-use super::types::{ActivePane, Action, NavFocus, Navigation, Question, UiDevice, UiEvent, UiUser, UserStatus};
+use super::types::{ActivePane, Action, NavDepth, NavFocus, Navigation, Question, UiDevice, UiEvent, UiUser, UserStatus};
 
 /// Calculate how many lines a text will occupy when wrapped to fit a given width.
 /// For hint-like text with "   " (three spaces) separators, treats each token as non-breakable.
@@ -400,13 +400,11 @@ impl TtyUi {
         }
         
         let code = key.code;
-        let has_detected = !self.detected.is_empty();
-        let has_added = !self.added.is_empty();
         let has_users = !self.users.is_empty();
         
         // New navigation model: handle directional navigation first
         // This implements the hierarchy from docs/navigation.md
-        let new_nav = self.navigation.handle_key(code, has_detected, has_added, has_users);
+        let new_nav = self.navigation.handle_key(code, has_users);
         if new_nav != self.navigation {
             // Navigation changed - update state and sync active_pane
             let old_focus = self.navigation.focus;
@@ -466,6 +464,7 @@ impl TtyUi {
             // Only handle 'q' for pane navigation if in Idle mode (no question active)
             if matches!(self.question, Question::Idle(_)) {
                 if self.active_pane != ActivePane::main_menu() {
+                    self.navigation = Navigation::overview();
                     self.active_pane = ActivePane::main_menu();
                     self.detected_selected = None;
                     self.added_selected = None;
@@ -756,6 +755,7 @@ impl TtyUi {
                 crossterm::event::KeyCode::Char('d') => {
                     // Only switch to Detected if we're not already there
                     if !matches!(self.active_pane, ActivePane::Detected(_)) {
+                        self.navigation = Navigation { focus: NavFocus::Detected, depth: Some(NavDepth::Fullscreen) };
                         self.active_pane = ActivePane::detected();
                         self.log_scroll = 0;
                         return Some(Action::SwitchToDetected);
@@ -764,6 +764,7 @@ impl TtyUi {
                 crossterm::event::KeyCode::Char('a') => {
                     // Only switch to Added if we're not already there
                     if !matches!(self.active_pane, ActivePane::Added(_)) {
+                        self.navigation = Navigation { focus: NavFocus::Added, depth: Some(NavDepth::Fullscreen) };
                         self.active_pane = ActivePane::added();
                         self.log_scroll = 0;
                         return Some(Action::SwitchToAdded);
@@ -772,6 +773,7 @@ impl TtyUi {
                 crossterm::event::KeyCode::Char('l') => {
                     // Only switch to Logs if we're not already there
                     if !matches!(self.active_pane, ActivePane::Logs(_)) {
+                        self.navigation = Navigation { focus: NavFocus::Logs, depth: Some(NavDepth::Fullscreen) };
                         self.active_pane = ActivePane::logs();
                         self.log_scroll = 0;
                         return Some(Action::SwitchToLogs);
@@ -813,6 +815,7 @@ impl TtyUi {
             help_scroll,
             verbose,
             active_pane,
+            navigation,
             flashes,
             pulses,
             key_flash,
@@ -852,7 +855,7 @@ impl TtyUi {
                     frame,
                     main_area,
                     *active_pane,
-                    self.navigation.focus,
+                    navigation.focus,
                     detected,
                     *detected_selected,
                     added,

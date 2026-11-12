@@ -125,6 +125,24 @@ impl Ui {
         }
     }
 
+    /// Get the current navigation state (Tty UI only).
+    pub fn navigation(&self) -> Option<Navigation> {
+        if let Ui::Tty(ui) = self {
+            Some(ui.navigation)
+        } else {
+            None
+        }
+    }
+
+    /// Get the current active pane (Tty UI only).
+    pub fn active_pane(&self) -> Option<ActivePane> {
+        if let Ui::Tty(ui) = self {
+            Some(ui.active_pane)
+        } else {
+            None
+        }
+    }
+
     /// Wait up to `timeout` for a user decision.
     pub fn poll_action(&mut self, timeout: Duration) -> Option<Action> {
         match self {

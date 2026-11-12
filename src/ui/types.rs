@@ -144,15 +144,15 @@ impl Navigation {
     }
 
     /// Handle a navigation key press, return the new navigation state.
-    pub fn handle_key(self, key: KeyCode, has_detected: bool, has_added: bool, has_users: bool) -> Self {
+    pub fn handle_key(self, key: KeyCode, has_users: bool) -> Self {
         use KeyCode::*;
         use NavDepth::*;
         use NavFocus::*;
 
         match (self.focus, self.depth, key) {
-            // From Center (overview)
-            (Center, None, Left) if has_detected => Navigation { focus: Detected, depth: Some(Selected) },
-            (Center, None, Right) if has_added => Navigation { focus: Added, depth: Some(Selected) },
+            // From Center (overview) - panels are always navigable, even when empty
+            (Center, None, Left) => Navigation { focus: Detected, depth: Some(Selected) },
+            (Center, None, Right) => Navigation { focus: Added, depth: Some(Selected) },
             (Center, None, Down) => Navigation { focus: Logs, depth: Some(Selected) },
             (Center, None, Up) => self,
             (Center, None, Enter) => self, // Needs direction first
@@ -181,7 +181,6 @@ impl Navigation {
             (Users, Some(Fullscreen), Left) => Navigation { focus: Added, depth: Some(Fullscreen) },
 
             // Right arrow: move right
-            (Center, None, Right) if has_added => Navigation { focus: Added, depth: Some(Selected) },
             (Detected, Some(Selected), Right) => Navigation { focus: Detected, depth: Some(Fullscreen) },
             (Added, Some(Selected), Right) => Navigation { focus: Added, depth: Some(Fullscreen) },
             (Added, Some(Fullscreen), Right) if has_users => Navigation { focus: Users, depth: Some(Fullscreen) },
