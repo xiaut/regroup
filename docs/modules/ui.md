@@ -230,15 +230,14 @@ The TUI interface uses **ratatui** (formerly tui-rs) with **crossterm** for term
 
 - **Detected panel** (left, yellow): Devices that have announced but not been accepted
 - **Added panel** (right, green): Devices already in the configuration.
-  When full-screen (active), a **Users sub-panel** on the right lists the
-  users of the selected machine with their status (temporary — to confirm /
-  confirmed / SSH key installed). Selection is multi-level: no user is
-  selected until you navigate into the sub-panel (Right), which selects the
-  first user; the machine (the parent) stays selected while you refine the
-  selection on one of its users, and Left drops the user selection. Machine+user
-  actions (install/remove SSH key) live there and only appear for a confirmed
-  user; a temporary user only allows the git sync that brings the machine's
-  declared users.
+  A **Users sub-panel** is nested inside this panel for the selected machine;
+  it lists the machine's users with their status (temporary — to confirm /
+  confirmed / SSH key installed). It is a sub-context of the machine, not a
+  sibling panel: `Enter` on the machine enters the sub-panel (first user
+  selected), `Esc` returns to the machine level. Machine+user actions
+  (install/remove SSH key) live there and only appear for a confirmed user;
+  a temporary user only allows the git sync that brings the machine's
+  declared users. See [navigation.md](../navigation.md).
 - **Activity pane** (middle): General messages and logs
 - **Question block** (bottom): Current question and available actions
 
@@ -283,7 +282,6 @@ Add device2 (192.168.1.101) to config? [y/N/q/s]: n
 | `q` | Quit |
 | `s` | Sync git (pull/push) |
 | `d` | Delete mode (select device to delete) |
-| `Right` | Users panel of the selected machine (from the Added panel) |
 | `w` | Wipe configuration |
 | `c` | Setup regroup-cd shell function |
 | `k` | Connections management |
@@ -291,7 +289,9 @@ Add device2 (192.168.1.101) to config? [y/N/q/s]: n
 | `r` | Remove SSH key |
 | `v` | Toggle verbose mode |
 | `?` | Toggle help panel |
-| `Up/Dn` | Select device in Detected panel |
+| `Up/Dn` | Move focus within the context, then between panels, then zoom/unzoom fullscreen (see [navigation.md](../navigation.md)) |
+| `Enter` | Enter the focused sub-context (e.g. Users sub-panel of the selected machine in the Added panel) |
+| `Esc` | Go back one level in the context hierarchy |
 | `PgUp/PgDn` | Scroll activity pane |
 
 ### In Detected Panel
