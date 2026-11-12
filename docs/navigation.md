@@ -54,6 +54,11 @@ is a sub-context of the selected machine, reached by continuing in the same
 direction (`Right` from the Added panel); `Left` returns to the machine
 level. There is no lateral panel switch to reach it.
 
+`Right` always enters the Users selection mode, whatever the machine's user
+list looks like — even a single user, or none. Entering the mode is what
+unlocks the associated user actions; it is never skipped because the list
+is short or empty.
+
 ## Scenarios
 
 ### Side panels (Detected left, Added right)
