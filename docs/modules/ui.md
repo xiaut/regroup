@@ -232,10 +232,13 @@ The TUI interface uses **ratatui** (formerly tui-rs) with **crossterm** for term
 - **Added panel** (right, green): Devices already in the configuration.
   When full-screen (active), a **Users sub-panel** on the right lists the
   users of the selected machine with their status (temporary — to confirm /
-  confirmed / SSH key installed). Right switches to it, Left back to the
-  machines. Machine+user actions (install/remove SSH key) live there and
-  only appear for a confirmed user; a temporary user only allows the git
-  sync that brings the machine's declared users.
+  confirmed / SSH key installed). Selection is multi-level: no user is
+  selected until you navigate into the sub-panel (Right), which selects the
+  first user; the machine (the parent) stays selected while you refine the
+  selection on one of its users, and Left drops the user selection. Machine+user
+  actions (install/remove SSH key) live there and only appear for a confirmed
+  user; a temporary user only allows the git sync that brings the machine's
+  declared users.
 - **Activity pane** (middle): General messages and logs
 - **Question block** (bottom): Current question and available actions
 

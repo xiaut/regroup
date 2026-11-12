@@ -150,22 +150,27 @@ pub fn run(ctx: &Context, udp_port: u16, beacons: &Receiver<BeaconDevice>) -> us
         } else {
             Vec::new()
         };
-        // A selection that no longer exists (machine changed or deleted,
-        // temporary user removed) is dropped, then the first user is
-        // selected automatically — same behavior as the machine panels.
-        if state
-            .users_selected
-            .as_deref()
-            .is_some_and(|name| !users.iter().any(|u| u.name == name))
-        {
+        // A user is selected only while the Users pane is active (the
+        // selection is refined by navigating into the sub-panel); leaving
+        // the sub-panel drops it. Entering it selects the first user
+        // automatically — same behavior as the machine panels. A selection
+        // that no longer exists (machine changed or deleted, temporary user
+        // removed) is dropped the same way.
+        if !matches!(state.active_pane, ActivePane::Users(_)) {
             state.users_selected = None;
-        }
-        if state.users_selected.is_none() && !users.is_empty() {
-            state.users_selected = Some(users[0].name.clone());
-        }
-        // The Users pane bindings follow the selected user's status:
-        // machine+user actions only appear for a confirmed user.
-        if matches!(state.active_pane, ActivePane::Users(_)) {
+        } else {
+            if state
+                .users_selected
+                .as_deref()
+                .is_some_and(|name| !users.iter().any(|u| u.name == name))
+            {
+                state.users_selected = None;
+            }
+            if state.users_selected.is_none() && !users.is_empty() {
+                state.users_selected = Some(users[0].name.clone());
+            }
+            // The Users pane bindings follow the selected user's status:
+            // machine+user actions only appear for a confirmed user.
             let confirmed = users
                 .iter()
                 .position(|u| Some(&u.name) == state.users_selected.as_ref())
@@ -195,8 +200,11 @@ pub fn run(ctx: &Context, udp_port: u16, beacons: &Receiver<BeaconDevice>) -> us
             ActivePane::Detected(_) => selected,
             _ => None,
         };
+        // Multi-level selection: the parent (the machine) stays selected
+        // while the selection is refined on one of its users in the Users
+        // pane.
         let added_selected = match state.active_pane {
-            ActivePane::Added(_) => added_selected,
+            ActivePane::Added(_) | ActivePane::Users(_) => added_selected,
             _ => None,
         };
         
@@ -758,12 +766,16 @@ impl InteractiveState {
             }
             Action::SwitchToUsers => {
                 // Only reachable from the Added pane with a machine
-                // selected (the tty gates the key). The first user, if any,
-                // is selected automatically by the display loop.
+                // selected (the tty gates the key). No user is selected
+                // yet: the display loop selects the first one.
                 self.active_pane = ActivePane::users(false);
+                self.users_selected = None;
             }
             Action::BackToAdded => {
+                // Leaving the sub-panel drops the user selection; the
+                // machine stays selected.
                 self.active_pane = ActivePane::added();
+                self.users_selected = None;
             }
             Action::UsersSelectPrev => {
                 self.move_users_selection(ctx, false);
