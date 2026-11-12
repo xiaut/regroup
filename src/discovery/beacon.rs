@@ -3,9 +3,13 @@
 //! This module handles UDP beacon announcement and listening for device discovery.
 //!
 //! Beacon format (tab-separated):
-//! name\tsigning_public_key_b64\tssh_public_key\tuser\tip\tport\ttimestamp\tsignature_b64
+//! name\tsigning_public_key_b64\tssh_public_key\tip\tport\ttimestamp\tsignature_b64
 //!
-//! The signed message is: "name|ssh_public_key|user|ip|port|timestamp"
+//! The signed message is: "name|ssh_public_key|ip|port|timestamp"
+//!
+//! The beacon carries device data only. Users are configuration
+//! (devices/<name>/users/, synced via git) and are never announced on the
+//! network: broadcasting login names would leak information for no benefit.
 //!
 //! # Device Identification
 //!
@@ -31,19 +35,18 @@ pub struct BeaconDevice {
     pub name: String,
     pub signing_public_key: SigningPublicKeyB64,
     pub ssh_public_key: SshPublicKey,
-    pub user: String,
     pub ip: String,
     pub port: u16,
 }
 
 /// What a device announces about itself in every beacon: its name, its SSH
-/// server's public key (its unique identity on the network), the SSH username,
-/// the IP and port its SSH server listens on, and the Ed25519 key beacons are signed with.
+/// server's public key (its unique identity on the network), the IP and
+/// port its SSH server listens on, and the Ed25519 key beacons are signed
+/// with. No user data: users are configuration, not discovery.
 #[derive(Clone)]
 pub struct BeaconIdentity {
     pub name: String,
     pub ssh_public_key: SshPublicKey,
-    pub user: String,
     pub ip: String,
     pub ssh_port: u16,
     pub signing_key: ed25519_dalek::SigningKey,
@@ -56,8 +59,8 @@ pub struct BeaconIdentity {
 /// If `running` is given, the loop stops early when the flag becomes false
 /// (checked every ~100 ms so shutdown is responsive).
 ///
-/// The beacon format is: name\tsigning_public_key_b64\tssh_public_key\tuser\tip\tport\ttimestamp\tsignature_b64
-/// The signed message is: "name|ssh_public_key|user|ip|port|timestamp"
+/// The beacon format is: name\tsigning_public_key_b64\tssh_public_key\tip\tport\ttimestamp\tsignature_b64
+/// The signed message is: "name|ssh_public_key|ip|port|timestamp"
 pub fn announce_beacon(
     identity: &BeaconIdentity,
     port: u16,
@@ -94,7 +97,6 @@ pub fn announce_beacon(
     let beacon_message = match signing::sign_beacon(
         &identity.name,
         &identity.ssh_public_key,
-        &identity.user,
         &identity.ip,
         identity.ssh_port,
         &timestamp,
@@ -174,13 +176,13 @@ pub fn listen_beacons_continuous(
                 let text = String::from_utf8_lossy(&buf[..n]);
                 let parts: Vec<&str> = text.split('\t').collect();
 
-                // Expected format: name\tsigning_public_key_b64\tssh_public_key\tuser\tip\tport\ttimestamp\tsignature_b64
-                if parts.len() != 8 {
+                // Expected format: name\tsigning_public_key_b64\tssh_public_key\tip\tport\ttimestamp\tsignature_b64
+                if parts.len() != 7 {
                     continue; // Invalid format
                 }
 
-                let ip = parts[4].to_string();
-                let timestamp: u64 = parts[6].parse().unwrap_or(0);
+                let ip = parts[3].to_string();
+                let timestamp: u64 = parts[5].parse().unwrap_or(0);
 
                 // Check beacon age
                 let now = SystemTime::now()
@@ -212,7 +214,7 @@ pub fn listen_beacons_continuous(
                 // Verify the signature
                 let beacon_str = parts.join("\t");
                 match signing::verify_beacon(&beacon_str, None) {
-                    Ok((name, ssh_public_key, user, ip_verified, port)) => {
+                    Ok((name, ssh_public_key, ip_verified, port)) => {
                         // Check IP consistency
                         if ip_verified != ip {
                             crate::ui::log(&format!(
@@ -234,7 +236,6 @@ pub fn listen_beacons_continuous(
                             name,
                             signing_public_key: SigningPublicKeyB64::from(parts[1]),
                             ssh_public_key,
-                            user,
                             ip,
                             port,
                         };

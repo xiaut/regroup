@@ -112,11 +112,9 @@ pub struct InteractiveState {
     pub setup_cd_pending: bool,
     
     // SSH key management
-    pub install_key_mode: bool,
-    pub install_key_target: Option<String>,
-    pub install_key_user: Option<String>,
-    pub remove_key_mode: bool,
-    pub remove_key_connection: Option<String>,
+    pub temp_users: HashMap<String, String>,
+    pub users_selected: Option<String>,
+    pub temp_user_pending: Option<String>,
     
     // Settings
     pub verbose: bool,
@@ -254,7 +252,8 @@ Returns devices to show in the Added panel:
 
 ### Deleting Devices
 
-1. User selects device from Added panel
+1. User selects device from Added panel (machine action), or machine+user
+   actions go through the Users sub-panel (Right) with a user selected
 2. Confirm deletion
 3. Remove device file from configuration
 4. Remove SSH config Host block

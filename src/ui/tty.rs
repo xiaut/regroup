@@ -13,7 +13,7 @@ use ratatui::layout::{Constraint, Layout};
 use ratatui::DefaultTerminal;
 
 use super::render::{key_label, render_all_panes, render_help, render_question, KeyFlash, QuestionCtx, RowFlash};
-use super::types::{ActivePane, Action, Question, UiDevice, UiEvent};
+use super::types::{ActivePane, Action, Question, UiDevice, UiEvent, UiUser, UserStatus};
 
 /// Calculate how many lines a text will occupy when wrapped to fit a given width.
 /// For hint-like text with "   " (three spaces) separators, treats each token as non-breakable.
@@ -114,6 +114,13 @@ fn calculate_question_height(question: &Question, ctx: &QuestionCtx, width: u16)
                         .join("   ");
                     (pane.name.to_string(), hint)
                 }
+                ActivePane::Users(pane) => {
+                    let hint = pane.bindings.iter()
+                        .map(|b| format!("[{}] {}", b.label, b.description))
+                        .collect::<Vec<_>>()
+                        .join("   ");
+                    (pane.name.to_string(), hint)
+                }
                 ActivePane::Logs(pane) => {
                     let name = if ctx.verbose { "Logs - verbose" } else { pane.name };
                     let hint = pane.bindings.iter()
@@ -156,6 +163,10 @@ fn calculate_question_height(question: &Question, ctx: &QuestionCtx, width: u16)
             // We'll calculate based on the question line + input line
             return 4; // Minimum height for rename with input
         }
+        Question::AddTempUser(_def, _) => {
+            // Input line handled like the rename question
+            return 4;
+        }
         Question::Delete(def, name) => {
             (
                 format!("Delete {name} from configuration?"),
@@ -183,66 +194,6 @@ fn calculate_question_height(question: &Question, ctx: &QuestionCtx, width: u16)
         Question::SetupCd(def, file) => {
             (
                 format!("Install the 'regroup-cd' shell function (cd to ~/.regroup-config) in ~/{file}?"),
-                {
-                    let hint = def.bindings.iter()
-                        .map(|b| format!("[{}] {}", b.label, b.description))
-                        .collect::<Vec<_>>()
-                        .join("   ");
-                    hint
-                },
-            )
-        }
-        Question::InstallKeySelectDevice(def, devices) => {
-            (
-                format!("Select target device ({} available)", devices.len()),
-                {
-                    let hint = def.bindings.iter()
-                        .map(|b| format!("[{}] {}", b.label, b.description))
-                        .collect::<Vec<_>>()
-                        .join("   ");
-                    hint
-                },
-            )
-        }
-        Question::InstallKeySelectUser(def, device, users) => {
-            (
-                format!("Select user on {device} ({} available)", users.len()),
-                {
-                    let hint = def.bindings.iter()
-                        .map(|b| format!("[{}] {}", b.label, b.description))
-                        .collect::<Vec<_>>()
-                        .join("   ");
-                    hint
-                },
-            )
-        }
-        Question::InstallKeyConfirm(def, from_user, from_device, to_user, to_device) => {
-            (
-                format!("Install key from {}@{} to {}@{}?", from_user, from_device, to_user, to_device),
-                {
-                    let hint = def.bindings.iter()
-                        .map(|b| format!("[{}] {}", b.label, b.description))
-                        .collect::<Vec<_>>()
-                        .join("   ");
-                    hint
-                },
-            )
-        }
-        Question::RemoveKeySelectConnection(def, connections) => {
-            (
-                format!("Select connection to remove ({} available)", connections.len()),
-                {
-                    let hint = def.bindings.iter()
-                        .map(|b| format!("[{}] {}", b.label, b.description))
-                        .collect::<Vec<_>>()
-                        .join("   ");
-                    hint
-                },
-            )
-        }
-        Question::RemoveKeyConfirm(def, connection_id, from_user, from_device, to_user, to_device) => {
-            (
-                format!("Remove key {} ({}@{}) from {}@{}?", connection_id, from_user, from_device, to_user, to_device),
                 {
                     let hint = def.bindings.iter()
                         .map(|b| format!("[{}] {}", b.label, b.description))
@@ -290,6 +241,10 @@ pub struct TtyUi {
     pub added_selected: Option<usize>,
     /// Row of the Added panel highlighted in delete mode (passed from state).
     pub delete_selected: Option<usize>,
+    /// Users of the machine selected in the Added panel (Users panel).
+    pub users: Vec<UiUser>,
+    /// Row of the Users panel highlighted by the selection (passed from state).
+    pub users_selected: Option<usize>,
     /// Which pane is currently active for navigation and actions.
     pub active_pane: ActivePane,
     /// Whether the help panel is shown (key '?'): it replaces the device
@@ -435,9 +390,10 @@ impl TtyUi {
         let in_wipe = matches!(self.question, Question::Wipe(_, _));
         let in_setup = matches!(self.question, Question::SetupCd(_, _));
         let in_rename = matches!(self.question, Question::Rename(_, _, _));
+        let in_add_temp_user = matches!(self.question, Question::AddTempUser(_, _));
         
         // Check if we're in a modal question (not Idle)
-        let in_modal = in_delete || in_wipe || in_setup || in_rename || self.show_help;
+        let in_modal = in_delete || in_wipe || in_setup || in_rename || in_add_temp_user || self.show_help;
         
         // 'q' key: close help panel, or return to MainMenu/quit from pane
         if matches!(key.code, crossterm::event::KeyCode::Char('q')) {
@@ -458,8 +414,11 @@ impl TtyUi {
                 }
             }
             // For non-Idle questions, quit (preserving original behavior)
-            // except AddDevice which has its own handler
-            if !matches!(self.question, Question::AddDevice(_, _, _)) {
+            // except the input questions, which have their own handler
+            if !matches!(
+                self.question,
+                Question::AddDevice(_, _, _) | Question::AddTempUser(_, _)
+            ) {
                 return Some(Action::Quit);
             }
             // For AddDevice, fall through to its specific handler
@@ -547,6 +506,25 @@ impl TtyUi {
             }
         }
         
+        if in_add_temp_user {
+            match key.code {
+                crossterm::event::KeyCode::Char(c) => {
+                    self.input.push(c);
+                    return None;
+                }
+                crossterm::event::KeyCode::Backspace => {
+                    self.input.pop();
+                    return None;
+                }
+                crossterm::event::KeyCode::Enter => {
+                    let name = std::mem::take(&mut self.input);
+                    return Some(Action::TempUserName(name));
+                }
+                crossterm::event::KeyCode::Esc => return Some(Action::CancelTempUser),
+                _ => return None,
+            }
+        }
+        
         // Handle TrustKey question
         if matches!(self.question, Question::TrustKey(_, _)) {
             match key.code {
@@ -617,11 +595,10 @@ impl TtyUi {
                         return Some(Action::AddedSelectNext);
                     }
                 }
-                crossterm::event::KeyCode::Char('i') => {
-                    return self.added_selected.map(|_| Action::InstallKeyToSelected);
-                }
-                crossterm::event::KeyCode::Char('r') => {
-                    return self.added_selected.map(|_| Action::RemoveKeyFromSelected);
+                crossterm::event::KeyCode::Right => {
+                    if self.added_selected.is_some() {
+                        return Some(Action::SwitchToUsers);
+                    }
                 }
                 crossterm::event::KeyCode::Char('d') => {
                     return self.added_selected.map(|_| Action::DeleteSelected);
@@ -634,6 +611,50 @@ impl TtyUi {
                 }
                 crossterm::event::KeyCode::Char('c') => {
                     return Some(Action::SetupCdMode);
+                }
+                _ => {}
+            }
+        }
+        
+        // Users pane: navigate users, machine+user actions
+        if matches!(self.active_pane, ActivePane::Users(_)) && !in_modal {
+            let selected_user = self
+                .users_selected
+                .and_then(|i| self.users.get(i));
+            match key.code {
+                crossterm::event::KeyCode::Left => {
+                    return Some(Action::BackToAdded);
+                }
+                crossterm::event::KeyCode::Up => {
+                    if !self.users.is_empty() {
+                        return Some(Action::UsersSelectPrev);
+                    }
+                }
+                crossterm::event::KeyCode::Down => {
+                    if !self.users.is_empty() {
+                        return Some(Action::UsersSelectNext);
+                    }
+                }
+                crossterm::event::KeyCode::Char('a') => {
+                    return Some(Action::AddTempUser);
+                }
+                crossterm::event::KeyCode::Char('x') => {
+                    if selected_user.is_some_and(|u| u.status == UserStatus::Temporary) {
+                        return Some(Action::RemoveTempUser);
+                    }
+                }
+                crossterm::event::KeyCode::Char('i') => {
+                    if selected_user.is_some_and(|u| u.status != UserStatus::Temporary) {
+                        return Some(Action::InstallKeyToSelected);
+                    }
+                }
+                crossterm::event::KeyCode::Char('r') => {
+                    if selected_user.is_some_and(|u| u.status != UserStatus::Temporary) {
+                        return Some(Action::RemoveKeyFromSelected);
+                    }
+                }
+                crossterm::event::KeyCode::Char('s') => {
+                    return Some(Action::Sync);
                 }
                 _ => {}
             }
@@ -725,6 +746,8 @@ impl TtyUi {
             added,
             detected_selected,
             added_selected,
+            users,
+            users_selected,
             show_help,
             help_scroll,
             verbose,
@@ -777,6 +800,8 @@ impl TtyUi {
                     *verbose,
                     flashes,
                     pulses,
+                    users,
+                    *users_selected,
                 );
             }
             cursor = render_question(frame, question_area, question, &question_ctx);

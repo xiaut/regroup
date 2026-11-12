@@ -63,6 +63,9 @@ pub enum ActivePane {
     Detected(Pane),
     /// Added devices panel
     Added(Pane),
+    /// Users sub-panel of the Added panel: the users of the selected
+    /// machine. Machine+user actions live here, not in the machine panel.
+    Users(Pane),
     /// Logs pane (formerly Activity)
     Logs(Pane),
 }
@@ -73,6 +76,7 @@ impl ActivePane {
             ActivePane::MainMenu(pane) => pane.name,
             ActivePane::Detected(pane) => pane.name,
             ActivePane::Added(pane) => pane.name,
+            ActivePane::Users(pane) => pane.name,
             ActivePane::Logs(pane) => pane.name,
         }
     }
@@ -82,6 +86,7 @@ impl ActivePane {
             ActivePane::MainMenu(pane) => pane.bindings,
             ActivePane::Detected(pane) => pane.bindings,
             ActivePane::Added(pane) => pane.bindings,
+            ActivePane::Users(pane) => pane.bindings,
             ActivePane::Logs(pane) => pane.bindings,
         }
     }
@@ -110,6 +115,37 @@ pub struct UiDevice {
     pub port: u16,
 }
 
+/// Status of a user on the selected machine, shown in the Users panel.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum UserStatus {
+    /// Added manually this run, in memory only: enough to build the git
+    /// remote URL and sync, until the machine's declared users arrive.
+    Temporary,
+    /// Declared by the machine itself in its configuration (users/).
+    Confirmed,
+    /// Confirmed, and the local user has an SSH key installed towards
+    /// this user (connection file in the local device's connections/).
+    KeyInstalled,
+}
+
+/// One user of the selected machine, for the Users panel.
+#[derive(Clone)]
+pub struct UiUser {
+    pub name: String,
+    pub status: UserStatus,
+}
+
+impl UiUser {
+    /// Row label of the status column.
+    pub fn status_label(&self) -> &'static str {
+        match self.status {
+            UserStatus::Temporary => "temporary — to confirm",
+            UserStatus::Confirmed => "confirmed",
+            UserStatus::KeyInstalled => "SSH key installed",
+        }
+    }
+}
+
 /// What the interactive loop is asking right now. The ui renders it as the
 /// bottom block and derives the active keys from it.
 #[derive(Clone, PartialEq)]
@@ -128,16 +164,9 @@ pub enum Question {
     /// Install the 'regroup-cd' shell function (key 'c') into `file`
     /// (~/.zshrc or ~/.bashrc), replacing any existing definition.
     SetupCd(QuestionDef, String), // file
-    /// Install SSH key: select target device (key 'i')
-    InstallKeySelectDevice(QuestionDef, Vec<String>), // devices
-    /// Install SSH key: select target user
-    InstallKeySelectUser(QuestionDef, String, Vec<String>), // device, users
-    /// Install SSH key: confirm installation
-    InstallKeyConfirm(QuestionDef, String, String, String, String), // from_user, from_device, to_user, to_device
-    /// Remove SSH key: select connection (key 'r')
-    RemoveKeySelectConnection(QuestionDef, Vec<(String, String, String)>), // connections
-    /// Remove SSH key: confirm removal
-    RemoveKeyConfirm(QuestionDef, String, String, String, String, String), // connection_id, from_user, from_device, to_user, to_device
+    /// Type the name of a temporary user for `device` (Users panel, key 'a').
+    /// The input is handled like the rename question.
+    AddTempUser(QuestionDef, String), // device
 }
 
 impl Question {
@@ -150,11 +179,7 @@ impl Question {
             Question::Delete(def, _) => def,
             Question::Wipe(def, _) => def,
             Question::SetupCd(def, _) => def,
-            Question::InstallKeySelectDevice(def, _) => def,
-            Question::InstallKeySelectUser(def, _, _) => def,
-            Question::InstallKeyConfirm(def, _, _, _, _) => def,
-            Question::RemoveKeySelectConnection(def, _) => def,
-            Question::RemoveKeyConfirm(def, _, _, _, _, _) => def,
+            Question::AddTempUser(def, _) => def,
         }
     }
 }
@@ -200,18 +225,6 @@ pub enum Action {
     SetupCdCancel,
     /// Enter connections management mode (key 'k').
     ConnectionsMode,
-    /// Enter install key mode (key 'i').
-    InstallKeyMode,
-    /// Confirm install key action.
-    InstallKeyConfirm,
-    /// Cancel install key action.
-    InstallKeyCancel,
-    /// Enter remove key mode (key 'r').
-    RemoveKeyMode,
-    /// Confirm remove key action.
-    RemoveKeyConfirm,
-    /// Cancel remove key action.
-    RemoveKeyCancel,
     /// Toggle verbose mode on/off (key 'v').
     ToggleVerbose,
     /// Install SSH key to the currently selected device in Added pane.
@@ -231,6 +244,22 @@ pub enum Action {
     /// Print the CLI help (plain mode; the full-screen ui shows its help
     /// panel instead, toggled by '?').
     Help,
+    /// Switch from the Added panel to the Users sub-panel (key Right).
+    SwitchToUsers,
+    /// Switch back from the Users sub-panel to the Added panel (key Left).
+    BackToAdded,
+    /// Select previous user in the Users panel.
+    UsersSelectPrev,
+    /// Select next user in the Users panel.
+    UsersSelectNext,
+    /// Start typing a temporary user name for the selected machine (key 'a').
+    AddTempUser,
+    /// The typed temporary user name was submitted.
+    TempUserName(String),
+    /// Cancel typing a temporary user name.
+    CancelTempUser,
+    /// Remove the selected temporary user (key 'x').
+    RemoveTempUser,
 }
 
 // Static pane definitions
@@ -263,12 +292,43 @@ pub static ADDED_PANE: Pane = Pane {
         KeyBinding::new(KeyCode::Char('q'), "q", "no pane"),
         KeyBinding::new(KeyCode::Up, "Up", "select"),
         KeyBinding::new(KeyCode::Down, "Dn", "select"),
-        KeyBinding::new(KeyCode::Char('i'), "i", "install key"),
-        KeyBinding::new(KeyCode::Char('r'), "r", "remove key"),
+        KeyBinding::new(KeyCode::Right, "Right", "users"),
         KeyBinding::new(KeyCode::Char('d'), "d", "delete"),
         KeyBinding::new(KeyCode::Char('s'), "s", "sync"),
         KeyBinding::new(KeyCode::Char('w'), "w", "wipe"),
         KeyBinding::new(KeyCode::Char('c'), "c", "setup-cd"),
+        KeyBinding::new(KeyCode::Char('?'), "?", "help"),
+    ],
+};
+
+/// Users panel with a confirmed user selected: machine+user actions.
+pub static USERS_PANE_CONFIRMED: Pane = Pane {
+    name: "Users",
+    bindings: &[
+        KeyBinding::new(KeyCode::Char('q'), "q", "no pane"),
+        KeyBinding::new(KeyCode::Up, "Up", "select"),
+        KeyBinding::new(KeyCode::Down, "Dn", "select"),
+        KeyBinding::new(KeyCode::Left, "Left", "machines"),
+        KeyBinding::new(KeyCode::Char('i'), "i", "install key"),
+        KeyBinding::new(KeyCode::Char('r'), "r", "remove key"),
+        KeyBinding::new(KeyCode::Char('a'), "a", "add temp user"),
+        KeyBinding::new(KeyCode::Char('s'), "s", "sync"),
+        KeyBinding::new(KeyCode::Char('?'), "?", "help"),
+    ],
+};
+
+/// Users panel with a temporary (or no) user selected: only the actions a
+/// temporary user allows. Unavailable actions are not shown.
+pub static USERS_PANE_TEMPORARY: Pane = Pane {
+    name: "Users",
+    bindings: &[
+        KeyBinding::new(KeyCode::Char('q'), "q", "no pane"),
+        KeyBinding::new(KeyCode::Up, "Up", "select"),
+        KeyBinding::new(KeyCode::Down, "Dn", "select"),
+        KeyBinding::new(KeyCode::Left, "Left", "machines"),
+        KeyBinding::new(KeyCode::Char('a'), "a", "add temp user"),
+        KeyBinding::new(KeyCode::Char('x'), "x", "remove temp user"),
+        KeyBinding::new(KeyCode::Char('s'), "s", "sync"),
         KeyBinding::new(KeyCode::Char('?'), "?", "help"),
     ],
 };
@@ -300,6 +360,17 @@ impl ActivePane {
         ActivePane::Added(ADDED_PANE)
     }
 
+    /// The Users panel, with the bindings that match the selected user:
+    /// a confirmed user unlocks the machine+user actions, a temporary (or
+    /// no) user only shows what a temporary user can do.
+    pub fn users(confirmed_selected: bool) -> Self {
+        if confirmed_selected {
+            ActivePane::Users(USERS_PANE_CONFIRMED)
+        } else {
+            ActivePane::Users(USERS_PANE_TEMPORARY)
+        }
+    }
+
     pub const fn logs() -> Self {
         ActivePane::Logs(LOGS_PANE)
     }
@@ -327,6 +398,14 @@ pub static TRUST_KEY_QUESTION: QuestionDef = QuestionDef {
     bindings: &[
         KeyBinding::new(KeyCode::Char('y'), "y", "trust"),
         KeyBinding::new(KeyCode::Char('n'), "n", "reject"),
+    ],
+};
+
+pub static ADD_TEMP_USER_QUESTION: QuestionDef = QuestionDef {
+    title: "Add temporary user",
+    bindings: &[
+        KeyBinding::new(KeyCode::Enter, "Enter", "confirm"),
+        KeyBinding::new(KeyCode::Esc, "Esc", "cancel"),
     ],
 };
 
@@ -364,52 +443,6 @@ pub static SETUP_CD_QUESTION: QuestionDef = QuestionDef {
     ],
 };
 
-pub static INSTALL_KEY_SELECT_DEVICE_QUESTION: QuestionDef = QuestionDef {
-    title: "Install SSH key",
-    bindings: &[
-        KeyBinding::new(KeyCode::Up, "Up", "select"),
-        KeyBinding::new(KeyCode::Down, "Dn", "select"),
-        KeyBinding::new(KeyCode::Char('y'), "y", "confirm"),
-        KeyBinding::new(KeyCode::Char('n'), "n", "cancel"),
-    ],
-};
-
-pub static INSTALL_KEY_SELECT_USER_QUESTION: QuestionDef = QuestionDef {
-    title: "Install SSH key",
-    bindings: &[
-        KeyBinding::new(KeyCode::Up, "Up", "select"),
-        KeyBinding::new(KeyCode::Down, "Dn", "select"),
-        KeyBinding::new(KeyCode::Enter, "Enter", "confirm"),
-        KeyBinding::new(KeyCode::Char('q'), "q", "back"),
-    ],
-};
-
-pub static INSTALL_KEY_CONFIRM_QUESTION: QuestionDef = QuestionDef {
-    title: "Install SSH key",
-    bindings: &[
-        KeyBinding::new(KeyCode::Char('y'), "y", "confirm"),
-        KeyBinding::new(KeyCode::Char('n'), "n", "cancel"),
-    ],
-};
-
-pub static REMOVE_KEY_SELECT_CONNECTION_QUESTION: QuestionDef = QuestionDef {
-    title: "Remove SSH key",
-    bindings: &[
-        KeyBinding::new(KeyCode::Up, "Up", "select"),
-        KeyBinding::new(KeyCode::Down, "Dn", "select"),
-        KeyBinding::new(KeyCode::Char('y'), "y", "confirm"),
-        KeyBinding::new(KeyCode::Char('n'), "n", "cancel"),
-    ],
-};
-
-pub static REMOVE_KEY_CONFIRM_QUESTION: QuestionDef = QuestionDef {
-    title: "Remove SSH key",
-    bindings: &[
-        KeyBinding::new(KeyCode::Char('y'), "y", "confirm"),
-        KeyBinding::new(KeyCode::Char('n'), "n", "cancel"),
-    ],
-};
-
 // Convenience constructors for Question
 impl Question {
     pub fn idle() -> Self {
@@ -440,23 +473,7 @@ impl Question {
         Question::SetupCd(SETUP_CD_QUESTION, file)
     }
 
-    pub fn install_key_select_device(devices: Vec<String>) -> Self {
-        Question::InstallKeySelectDevice(INSTALL_KEY_SELECT_DEVICE_QUESTION, devices)
-    }
-
-    pub fn install_key_select_user(device: String, users: Vec<String>) -> Self {
-        Question::InstallKeySelectUser(INSTALL_KEY_SELECT_USER_QUESTION, device, users)
-    }
-
-    pub fn install_key_confirm(from_user: String, from_device: String, to_user: String, to_device: String) -> Self {
-        Question::InstallKeyConfirm(INSTALL_KEY_CONFIRM_QUESTION, from_user, from_device, to_user, to_device)
-    }
-
-    pub fn remove_key_select_connection(connections: Vec<(String, String, String)>) -> Self {
-        Question::RemoveKeySelectConnection(REMOVE_KEY_SELECT_CONNECTION_QUESTION, connections)
-    }
-
-    pub fn remove_key_confirm(connection_id: String, from_user: String, from_device: String, to_user: String, to_device: String) -> Self {
-        Question::RemoveKeyConfirm(REMOVE_KEY_CONFIRM_QUESTION, connection_id, from_user, from_device, to_user, to_device)
+    pub fn add_temp_user(device: String) -> Self {
+        Question::AddTempUser(ADD_TEMP_USER_QUESTION, device)
     }
 }

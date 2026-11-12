@@ -16,7 +16,6 @@ pub fn update_block(
     path: &Path,
     name: &str,
     ip: &str,
-    user: &str,
     port: u16,
     port_explicit: bool,
 ) -> io::Result<()> {
@@ -45,9 +44,6 @@ pub fn update_block(
         out.push_str("\n\n");
     }
     out.push_str(&format!("Host {}\n    HostName {}\n", name, ip));
-    if !user.is_empty() {
-        out.push_str(&format!("    User {}\n", user));
-    }
     if port_explicit {
         out.push_str(&format!("    Port {}\n", port));
     }

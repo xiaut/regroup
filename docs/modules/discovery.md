@@ -25,7 +25,6 @@ pub struct BeaconDevice {
     pub name: String,
     pub ssh_public_key: SshPublicKey,
     pub signing_public_key: SigningPublicKeyB64,
-    pub user: String,
     pub ip: String,
     pub port: u16,
 }
@@ -41,7 +40,6 @@ The `BeaconIdentity` struct is used for outgoing beacons:
 pub struct BeaconIdentity {
     pub name: String,
     pub ssh_public_key: SshPublicKey,
-    pub user: String,
     pub ip: String,
     pub ssh_port: u16,
     pub signing_key: SigningKey,  // Private key for signing

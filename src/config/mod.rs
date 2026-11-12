@@ -28,7 +28,6 @@ pub struct Device {
     /// key (spoofing detection, reinstall confirmation). Written by regroup
     /// when the device file is created or the key is re-trusted.
     pub signing_public_key: crate::ssh::keys::SigningPublicKeyB64,
-    pub user: String,
     pub port: u16,
     pub port_explicit: bool,
 }

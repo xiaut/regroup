@@ -62,14 +62,6 @@ pub fn load_device_file(path: &Path) -> Result<Device, String> {
         None => return Err("\"ssh_public_key\" is required".to_string()),
     };
 
-    let user = match obj.get("user") {
-        Some(v) => match v.as_str() {
-            Some(s) => s.trim().to_string(),
-            None => return Err("\"user\" must be a string".to_string()),
-        },
-        None => String::new(),
-    };
-
     let signing_public_key = match obj.get("signing_public_key") {
         Some(v) => match v.as_str() {
             Some(s) => SigningPublicKeyB64::from(s.trim()),
@@ -96,7 +88,6 @@ pub fn load_device_file(path: &Path) -> Result<Device, String> {
         name,
         ssh_public_key,
         signing_public_key,
-        user,
         port,
         port_explicit,
     };
@@ -122,13 +113,6 @@ pub fn save_device_file(path: &Path, device: &Device) -> io::Result<()> {
         "signing_public_key".to_string(),
         serde_json::Value::String(device.signing_public_key.0.clone()),
     );
-
-    if !device.user.is_empty() {
-        obj.insert(
-            "user".to_string(),
-            serde_json::Value::String(device.user.clone()),
-        );
-    }
 
     if device.port_explicit {
         obj.insert(
@@ -176,7 +160,6 @@ mod tests {
         "name": "laptop",
         "ssh_public_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeKeyForTests",
         "signing_public_key": "MCowBQYDK2VwAyEAGXNlbGZ0ZXN0a2V5eXl5eXl5eXl5eXl5eXl5eXl5eXk=",
-        "user": "alice",
         "port": 8022
     }"#;
 
@@ -188,7 +171,6 @@ mod tests {
 
         let m = load_device_file(&path).expect("valid device file must load");
         assert_eq!(m.name.as_str(), "laptop");
-        assert_eq!(m.user, "alice");
         assert_eq!(m.port, 8022);
         assert!(m.port_explicit);
         assert_eq!(
@@ -260,7 +242,6 @@ mod tests {
 
         let m = load_device_file(&path).expect("name must fall back to filename");
         assert_eq!(m.name.as_str(), "from-filename");
-        assert_eq!(m.user, "");
         assert_eq!(m.port, 22);
         assert!(!m.port_explicit);
     }
@@ -293,7 +274,6 @@ mod tests {
             name: DeviceName::new("roundtrip".to_string()).unwrap(),
             ssh_public_key: SshPublicKey::from("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFake"),
             signing_public_key: SigningPublicKeyB64::from("MCowBQYDK2VwAyEA=="),
-            user: "bob".to_string(),
             port: 2222,
             port_explicit: true,
         };
@@ -301,7 +281,6 @@ mod tests {
         save_device_file(&path, &device).expect("save must succeed");
         let loaded = load_device_file(&path).expect("saved device must load back");
         assert_eq!(loaded.name.as_str(), device.name.as_str());
-        assert_eq!(loaded.user, device.user);
         assert_eq!(loaded.port, device.port);
         assert!(loaded.port_explicit);
         assert_eq!(

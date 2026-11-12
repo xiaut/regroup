@@ -22,12 +22,13 @@ use crate::cli::{NameConflict,
     wipe as wipe_config,
 };
 use crate::config::{CONFIG_DIR, GIT_DIR, Device, load_config};
+use crate::config::users::load_device_users;
 use crate::discovery::beacon::BeaconDevice;
 use crate::ssh::config::update_block;
 use crate::ssh::keys::{SigningPublicKeyB64, SshPublicKey};
 use crate::ssh::public_key;
 use crate::ui::{self, Action, Level, Question};
-use crate::ui::types::{ActivePane, UiDevice};
+use crate::ui::types::{ActivePane, UiDevice, UiUser, UserStatus};
 
 /// How long each loop iteration waits for user input before checking the
 /// beacon channel again.
@@ -142,6 +143,45 @@ pub fn run(ctx: &Context, udp_port: u16, beacons: &Receiver<BeaconDevice>) -> us
             state.added_selected = Some(added[0].name.clone());
         }
         
+        // The Users panel follows the machine selected in the Added panel.
+        // It only exists while the Added (or Users) pane is on screen.
+        let users = if matches!(state.active_pane, ActivePane::Added(_) | ActivePane::Users(_)) {
+            state.users_view(ctx)
+        } else {
+            Vec::new()
+        };
+        // A user is selected only while the Users pane is active (the
+        // selection is refined by navigating into the sub-panel); leaving
+        // the sub-panel drops it. Entering it selects the first user
+        // automatically — same behavior as the machine panels. A selection
+        // that no longer exists (machine changed or deleted, temporary user
+        // removed) is dropped the same way.
+        if !matches!(state.active_pane, ActivePane::Users(_)) {
+            state.users_selected = None;
+        } else {
+            if state
+                .users_selected
+                .as_deref()
+                .is_some_and(|name| !users.iter().any(|u| u.name == name))
+            {
+                state.users_selected = None;
+            }
+            if state.users_selected.is_none() && !users.is_empty() {
+                state.users_selected = Some(users[0].name.clone());
+            }
+            // The Users pane bindings follow the selected user's status:
+            // machine+user actions only appear for a confirmed user.
+            let confirmed = users
+                .iter()
+                .position(|u| Some(&u.name) == state.users_selected.as_ref())
+                .is_some_and(|i| users[i].status != UserStatus::Temporary);
+            state.active_pane = ActivePane::users(confirmed);
+        }
+        let users_selected = state
+            .users_selected
+            .as_ref()
+            .and_then(|name| users.iter().position(|u| &u.name == name));
+        
         let selected = state
             .pending_selected
             .as_ref()
@@ -160,8 +200,11 @@ pub fn run(ctx: &Context, udp_port: u16, beacons: &Receiver<BeaconDevice>) -> us
             ActivePane::Detected(_) => selected,
             _ => None,
         };
+        // Multi-level selection: the parent (the machine) stays selected
+        // while the selection is refined on one of its users in the Users
+        // pane.
         let added_selected = match state.active_pane {
-            ActivePane::Added(_) => added_selected,
+            ActivePane::Added(_) | ActivePane::Users(_) => added_selected,
             _ => None,
         };
         
@@ -169,6 +212,7 @@ pub fn run(ctx: &Context, udp_port: u16, beacons: &Receiver<BeaconDevice>) -> us
         tui.set_selected(selected);
         tui.set_delete_selected(delete_selected);
         tui.set_added_selected(added_selected);
+        tui.set_users(users, users_selected);
         tui.set_active_pane(state.active_pane);
         tui.set_verbose(state.verbose);
         tui.draw();
@@ -220,16 +264,16 @@ pub struct InteractiveState {
     /// Setup-cd confirmation is pending (key 'c'): the ui asks for a final
     /// confirm before the 'regroup-cd' shell function is installed.
     setup_cd_pending: bool,
-    /// Install key mode: select target device and user
-    install_key_mode: bool,
-    /// Selected device for key installation
-    install_key_target: Option<String>,
-    /// Selected user for key installation
-    install_key_user: Option<String>,
-    /// Remove key mode: select connection to remove
-    remove_key_mode: bool,
-    /// Selected connection for key removal
-    remove_key_connection: Option<String>,
+    /// Temporary user per device (device name → user name), added this
+    /// run from the Users panel. In memory only: a device's users/ directory
+    /// is written by the device itself. Its only purpose is to build the
+    /// git remote URL (and thus allow a sync) until the machine's declared
+    /// users arrive through that sync.
+    temp_users: HashMap<String, String>,
+    /// User selected in the Users panel, by name.
+    users_selected: Option<String>,
+    /// Machine waiting for the user to type a temporary user name.
+    temp_user_pending: Option<String>,
     /// Verbose mode: extra information in the activity log. Initialized
     /// from the -v flag, toggled at runtime with 'v'.
     verbose: bool,
@@ -256,11 +300,9 @@ impl InteractiveState {
             delete_selection: None,
             wipe_pending: false,
             setup_cd_pending: false,
-            install_key_mode: false,
-            install_key_target: None,
-            install_key_user: None,
-            remove_key_mode: false,
-            remove_key_connection: None,
+            temp_users: HashMap::new(),
+            users_selected: None,
+            temp_user_pending: None,
             verbose: ctx.verbose,
             new_count: 0,
         };
@@ -326,23 +368,8 @@ impl InteractiveState {
             Question::rename(device.name.clone(), suggested.clone())
         } else if let Some(device) = &self.rotation_pending {
             Question::trust_key(device.name.clone())
-        } else if self.install_key_mode {
-            // For now, use a simple question - full interactive selection comes later
-            Question::install_key_confirm(
-                std::env::var("USER").unwrap_or_else(|_| "unknown".to_string()),
-                ctx.local_name.to_string(),
-                self.install_key_user.clone().unwrap_or_else(|| "unknown".to_string()),
-                self.install_key_target.clone().unwrap_or_else(|| "unknown".to_string()),
-            )
-        } else if self.remove_key_mode {
-            // For now, use a simple question - full interactive selection comes later
-            Question::remove_key_confirm(
-                self.remove_key_connection.clone().unwrap_or_else(|| "unknown".to_string()),
-                std::env::var("USER").unwrap_or_else(|_| "unknown".to_string()),
-                ctx.local_name.to_string(),
-                "unknown".to_string(),
-                "unknown".to_string(),
-            )
+        } else if let Some(device) = &self.temp_user_pending {
+            Question::add_temp_user(device.clone())
         } else if plain
             && !ctx.dry_run
             && let Some(device) = self.pending_devices.front()
@@ -530,7 +557,6 @@ impl InteractiveState {
                         ctx.ssh_config,
                         stored_device.name.as_str(),
                         &device.ip,
-                        &stored_device.user,
                         stored_device.port,
                         stored_device.port_explicit,
                     );
@@ -628,8 +654,9 @@ impl InteractiveState {
                     ui::log("  (dry run - git sync skipped)");
                 } else {
                     tui.with_clean_terminal(|| {
-                        sync_git(ctx.home, self.verbose);
-                        // A pull may have brought new device configs: reload
+                        sync_git(ctx.home, self.verbose, &self.temp_users);
+                        // A pull may have brought new device configs and
+                        // the machine-declared users: reload
                         self.reload(ctx);
                     });
                 }
@@ -737,6 +764,39 @@ impl InteractiveState {
                 self.active_pane = ActivePane::added();
                 self.pending_selected = None;
             }
+            Action::SwitchToUsers => {
+                // Only reachable from the Added pane with a machine
+                // selected (the tty gates the key). No user is selected
+                // yet: the display loop selects the first one.
+                self.active_pane = ActivePane::users(false);
+                self.users_selected = None;
+            }
+            Action::BackToAdded => {
+                // Leaving the sub-panel drops the user selection; the
+                // machine stays selected.
+                self.active_pane = ActivePane::added();
+                self.users_selected = None;
+            }
+            Action::UsersSelectPrev => {
+                self.move_users_selection(ctx, false);
+            }
+            Action::UsersSelectNext => {
+                self.move_users_selection(ctx, true);
+            }
+            Action::AddTempUser => {
+                if let Some(name) = self.added_selected.clone() {
+                    self.temp_user_pending = Some(name);
+                }
+            }
+            Action::TempUserName(name) => {
+                self.add_temp_user(name);
+            }
+            Action::CancelTempUser => {
+                self.temp_user_pending = None;
+            }
+            Action::RemoveTempUser => {
+                self.remove_temp_user();
+            }
             Action::SwitchToLogs => {
                 self.active_pane = ActivePane::logs();
                 self.pending_selected = None;
@@ -808,32 +868,6 @@ impl InteractiveState {
             Action::InstallKeyToSelected => self.install_key_to_selected(ctx, tui),
             Action::RemoveKeyFromSelected => self.remove_key_from_selected(ctx, tui),
             Action::DeleteSelected => self.delete_selected_device(ctx, tui),
-            Action::InstallKeyMode => {
-                if ctx.dry_run {
-                    ui::log("  (dry run - key installation skipped)");
-                } else {
-                    self.execute_install_key(ctx, tui);
-                }
-            }
-            Action::InstallKeyConfirm => {
-                // Not used in current simple implementation
-            }
-            Action::InstallKeyCancel => {
-                // Not used in current simple implementation
-            }
-            Action::RemoveKeyMode => {
-                if ctx.dry_run {
-                    ui::log("  (dry run - key removal skipped)");
-                } else {
-                    self.execute_remove_key(ctx, tui);
-                }
-            }
-            Action::RemoveKeyConfirm => {
-                // Not used in current simple implementation
-            }
-            Action::RemoveKeyCancel => {
-                // Not used in current simple implementation
-            }
             Action::ConnectionsMode => {
                 // Connections management is notified only: the connections
                 // browser (crate::tui::connections) is not wired into the
@@ -899,6 +933,7 @@ impl InteractiveState {
             None => 0,
         };
         self.added_selected = Some(names[new_pos].clone());
+        self.users_selected = None;
     }
 
     /// Move the selection of the Detected panel to the next (or previous
@@ -1094,164 +1129,169 @@ impl InteractiveState {
         }
     }
     
-    /// Execute key installation on the first known device
-    fn execute_install_key(&mut self, ctx: &Context, ui: &mut ui::Ui) {
-        let config_dir = Path::new(ctx.home).join(CONFIG_DIR).join(GIT_DIR);
-        let current_user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
-        
-        // Get the first known device (or selected one)
-        let devices: Vec<Device> = self.key_to_device.values().cloned().collect();
-        if devices.is_empty() {
-            ui::log("No known devices to install a key to");
-            return;
-        }
-        
-        let target_device_obj = &devices[0];
-        let target_device = target_device_obj.name.as_str();
-        let target_user = if target_device_obj.user.is_empty() {
-            current_user.clone()
-        } else {
-            target_device_obj.user.clone()
+    /// The users of the machine selected in the Added panel, for the Users
+    /// panel: the users the machine declared in its configuration (users/,
+    /// arrived through git sync), plus the temporary user if one was added
+    /// this run and the sync has not brought a user of the same name yet.
+    /// A confirmed user the local user has an outgoing connection to shows
+    /// as "SSH key installed".
+    fn users_view(&self, ctx: &Context) -> Vec<UiUser> {
+        let Some(name) = self.added_selected.as_ref() else {
+            return Vec::new();
         };
-        let target_port = target_device_obj.port;
-        
-        ui::log(&format!("Installing key to {}@{}", target_user, target_device));
-        
-        let result = ui.with_clean_terminal(|| {
-            crate::tui::key_actions::install_key_action(
-                ctx.home,
-                &config_dir,
-                ctx.local_name,
-                &current_user,
-                target_device,
-                &target_user,
-                target_port,
-            )
-        });
-        
-        match result {
-            Ok(crate::tui::key_actions::KeyActionResult::Success(msg)) => {
-                ui::log(&format!("Success: {}", msg));
-            }
-            Ok(crate::tui::key_actions::KeyActionResult::Error(msg)) => {
-                ui::log(&format!("Error: {}", msg));
-            }
-            Ok(crate::tui::key_actions::KeyActionResult::Cancelled) => {
-                ui::log("Installation cancelled");
-            }
-            Err(e) => {
-                ui::log(&format!("Error: {}", e));
+        let config_dir = Path::new(ctx.home).join(CONFIG_DIR).join(GIT_DIR);
+        let current_user = std::env::var("USER")
+            .or_else(|_| std::env::var("LOGNAME"))
+            .unwrap_or_default();
+        let connections_dir = config_dir
+            .join("devices")
+            .join(ctx.local_name)
+            .join("connections");
+        let mut users = Vec::new();
+        if let Ok(known) = load_device_users(&config_dir, name) {
+            for user in known {
+                // Connection file names sanitize their members (see
+                // config::connection), so mirror that here.
+                let sanitize = |s: &str| s.replace('@', "_").replace('/', "_").replace(' ', "_");
+                let connection_file = format!(
+                    "{}->{}@{}.json",
+                    sanitize(&current_user),
+                    sanitize(&user.name),
+                    sanitize(name)
+                );
+                let installed = connections_dir.join(connection_file).exists();
+                users.push(UiUser {
+                    name: user.name,
+                    status: if installed {
+                        UserStatus::KeyInstalled
+                    } else {
+                        UserStatus::Confirmed
+                    },
+                });
             }
         }
+        // A temporary user is superseded by a declared user of the same
+        // name: the sync brought the machine's own data.
+        if let Some(temp) = self.temp_users.get(name)
+            && !users.iter().any(|u| u.name == *temp)
+        {
+            users.push(UiUser {
+                name: temp.clone(),
+                status: UserStatus::Temporary,
+            });
+        }
+        users
     }
-    
-    /// Execute key removal from the first known device
-    fn execute_remove_key(&mut self, ctx: &Context, ui: &mut ui::Ui) {
-        let config_dir = Path::new(ctx.home).join(CONFIG_DIR).join(GIT_DIR);
-        let current_user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
-        
-        // Find first outgoing connection
-        let connections_dir = config_dir.join("devices").join(ctx.local_name).join("connections");
-        if !connections_dir.exists() {
-            ui::log("No outgoing connections found");
+
+    /// Whether `user` is the temporary user of `device`.
+    fn is_temporary_user(&self, device: &str, user: &str) -> bool {
+        self.temp_users
+            .get(device)
+            .is_some_and(|temp| temp == user)
+    }
+
+    /// Move the Users panel selection to the next (or previous when
+    /// `forward` is false) user of the selected machine, in the same order
+    /// as the Users panel. With no selection, selects the first one.
+    fn move_users_selection(&mut self, ctx: &Context, forward: bool) {
+        let names: Vec<String> = self
+            .users_view(ctx)
+            .iter()
+            .map(|u| u.name.clone())
+            .collect();
+        if names.is_empty() {
+            self.users_selected = None;
             return;
         }
-        
-        // Find first connection file
-        if let Ok(entries) = std::fs::read_dir(&connections_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("json") {
-                    let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                    // Check if this is an outgoing connection (from current_user)
-                    if filename.starts_with(&format!("{}->", current_user)) {
-                        let connection_id = filename.trim_end_matches(".json").to_string();
-                        let (from_user, to_user, to_device) = crate::cli::key_management::parse_connection_id(&connection_id)
-                            .unwrap_or_default();
-                        
-                        // Look up the device to get its port
-                        let target_port = self.key_to_device.values()
-                            .find(|m| m.name.as_str() == to_device)
-                            .map(|m| m.port)
-                            .unwrap_or(22);
-                        
-                        ui::log(&format!("Removing connection: {}", connection_id));
-                        
-                        let result = ui.with_clean_terminal(|| {
-                            crate::tui::key_actions::remove_key_action(
-                                ctx.home,
-                                &config_dir,
-                                ctx.local_name,
-                                &current_user,
-                                &from_user,
-                                &to_device,
-                                &to_user,
-                                target_port,
-                                &connection_id,
-                            )
-                        });
-                        
-                        match result {
-                            Ok(crate::tui::key_actions::KeyActionResult::Success(msg)) => {
-                                ui::log(&format!("Success: {}", msg));
-                                return;
-                            }
-                            Ok(crate::tui::key_actions::KeyActionResult::Error(msg)) => {
-                                ui::log(&format!("Error: {}", msg));
-                                return;
-                            }
-                            Ok(crate::tui::key_actions::KeyActionResult::Cancelled) => {
-                                ui::log("Removal cancelled");
-                                return;
-                            }
-                            Err(e) => {
-                                ui::log(&format!("Error: {}", e));
-                                return;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        
-        ui::log("No outgoing connections found for this user");
+        let pos = names
+            .iter()
+            .position(|n| Some(n) == self.users_selected.as_ref());
+        let new_pos = match pos {
+            Some(p) if forward => (p + 1).min(names.len() - 1),
+            Some(p) => p.saturating_sub(1),
+            None => 0,
+        };
+        self.users_selected = Some(names[new_pos].clone());
     }
-    
-    /// Install SSH key to the currently selected device in Added pane
+
+    /// The user typed a temporary user name for the pending machine:
+    /// remember it (in memory only) and select it, so a git sync can reach
+    /// the machine. The sync replaces it with the machine's declared users.
+    fn add_temp_user(&mut self, name: String) {
+        let Some(device) = self.temp_user_pending.take() else {
+            return;
+        };
+        let name = name.trim().to_string();
+        if name.is_empty() || name.contains('@') || name.contains('/') || name.contains(' ') {
+            ui::log("  ! A user name must be non-empty and contain no '@', '/' or space");
+            return;
+        }
+        ui::log(&format!(
+            "  + Temporary user {name} on {device} (in memory only) — press 's' to sync and get the machine's declared users"
+        ));
+        self.temp_users.insert(device.clone(), name.clone());
+        self.users_selected = Some(name);
+    }
+
+    /// Remove the selected temporary user of the selected machine.
+    fn remove_temp_user(&mut self) {
+        let (Some(device), Some(user)) = (self.added_selected.clone(), self.users_selected.clone())
+        else {
+            return;
+        };
+        if self.is_temporary_user(&device, &user) {
+            self.temp_users.remove(&device);
+            self.users_selected = None;
+            ui::log(&format!("  - Temporary user {user} on {device} removed"));
+        }
+    }
+
+    /// Install the local user's SSH key towards the user selected in the
+    /// Users panel, on the machine selected in the Added panel. A machine
+    /// action alone is not enough: this is a machine+user action.
     fn install_key_to_selected(&mut self, ctx: &Context, ui: &mut ui::Ui) {
-        let Some(target_name) = &self.added_selected else {
-            ui::log("No device selected in Added pane");
+        let (Some(target_name), Some(target_user)) =
+            (self.added_selected.clone(), self.users_selected.clone())
+        else {
+            ui::log("Select a machine, then one of its users (Right) first");
             return;
         };
-        
-        let Some(target_device) = self.key_to_device.values().find(|m| m.name.as_str() == target_name).cloned() else {
-            ui::log(&format!("Device '{}' not found", target_name));
+        if self.is_temporary_user(&target_name, &target_user) {
+            ui::log(&format!(
+                "  ! {target_user} on {target_name} is temporary — sync git ('s') to get the machine's declared users first"
+            ));
+            return;
+        }
+        let Some(target_device) = self
+            .key_to_device
+            .values()
+            .find(|m| m.name.as_str() == target_name)
+            .cloned()
+        else {
+            ui::log(&format!("Machine '{}' not found", target_name));
             return;
         };
-        
+
         let config_dir = Path::new(ctx.home).join(CONFIG_DIR).join(GIT_DIR);
-        let current_user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
-        let target_user = if target_device.user.is_empty() {
-            current_user.clone()
-        } else {
-            target_device.user.clone()
-        };
+        let current_user = std::env::var("USER")
+            .or_else(|_| std::env::var("LOGNAME"))
+            .unwrap_or_else(|_| "unknown".to_string());
         let target_port = target_device.port;
-        
+
         ui::log(&format!("Installing key to {}@{}", target_user, target_name));
-        
+
         let result = ui.with_clean_terminal(|| {
             crate::tui::key_actions::install_key_action(
                 ctx.home,
                 &config_dir,
                 ctx.local_name,
                 &current_user,
-                target_name,
+                &target_name,
                 &target_user,
                 target_port,
             )
         });
-        
+
         match result {
             Ok(crate::tui::key_actions::KeyActionResult::Success(msg)) => {
                 ui::log(&format!("Success: {}", msg));
@@ -1267,83 +1307,67 @@ impl InteractiveState {
             }
         }
     }
-    
-    /// Remove SSH key from the currently selected device in Added pane
+
+    /// Remove the SSH key connection towards the user selected in the
+    /// Users panel, on the machine selected in the Added panel.
     fn remove_key_from_selected(&mut self, ctx: &Context, ui: &mut ui::Ui) {
-        let Some(target_name) = &self.added_selected else {
-            ui::log("No device selected in Added pane");
+        let (Some(target_name), Some(target_user)) =
+            (self.added_selected.clone(), self.users_selected.clone())
+        else {
+            ui::log("Select a machine, then one of its users (Right) first");
             return;
         };
-        
-        let config_dir = Path::new(ctx.home).join(CONFIG_DIR).join(GIT_DIR);
-        let current_user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
-        
-        // Find first outgoing connection to the selected device
-        let connections_dir = config_dir.join("devices").join(ctx.local_name).join("connections");
-        if !connections_dir.exists() {
-            ui::log("No outgoing connections found");
+        if self.is_temporary_user(&target_name, &target_user) {
+            ui::log(&format!(
+                "  ! {target_user} on {target_name} is temporary — no SSH key connection exists"
+            ));
             return;
         }
-        
-        if let Ok(entries) = std::fs::read_dir(&connections_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("json") {
-                    let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                    // Check if this is an outgoing connection to the selected device
-                    if filename.contains(&format!("{}@", target_name)) {
-                        let connection_id = filename.trim_end_matches(".json").to_string();
-                        let (from_user, to_user, to_device) = crate::cli::key_management::parse_connection_id(&connection_id)
-                            .unwrap_or_default();
-                        
-                        // Look up the device to get its port
-                        let target_port = self.key_to_device.values()
-                            .find(|m| m.name.as_str() == to_device)
-                            .map(|m| m.port)
-                            .unwrap_or(22);
-                        
-                        ui::log(&format!("Removing connection: {}", connection_id));
-                        
-                        let result = ui.with_clean_terminal(|| {
-                            crate::tui::key_actions::remove_key_action(
-                                ctx.home,
-                                &config_dir,
-                                ctx.local_name,
-                                &current_user,
-                                &from_user,
-                                &to_device,
-                                &to_user,
-                                target_port,
-                                &connection_id,
-                            )
-                        });
-                        
-                        match result {
-                            Ok(crate::tui::key_actions::KeyActionResult::Success(msg)) => {
-                                ui::log(&format!("Success: {}", msg));
-                                return;
-                            }
-                            Ok(crate::tui::key_actions::KeyActionResult::Error(msg)) => {
-                                ui::log(&format!("Error: {}", msg));
-                                return;
-                            }
-                            Ok(crate::tui::key_actions::KeyActionResult::Cancelled) => {
-                                ui::log("Removal cancelled");
-                                return;
-                            }
-                            Err(e) => {
-                                ui::log(&format!("Error: {}", e));
-                                return;
-                            }
-                        }
-                    }
-                }
+        let config_dir = Path::new(ctx.home).join(CONFIG_DIR).join(GIT_DIR);
+        let current_user = std::env::var("USER")
+            .or_else(|_| std::env::var("LOGNAME"))
+            .unwrap_or_else(|_| "unknown".to_string());
+
+        let connection_id = format!("{}->{}@{}", current_user, target_user, target_name);
+        let target_port = self
+            .key_to_device
+            .values()
+            .find(|m| m.name.as_str() == target_name)
+            .map(|m| m.port)
+            .unwrap_or(22);
+
+        ui::log(&format!("Removing connection: {}", connection_id));
+
+        let result = ui.with_clean_terminal(|| {
+            crate::tui::key_actions::remove_key_action(
+                ctx.home,
+                &config_dir,
+                ctx.local_name,
+                &current_user,
+                &current_user,
+                &target_name,
+                &target_user,
+                target_port,
+                &connection_id,
+            )
+        });
+
+        match result {
+            Ok(crate::tui::key_actions::KeyActionResult::Success(msg)) => {
+                ui::log(&format!("Success: {}", msg));
+            }
+            Ok(crate::tui::key_actions::KeyActionResult::Error(msg)) => {
+                ui::log(&format!("Error: {}", msg));
+            }
+            Ok(crate::tui::key_actions::KeyActionResult::Cancelled) => {
+                ui::log("Removal cancelled");
+            }
+            Err(e) => {
+                ui::log(&format!("Error: {}", e));
             }
         }
-        
-        ui::log(&format!("No outgoing connections found to {}", target_name));
     }
-    
+
     /// Delete the currently selected device from Added pane
     fn delete_selected_device(&mut self, ctx: &Context, tui: &mut ui::Ui) {
         let Some(name) = self.added_selected.clone() else {
@@ -1371,7 +1395,9 @@ impl InteractiveState {
         self.key_to_device.remove(&key);
         self.pinned_signing_keys.remove(&key);
         self.known_ip.remove(&key);
+        self.temp_users.remove(name.as_str());
         self.added_selected = None;
+        self.users_selected = None;
     }
 }
 

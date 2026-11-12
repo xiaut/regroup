@@ -270,13 +270,10 @@ fn main() {
     let running_listener = running.clone();
     let running_announcer = running.clone();
 
-    // SSH port and user this device's server listens on: taken from our own device config
+    // SSH port this device's server listens on: taken from our own device config
     // (set by the user if the server does not use the default 22), 22 otherwise.
     let local_device = conf.devices.iter().find(|m| m.name.as_str() == local_name);
     let local_ssh_port = local_device.map(|m| m.port).unwrap_or(22);
-    let local_user = local_device.map(|m| m.user.clone()).unwrap_or_else(|| {
-        std::env::var("USER").unwrap_or_else(|_| std::env::var("LOGNAME").unwrap_or_default())
-    });
 
     // Start beacon listener in background (always listen for other devices)
     // Signature verification, beacon age check and IP consistency check are
@@ -298,7 +295,6 @@ fn main() {
                 let identity = BeaconIdentity {
                     name: local_name.clone(),
                     ssh_public_key: local_public_key.clone(),
-                    user: local_user.clone(),
                     ip: ip_for_announcer,
                     ssh_port: local_ssh_port,
                     signing_key,

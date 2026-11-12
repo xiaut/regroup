@@ -310,9 +310,49 @@ pub fn log_style(msg: &str) -> Style {
     }
 }
 
+/// Users sub-panel of the Added pane: the users of the selected machine,
+/// one row per user with the status column (temporary / confirmed / SSH key
+/// installed). Highlighted border when the panel is the active one.
+pub fn render_users_panel(
+    frame: &mut Frame,
+    area: Rect,
+    users: &[super::types::UiUser],
+    selected: Option<usize>,
+    active: bool,
+) {
+    use super::types::UserStatus;
+    let border = if active { Color::Magenta } else { Color::DarkGray };
+    let border_type = if active { BorderType::Double } else { BorderType::Plain };
+    let rows = users.iter().enumerate().map(|(i, u)| {
+        let mut style = match u.status {
+            UserStatus::Temporary => Style::new().fg(Color::Yellow),
+            UserStatus::Confirmed => Style::new().fg(Color::Green),
+            UserStatus::KeyInstalled => Style::new().fg(Color::Cyan),
+        };
+        if selected == Some(i) {
+            style = Style::new().add_modifier(Modifier::REVERSED);
+        }
+        Row::new([Cell::from(u.name.clone()), Cell::from(u.status_label())]).style(style)
+    });
+    let table = Table::new(
+        rows,
+        [Constraint::Percentage(45), Constraint::Percentage(55)],
+    )
+    .header(Row::new(["User", "Status"]).style(Style::new().bold()))
+    .block(
+        Block::bordered()
+            .title(format!("Users — {}", users.len()))
+            .border_type(border_type)
+            .border_style(Style::new().fg(border)),
+    );
+    frame.render_widget(table, area);
+}
+
 /// Render panes based on the active pane.
 /// When a pane is active, it takes the full screen (full-screen mode).
-/// All panes use plain borders (no bold borders).
+/// When several panels are visible at once (the Added pane and its Users
+/// sub-panel), the active one is marked with a double border; a lone
+/// full-screen panel keeps plain borders.
 /// When in MainMenu, show all three panes side-by-side or stacked.
 pub fn render_all_panes(
     frame: &mut Frame,
@@ -327,6 +367,8 @@ pub fn render_all_panes(
     verbose: bool,
     flashes: &HashMap<String, RowFlash>,
     pulses: &HashMap<String, Instant>,
+    users: &[super::types::UiUser],
+    users_selected: Option<usize>,
 ) {
     let width = area.width;
     let height = area.height;
@@ -391,10 +433,25 @@ pub fn render_all_panes(
             );
             frame.render_widget(detected_table, area);
         }
-        ActivePane::Added(_) => {
-            // Full-screen Added pane
+        ActivePane::Added(_) | ActivePane::Users(_) => {
+            // Full-screen machines pane with the Users sub-panel on the
+            // right: the users of the machine selected in the Added panel.
+            let machines_width = (width * 3) / 5;
+            let [machines_area, users_area] = Layout::horizontal([
+                Constraint::Length(machines_width),
+                Constraint::Fill(1),
+            ])
+            .areas(area);
+
             let added_theme = PanelTheme::new("Added", Color::Green, "known");
-            let added_border_style = Style::new().fg(Color::Green);
+            // A deactivated panel (another panel is active) gets gray
+            // borders; the active one keeps its theme color.
+            let added_active = matches!(active_pane, ActivePane::Added(_));
+            let added_border_style = if added_active {
+                Style::new().fg(Color::Green)
+            } else {
+                Style::new().fg(Color::DarkGray)
+            };
             
             let added_rows = added.iter().enumerate().map(|(i, d)| {
                 let now = Instant::now();
@@ -441,10 +498,22 @@ pub fn render_all_panes(
             .block(
                 Block::bordered()
                     .title(format!("Added — {}", added.len()))
-                    .border_type(BorderType::Plain)
+                    .border_type(if added_active {
+                        BorderType::Double
+                    } else {
+                        BorderType::Plain
+                    })
                     .border_style(added_border_style),
             );
-            frame.render_widget(added_table, area);
+            frame.render_widget(added_table, machines_area);
+
+            render_users_panel(
+                frame,
+                users_area,
+                users,
+                users_selected,
+                matches!(active_pane, ActivePane::Users(_)),
+            );
         }
         ActivePane::Logs(_) => {
             // Full-screen Logs pane
@@ -821,6 +890,13 @@ pub fn render_question(
                             .join("   ");
                         (pane.name.to_string(), hint)
                     }
+                    ActivePane::Users(pane) => {
+                        let hint = pane.bindings.iter()
+                            .map(|b| format!("[{}] {}", b.label, b.description))
+                            .collect::<Vec<_>>()
+                            .join("   ");
+                        (pane.name.to_string(), hint)
+                    }
                     ActivePane::Logs(pane) => {
                         let name = if ctx.verbose { "Logs - verbose" } else { pane.name };
                         let hint = pane.bindings.iter()
@@ -871,6 +947,12 @@ pub fn render_question(
                 format!("New name for {name} ([Enter] = {suggested}, [q] = skip)"),
                 Line::from(format!("> {}", ctx.input)),
             ),
+            super::types::Question::AddTempUser(def, device) => (
+                def.title,
+                Color::Cyan,
+                format!("Temporary user on {device} (in memory only, for git sync until its declared users arrive)"),
+                Line::from(format!("> {}", ctx.input)),
+            ),
             super::types::Question::Delete(def, name) => (
                 def.title,
                 Color::Red,
@@ -911,75 +993,6 @@ pub fn render_question(
                     hint_spans(&hint, ctx.key_flash)
                 },
             ),
-            super::types::Question::InstallKeySelectDevice(def, devices) => (
-                def.title,
-                Color::Green,
-                format!("Select target device ({} available)", devices.len()),
-                {
-                    let hint = def.bindings.iter()
-                        .map(|b| format!("[{}] {}", b.label, b.description))
-                        .collect::<Vec<_>>()
-                        .join("   ");
-                    hint_spans(&hint, ctx.key_flash)
-                },
-            ),
-            super::types::Question::InstallKeySelectUser(def, device, users) => (
-                def.title,
-                Color::Green,
-                format!("Select user on {device} ({} available)", users.len()),
-                {
-                    let hint = def.bindings.iter()
-                        .map(|b| format!("[{}] {}", b.label, b.description))
-                        .collect::<Vec<_>>()
-                        .join("   ");
-                    hint_spans(&hint, ctx.key_flash)
-                },
-            ),
-            super::types::Question::InstallKeyConfirm(def, from_user, from_device, to_user, to_device) => (
-                def.title,
-                Color::Green,
-                format!(
-                    "Install key from {}@{} to {}@{}?",
-                    from_user, from_device, to_user, to_device
-                ),
-                {
-                    let hint = def.bindings.iter()
-                        .map(|b| format!("[{}] {}", b.label, b.description))
-                        .collect::<Vec<_>>()
-                        .join("   ");
-                    hint_spans(&hint, ctx.key_flash)
-                },
-            ),
-            super::types::Question::RemoveKeySelectConnection(def, connections) => (
-                def.title,
-                Color::Red,
-                format!(
-                    "Select connection to remove ({} available)",
-                    connections.len()
-                ),
-                {
-                    let hint = def.bindings.iter()
-                        .map(|b| format!("[{}] {}", b.label, b.description))
-                        .collect::<Vec<_>>()
-                        .join("   ");
-                    hint_spans(&hint, ctx.key_flash)
-                },
-            ),
-            super::types::Question::RemoveKeyConfirm(def, connection_id, from_user, from_device, to_user, to_device) => (
-                def.title,
-                Color::Red,
-                format!(
-                    "Remove key {} ({}@{}) from {}@{}?",
-                    connection_id, from_user, from_device, to_user, to_device
-                ),
-                {
-                    let hint = def.bindings.iter()
-                        .map(|b| format!("[{}] {}", b.label, b.description))
-                        .collect::<Vec<_>>()
-                        .join("   ");
-                    hint_spans(&hint, ctx.key_flash)
-                },
-            ),
         }
     };
     let text = Text::from(vec![
@@ -996,7 +1009,10 @@ pub fn render_question(
             ),
         area,
     );
-    if matches!(question, super::types::Question::Rename { .. }) {
+    if matches!(
+        question,
+        super::types::Question::Rename { .. } | super::types::Question::AddTempUser { .. }
+    ) {
         // Second line inside the block: "> " prefix plus the typed name.
         let x = area.x + 1 + 2 + ctx.input.chars().count() as u16;
         let y = area.y + 2;

@@ -100,11 +100,7 @@ pub enum Question {
     Wipe { count: usize },
     SetupCd { file: String },
     // SSH key management questions
-    InstallKeySelectDevice { devices: Vec<String> },
-    InstallKeySelectUser { device: String, users: Vec<String> },
-    InstallKeyConfirm { ... },
-    RemoveKeySelectConnection { ... },
-    RemoveKeyConfirm { ... },
+    AddTempUser { device: String }, // Users panel, input handled like Rename
 }
 ```
 
@@ -136,12 +132,14 @@ pub enum Action {
     SetupCdConfirm,
     SetupCdCancel,
     ConnectionsMode,
-    InstallKeyMode,
-    InstallKeyConfirm,
-    InstallKeyCancel,
-    RemoveKeyMode,
-    RemoveKeyConfirm,
-    RemoveKeyCancel,
+    SwitchToUsers,
+    BackToAdded,
+    UsersSelectPrev,
+    UsersSelectNext,
+    AddTempUser,
+    TempUserName(String),
+    CancelTempUser,
+    RemoveTempUser,
     ToggleVerbose,
     Help,
 }
@@ -231,7 +229,16 @@ The TUI interface uses **ratatui** (formerly tui-rs) with **crossterm** for term
 ### Panels
 
 - **Detected panel** (left, yellow): Devices that have announced but not been accepted
-- **Added panel** (right, green): Devices already in the configuration
+- **Added panel** (right, green): Devices already in the configuration.
+  When full-screen (active), a **Users sub-panel** on the right lists the
+  users of the selected machine with their status (temporary — to confirm /
+  confirmed / SSH key installed). Selection is multi-level: no user is
+  selected until you navigate into the sub-panel (Right), which selects the
+  first user; the machine (the parent) stays selected while you refine the
+  selection on one of its users, and Left drops the user selection. Machine+user
+  actions (install/remove SSH key) live there and only appear for a confirmed
+  user; a temporary user only allows the git sync that brings the machine's
+  declared users.
 - **Activity pane** (middle): General messages and logs
 - **Question block** (bottom): Current question and available actions
 
@@ -276,6 +283,7 @@ Add device2 (192.168.1.101) to config? [y/N/q/s]: n
 | `q` | Quit |
 | `s` | Sync git (pull/push) |
 | `d` | Delete mode (select device to delete) |
+| `Right` | Users panel of the selected machine (from the Added panel) |
 | `w` | Wipe configuration |
 | `c` | Setup regroup-cd shell function |
 | `k` | Connections management |
@@ -338,6 +346,8 @@ The UI uses color and styling to convey information:
 | Warning | Yellow, blinking |
 | Security | Red, blinking |
 | Selected row | Reversed colors |
+| Active panel (several visible) | Double border, theme color; lone full-screen panels keep plain borders |
+| Deactivated panel (another one active) | Gray border |
 | Beacon pulse | Cyan background (bright) → bold cyan → bold base |
 
 ## Help Panel

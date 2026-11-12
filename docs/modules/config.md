@@ -31,7 +31,6 @@ pub struct Device {
     pub name: String,
     pub ssh_public_key: SshPublicKey,
     pub signing_public_key: SigningPublicKeyB64,
-    pub user: String,
     pub port: u16,
     pub port_explicit: bool,  // True if port was explicitly set
 }

@@ -22,7 +22,6 @@ Each device file contains:
 - `name`: Device name (must be unique)
 - `ssh_public_key`: SSH server host key (unique identifier)
 - `signing_public_key`: Ed25519 signing key (pinned at first acceptance)
-- `user`: Primary user associated with this device
 - `port`: SSH port (default: 22)
 
 ## Write Ownership
