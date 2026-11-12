@@ -18,10 +18,10 @@ impl KeyBinding {
 
 /// A hint entry for the action bar: one or more equivalent keys that
 /// trigger the same action, shown as `[Enter/Right] fullscreen`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Hint {
     /// Key labels joined with `/`, e.g. "Enter/Right".
-    pub keys: &'static str,
+    pub keys: String,
     /// What the key does, e.g. "fullscreen".
     pub description: &'static str,
 }
@@ -243,116 +243,151 @@ impl Navigation {
         }
     }
 
-    /// Hints for the action bar: the keys that actually work in this state.
-    /// Each Hint groups equivalent keys (e.g. "Enter/Right" for "go deeper").
-    /// These must match what `handle_key` and `list_nav_action` accept.
-    pub fn hints(&self, has_users: bool, confirmed_user: bool) -> &'static [Hint] {
+    /// Hints for the action bar, built dynamically from two sources:
+    /// navigation keys (arrows/Enter/Esc, from the state machine) and
+    /// command keys (character shortcuts, per pane). Entries that share
+    /// the same description are merged, e.g. `[Left/d] Detected`.
+    pub fn hints(&self, has_users: bool, confirmed_user: bool) -> Vec<Hint> {
+        let mut actions: Vec<(&'static str, &'static str)> = Vec::new();
+        actions.extend(self.nav_keys(has_users));
+        actions.extend(self.command_keys(confirmed_user));
+        merge_hints(&actions)
+    }
+
+    /// Navigation keys that work in this state (from `handle_key` +
+    /// `list_nav_action`). Returns (key_label, description) pairs.
+    fn nav_keys(&self, has_users: bool) -> Vec<(&'static str, &'static str)> {
         use NavDepth::*;
         use NavFocus::*;
         match (self.focus, self.depth) {
-            // Overview: directional entry into panels
-            (Center, None) => &[
-                Hint { keys: "Left", description: "Detected" },
-                Hint { keys: "Right", description: "Added" },
-                Hint { keys: "Dn", description: "Logs" },
-                Hint { keys: "d", description: "Detected" },
-                Hint { keys: "a", description: "Added" },
-                Hint { keys: "l", description: "Logs" },
-                Hint { keys: "?", description: "help" },
-                Hint { keys: "q", description: "quit" },
+            (Center, None) => vec![
+                ("Left", "Detected"),
+                ("Right", "Added"),
+                ("Dn", "Logs"),
             ],
-            // Detected selected: go fullscreen or back
-            (Detected, Some(Selected)) => &[
-                Hint { keys: "Enter/Right", description: "fullscreen" },
-                Hint { keys: "Esc/Left", description: "back" },
-                Hint { keys: "?", description: "help" },
+            (Detected, Some(Selected)) => vec![
+                ("Enter", "fullscreen"),
+                ("Right", "fullscreen"),
+                ("Esc", "back"),
+                ("Left", "back"),
             ],
-            // Detected fullscreen: list selection + actions
-            (Detected, Some(Fullscreen)) => &[
-                Hint { keys: "Esc/Left", description: "back" },
-                Hint { keys: "Up/Dn", description: "select" },
-                Hint { keys: "a", description: "add" },
-                Hint { keys: "n", description: "ignore" },
-                Hint { keys: "q", description: "no pane" },
-                Hint { keys: "?", description: "help" },
+            (Detected, Some(Fullscreen)) => vec![
+                ("Esc", "back"),
+                ("Left", "back"),
+                ("Up", "select"),
+                ("Dn", "select"),
             ],
-            // Added selected
-            (Added, Some(Selected)) => &[
-                Hint { keys: "Enter/Right", description: "fullscreen" },
-                Hint { keys: "Esc/Left", description: "back" },
-                Hint { keys: "?", description: "help" },
+            (Added, Some(Selected)) => vec![
+                ("Enter", "fullscreen"),
+                ("Right", "fullscreen"),
+                ("Esc", "back"),
+                ("Left", "back"),
             ],
-            // Added fullscreen: machines list + actions + users sub-panel
             (Added, Some(Fullscreen)) => {
+                let mut v = vec![
+                    ("Esc", "back"),
+                    ("Left", "back"),
+                    ("Up", "select"),
+                    ("Dn", "select"),
+                ];
                 if has_users {
-                    &[
-                        Hint { keys: "Enter/Right", description: "users" },
-                        Hint { keys: "Esc/Left", description: "back" },
-                        Hint { keys: "Up/Dn", description: "select" },
-                        Hint { keys: "d", description: "delete" },
-                        Hint { keys: "s", description: "sync" },
-                        Hint { keys: "w", description: "wipe" },
-                        Hint { keys: "c", description: "setup-cd" },
-                        Hint { keys: "q", description: "no pane" },
-                        Hint { keys: "?", description: "help" },
-                    ]
-                } else {
-                    &[
-                        Hint { keys: "Esc/Left", description: "back" },
-                        Hint { keys: "Up/Dn", description: "select" },
-                        Hint { keys: "d", description: "delete" },
-                        Hint { keys: "s", description: "sync" },
-                        Hint { keys: "w", description: "wipe" },
-                        Hint { keys: "c", description: "setup-cd" },
-                        Hint { keys: "q", description: "no pane" },
-                        Hint { keys: "?", description: "help" },
-                    ]
+                    v.push(("Enter", "users"));
+                    v.push(("Right", "users"));
                 }
+                v
             }
-            // Users sub-panel fullscreen
-            (Users, Some(Fullscreen)) => {
-                if confirmed_user {
-                    &[
-                        Hint { keys: "Esc/Left", description: "machines" },
-                        Hint { keys: "Up/Dn", description: "select" },
-                        Hint { keys: "i", description: "install key" },
-                        Hint { keys: "r", description: "remove key" },
-                        Hint { keys: "a", description: "add temp user" },
-                        Hint { keys: "s", description: "sync" },
-                        Hint { keys: "q", description: "no pane" },
-                        Hint { keys: "?", description: "help" },
-                    ]
-                } else {
-                    &[
-                        Hint { keys: "Esc/Left", description: "machines" },
-                        Hint { keys: "Up/Dn", description: "select" },
-                        Hint { keys: "a", description: "add temp user" },
-                        Hint { keys: "x", description: "remove temp user" },
-                        Hint { keys: "s", description: "sync" },
-                        Hint { keys: "q", description: "no pane" },
-                        Hint { keys: "?", description: "help" },
-                    ]
-                }
-            }
-            // Logs selected
-            (Logs, Some(Selected)) => &[
-                Hint { keys: "Enter/Right/Dn", description: "fullscreen" },
-                Hint { keys: "Esc", description: "back" },
-                Hint { keys: "?", description: "help" },
+            (Users, Some(Fullscreen)) => vec![
+                ("Esc", "machines"),
+                ("Left", "machines"),
+                ("Up", "select"),
+                ("Dn", "select"),
             ],
-            // Logs fullscreen: arrows scroll, only Esc exits
-            (Logs, Some(Fullscreen)) => &[
-                Hint { keys: "Esc", description: "back" },
-                Hint { keys: "Up/Dn", description: "scroll" },
-                Hint { keys: "PgUp/PgDn", description: "scroll page" },
-                Hint { keys: "v", description: "verbose" },
-                Hint { keys: "q", description: "no pane" },
-                Hint { keys: "?", description: "help" },
+            (Logs, Some(Selected)) => vec![
+                ("Enter", "fullscreen"),
+                ("Right", "fullscreen"),
+                ("Dn", "fullscreen"),
+                ("Esc", "back"),
             ],
-            // Fallback
-            _ => &[],
+            (Logs, Some(Fullscreen)) => vec![
+                ("Esc", "back"),
+                ("Up", "scroll"),
+                ("Dn", "scroll"),
+                ("PgUp", "scroll page"),
+                ("PgDn", "scroll page"),
+            ],
+            _ => vec![],
         }
     }
+
+    /// Command keys (character shortcuts) available in this state.
+    /// Returns (key_label, description) pairs.
+    fn command_keys(&self, confirmed_user: bool) -> Vec<(&'static str, &'static str)> {
+        use NavDepth::*;
+        use NavFocus::*;
+        match (self.focus, self.depth) {
+            (Center, None) => vec![
+                ("d", "Detected"),
+                ("a", "Added"),
+                ("l", "Logs"),
+                ("?", "help"),
+                ("q", "quit"),
+            ],
+            (Detected, Some(Selected)) => vec![("?", "help")],
+            (Detected, Some(Fullscreen)) => vec![
+                ("a", "add"),
+                ("n", "ignore"),
+                ("q", "no pane"),
+                ("?", "help"),
+            ],
+            (Added, Some(Selected)) => vec![("?", "help")],
+            (Added, Some(Fullscreen)) => vec![
+                ("d", "delete"),
+                ("s", "sync"),
+                ("w", "wipe"),
+                ("c", "setup-cd"),
+                ("q", "no pane"),
+                ("?", "help"),
+            ],
+            (Users, Some(Fullscreen)) => {
+                let mut v = vec![("s", "sync"), ("q", "no pane"), ("?", "help")];
+                if confirmed_user {
+                    v.extend([("i", "install key"), ("r", "remove key"), ("a", "add temp user")]);
+                } else {
+                    v.extend([("a", "add temp user"), ("x", "remove temp user")]);
+                }
+                v
+            }
+            (Logs, Some(Selected)) => vec![("?", "help")],
+            (Logs, Some(Fullscreen)) => vec![
+                ("v", "verbose"),
+                ("q", "no pane"),
+                ("?", "help"),
+            ],
+            _ => vec![],
+        }
+    }
+}
+
+/// Merge (key, description) pairs into Hints, joining keys that share
+/// the same description: ("Left", "Detected") + ("d", "Detected")
+/// becomes Hint { keys: "Left/d", description: "Detected" }.
+fn merge_hints(actions: &[(&'static str, &'static str)]) -> Vec<Hint> {
+    let mut order: Vec<&'static str> = Vec::new();
+    let mut map: Vec<(&'static str, Vec<&'static str>)> = Vec::new();
+    for &(key, desc) in actions {
+        if let Some(entry) = map.iter_mut().find(|(d, _)| *d == desc) {
+            if !entry.1.contains(&key) {
+                entry.1.push(key);
+            }
+        } else {
+            map.push((desc, vec![key]));
+            order.push(desc);
+        }
+    }
+    order.iter().map(|desc| {
+        let keys = map.iter().find(|(d, _)| d == desc).unwrap().1.join("/");
+        Hint { keys, description: desc }
+    }).collect()
 }
 
 /// Direction for navigation.
