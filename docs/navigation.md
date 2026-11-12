@@ -10,13 +10,18 @@ panel is engaged. Arrows move the user **directionally**: a key points toward
 the panel in that direction, and each further press in the same direction
 goes one step deeper. The opposite arrow rewinds one step at a time.
 
+- **`Enter` / `Esc`** — always offered, in addition to the arrows, and
+  listed first wherever keys are shown. `Enter` goes one level deeper in
+  the context hierarchy, `Esc` goes one level back. They are the
+  guaranteed, always-available keys; the arrows are the ergonomic path.
 - **Arrows** — primary navigation: direction toward a panel, then deeper
   into it (selection, fullscreen, sub-panel). Inside a list, `Up`/`Down`
   move the selection and **wrap around** (loop) at the ends.
-- **`Enter`** — last resort only: enter a sub-context when the arrows are
-  already consumed by the content (e.g. zooming the fullscreen logs).
-- **`Esc`** — last resort only: go back one level when the arrows are
-  already consumed by the content.
+
+Navigation is the deliberate exception to the project rule "one action,
+one key": every navigation step is reachable both via the arrows and via
+`Enter`/`Esc`, except where an arrow is consumed by the content (e.g.
+scrolling the fullscreen Logs, where `Esc` is the only way out).
 
 Navigation is deliberately decomposed into small, explicit steps: selecting
 a panel does nothing by itself beyond highlighting it; each press has one
@@ -91,7 +96,7 @@ further presses walk into it; `Right` rewinds.
 
 Once the Logs panel is fullscreen, `Up`/`Down` (and `PgUp`/`PgDn`)
 scroll the content — the arrow cannot be used to zoom out anymore. This is
-where the last-resort keys apply: **`Esc` is the only way to leave the
+where the fallback keys apply: **`Esc` is the only way to leave the
 fullscreen Logs panel** (collapse back to the dashboard).
 
 ### List selection
@@ -106,10 +111,10 @@ described above.
 
 | Key | Meaning |
 |-----|---------|
+| `Enter` | Go one level deeper in the context hierarchy (always available; listed first) |
+| `Esc` | Go one level back (always available; listed first; only exit from the fullscreen Logs panel) |
 | `Up`/`Down`/`Left`/`Right` | Walk directionally: overview → panel selected → fullscreen → sub-panel; opposite key rewinds |
 | `Up`/`Down` (in a list) | Move selection, wrapping around at the ends |
-| `Enter` | Last resort: enter a sub-context when arrows are consumed |
-| `Esc` | Last resort: go back one level when arrows are consumed (only exit from the fullscreen Logs panel) |
 | `PgUp`/`PgDn` | Scroll scrollable content (Logs pane, help) |
 
 Character shortcuts (`q` quit, `s` sync, `d` delete, `w` wipe, `c` setup-cd,

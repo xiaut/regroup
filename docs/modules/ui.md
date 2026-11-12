@@ -290,9 +290,9 @@ Add device2 (192.168.1.101) to config? [y/N/q/s]: n
 | `r` | Remove SSH key |
 | `v` | Toggle verbose mode |
 | `?` | Toggle help panel |
+| `Enter` | Go one level deeper in the context hierarchy (always offered, listed first) |
+| `Esc` | Go one level back (always offered, listed first; only exit from the fullscreen Logs panel) |
 | `Up/Dn/Left/Right` | Walk directionally from the virtual center: overview → panel selected → fullscreen → sub-panel; opposite key rewinds (see [navigation.md](../navigation.md)) |
-| `Enter` | Last resort: enter a sub-context when arrows are consumed (e.g. logs fullscreen) |
-| `Esc` | Last resort: go back one level when arrows are consumed; only exit from the fullscreen Logs panel |
 | `PgUp/PgDn` | Scroll Logs pane |
 
 ### In Detected Panel
