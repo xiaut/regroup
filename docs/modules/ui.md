@@ -343,6 +343,7 @@ The UI uses color and styling to convey information:
 | Warning | Yellow, blinking |
 | Security | Red, blinking |
 | Selected row | Reversed colors |
+| Active panel (several visible) | Double border; lone full-screen panels keep plain borders |
 | Beacon pulse | Cyan background (bright) → bold cyan → bold base |
 
 ## Help Panel

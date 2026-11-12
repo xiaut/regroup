@@ -322,6 +322,7 @@ pub fn render_users_panel(
 ) {
     use super::types::UserStatus;
     let border = if active { Color::Magenta } else { Color::DarkGray };
+    let border_type = if active { BorderType::Double } else { BorderType::Plain };
     let rows = users.iter().enumerate().map(|(i, u)| {
         let mut style = match u.status {
             UserStatus::Temporary => Style::new().fg(Color::Yellow),
@@ -341,7 +342,7 @@ pub fn render_users_panel(
     .block(
         Block::bordered()
             .title(format!("Users — {}", users.len()))
-            .border_type(BorderType::Plain)
+            .border_type(border_type)
             .border_style(Style::new().fg(border)),
     );
     frame.render_widget(table, area);
@@ -349,7 +350,9 @@ pub fn render_users_panel(
 
 /// Render panes based on the active pane.
 /// When a pane is active, it takes the full screen (full-screen mode).
-/// All panes use plain borders (no bold borders).
+/// When several panels are visible at once (the Added pane and its Users
+/// sub-panel), the active one is marked with a double border; a lone
+/// full-screen panel keeps plain borders.
 /// When in MainMenu, show all three panes side-by-side or stacked.
 pub fn render_all_panes(
     frame: &mut Frame,
@@ -488,7 +491,11 @@ pub fn render_all_panes(
             .block(
                 Block::bordered()
                     .title(format!("Added — {}", added.len()))
-                    .border_type(BorderType::Plain)
+                    .border_type(if matches!(active_pane, ActivePane::Added(_)) {
+                        BorderType::Double
+                    } else {
+                        BorderType::Plain
+                    })
                     .border_style(added_border_style),
             );
             frame.render_widget(added_table, machines_area);
