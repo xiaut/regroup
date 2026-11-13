@@ -655,13 +655,6 @@ impl InteractiveState {
     fn handle_action(&mut self, ctx: &Context, tui: &mut ui::Ui, action: Action) -> bool {
         match action {
             Action::Quit => return true,
-            Action::BackToMainMenu => {
-                self.navigation = Navigation::overview();
-                self.active_pane = ActivePane::main_menu();
-                self.pending_selected = None;
-                self.added_selected = None;
-                return false;
-            }
             Action::Sync => {
                 // Dry run must not modify anything: skip git sync
                 if ctx.dry_run {
@@ -766,20 +759,6 @@ impl InteractiveState {
                     self.move_pending_selection(true);
                 }
             }
-            Action::SwitchToDetected => {
-                self.navigation = Navigation { focus: NavFocus::Detected, depth: Some(NavDepth::Fullscreen) };
-                self.active_pane = ActivePane::detected();
-                self.added_selected = None;
-                // Initialize pending_selected if there are pending devices
-                if self.pending_selected.is_none() && !self.pending_devices.is_empty() {
-                    self.pending_selected = Some(self.pending_devices[0].ssh_public_key.clone());
-                }
-            }
-            Action::SwitchToAdded => {
-                self.navigation = Navigation { focus: NavFocus::Added, depth: Some(NavDepth::Fullscreen) };
-                self.active_pane = ActivePane::added();
-                self.pending_selected = None;
-            }
             Action::SwitchToUsers => {
                 // Only reachable from the Added pane with a machine
                 // selected (the tty gates the key). No user is selected
@@ -814,12 +793,6 @@ impl InteractiveState {
             }
             Action::RemoveTempUser => {
                 self.remove_temp_user();
-            }
-            Action::SwitchToLogs => {
-                self.navigation = Navigation { focus: NavFocus::Logs, depth: Some(NavDepth::Fullscreen) };
-                self.active_pane = ActivePane::logs();
-                self.pending_selected = None;
-                self.added_selected = None;
             }
             Action::DeleteConfirm => self.delete_selected(ctx, tui),
             Action::DeleteCancel => self.delete_selection = None,

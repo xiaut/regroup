@@ -13,7 +13,7 @@ use ratatui::layout::{Constraint, Layout};
 use ratatui::DefaultTerminal;
 
 use super::render::{key_label, render_all_panes, render_help, render_question, KeyFlash, QuestionCtx, RowFlash};
-use super::types::{ActivePane, Action, NavDepth, NavFocus, Navigation, Question, UiDevice, UiEvent, UiUser, UserStatus};
+use super::types::{ActivePane, Action, NavFocus, Navigation, Question, UiDevice, UiEvent, UiUser, UserStatus};
 
 /// Calculate how many lines a text will occupy when wrapped to fit a given width.
 /// For hint-like text with "   " (three spaces) separators, treats each token as non-breakable.
@@ -414,24 +414,12 @@ impl TtyUi {
         // Check if we're in a modal question (not Idle)
         let in_modal = in_delete || in_wipe || in_setup || in_rename || in_add_temp_user || self.show_help;
         
-        // 'q' key: close help panel, or return to MainMenu/quit from pane
+        // 'q' key: close help panel, or quit
         if matches!(key.code, crossterm::event::KeyCode::Char('q')) {
             if self.show_help {
                 self.show_help = false;
                 self.help_scroll = 0;
                 return None;
-            }
-            // Only handle 'q' for pane navigation if in Idle mode (no question active)
-            if matches!(self.question, Question::Idle(_)) {
-                if self.active_pane != ActivePane::main_menu() {
-                    self.navigation = Navigation::overview();
-                    self.active_pane = ActivePane::main_menu();
-                    self.detected_selected = None;
-                    self.added_selected = None;
-                    return Some(Action::BackToMainMenu);
-                } else {
-                    return Some(Action::Quit);
-                }
             }
             // For non-Idle questions, quit (preserving original behavior)
             // except the input questions, which have their own handler
@@ -701,43 +689,6 @@ impl TtyUi {
                 }
                 crossterm::event::KeyCode::Char('v') => {
                     return Some(Action::ToggleVerbose);
-                }
-                _ => {}
-            }
-        }
-        
-        // Pane navigation by letters only (NO TAB)
-        // 'q' returns to no active pane (MainMenu)
-        // Only handle pane navigation if we're not currently in that pane
-        // This allows pane-specific actions (like 'a' to add in Detected pane) to take precedence
-        if !in_modal {
-            match key.code {
-                crossterm::event::KeyCode::Char('d') => {
-                    // Only switch to Detected if we're not already there
-                    if !matches!(self.active_pane, ActivePane::Detected(_)) {
-                        self.navigation = Navigation { focus: NavFocus::Detected, depth: Some(NavDepth::Fullscreen) };
-                        self.active_pane = ActivePane::detected();
-                        self.log_scroll = 0;
-                        return Some(Action::SwitchToDetected);
-                    }
-                }
-                crossterm::event::KeyCode::Char('a') => {
-                    // Only switch to Added if we're not already there
-                    if !matches!(self.active_pane, ActivePane::Added(_)) {
-                        self.navigation = Navigation { focus: NavFocus::Added, depth: Some(NavDepth::Fullscreen) };
-                        self.active_pane = ActivePane::added();
-                        self.log_scroll = 0;
-                        return Some(Action::SwitchToAdded);
-                    }
-                }
-                crossterm::event::KeyCode::Char('l') => {
-                    // Only switch to Logs if we're not already there
-                    if !matches!(self.active_pane, ActivePane::Logs(_)) {
-                        self.navigation = Navigation { focus: NavFocus::Logs, depth: Some(NavDepth::Fullscreen) };
-                        self.active_pane = ActivePane::logs();
-                        self.log_scroll = 0;
-                        return Some(Action::SwitchToLogs);
-                    }
                 }
                 _ => {}
             }

@@ -312,9 +312,6 @@ impl Navigation {
         use NavFocus::*;
         match (self.focus, self.depth) {
             (Center, None) => vec![
-                ("d", "Detected"),
-                ("a", "Added"),
-                ("l", "Logs"),
                 ("?", "help"),
                 ("q", "quit"),
             ],
@@ -322,7 +319,6 @@ impl Navigation {
             (Detected, Some(Fullscreen)) => vec![
                 ("a", "add"),
                 ("n", "ignore"),
-                ("q", "no pane"),
                 ("?", "help"),
             ],
             (Added, Some(Selected)) => vec![("?", "help")],
@@ -331,11 +327,10 @@ impl Navigation {
                 ("s", "sync"),
                 ("w", "wipe"),
                 ("c", "setup-cd"),
-                ("q", "no pane"),
                 ("?", "help"),
             ],
             (Users, Some(Fullscreen)) => {
-                let mut v = vec![("s", "sync"), ("q", "no pane"), ("?", "help")];
+                let mut v = vec![("s", "sync"), ("?", "help")];
                 if confirmed_user {
                     v.extend([("i", "install key"), ("r", "remove key"), ("a", "add temp user")]);
                 } else {
@@ -346,7 +341,6 @@ impl Navigation {
             (Logs, Some(Selected)) => vec![("?", "help")],
             (Logs, Some(Fullscreen)) => vec![
                 ("v", "verbose"),
-                ("q", "no pane"),
                 ("?", "help"),
             ],
             _ => vec![],
@@ -556,14 +550,6 @@ pub enum Action {
     RemoveKeyFromSelected,
     /// Delete the currently selected device in Added pane.
     DeleteSelected,
-    /// Return to Main menu from any pane (key 'q').
-    BackToMainMenu,
-    /// Switch to Detected pane (key 'd').
-    SwitchToDetected,
-    /// Switch to Added pane (key 'a').
-    SwitchToAdded,
-    /// Switch to Logs pane (key 'l').
-    SwitchToLogs,
     /// Print the CLI help (plain mode; the full-screen ui shows its help
     /// panel instead, toggled by '?').
     Help,
@@ -594,9 +580,6 @@ pub static MAIN_MENU_PANE: Pane = Pane {
         KeyBinding::new(KeyCode::Left, "Left", "Detected"),
         KeyBinding::new(KeyCode::Right, "Right", "Added"),
         KeyBinding::new(KeyCode::Down, "Dn", "Logs"),
-        KeyBinding::new(KeyCode::Char('d'), "d", "Detected"),
-        KeyBinding::new(KeyCode::Char('a'), "a", "Added"),
-        KeyBinding::new(KeyCode::Char('l'), "l", "Logs"),
         KeyBinding::new(KeyCode::Char('?'), "?", "help"),
         KeyBinding::new(KeyCode::Char('q'), "q", "quit"),
     ],
@@ -611,7 +594,6 @@ pub static DETECTED_PANE: Pane = Pane {
         KeyBinding::new(KeyCode::Down, "Dn", "select"),
         KeyBinding::new(KeyCode::Char('a'), "a", "add"),
         KeyBinding::new(KeyCode::Char('n'), "n", "ignore"),
-        KeyBinding::new(KeyCode::Char('q'), "q", "no pane"),
         KeyBinding::new(KeyCode::Char('?'), "?", "help"),
     ],
 };
@@ -628,7 +610,6 @@ pub static ADDED_PANE: Pane = Pane {
         KeyBinding::new(KeyCode::Char('s'), "s", "sync"),
         KeyBinding::new(KeyCode::Char('w'), "w", "wipe"),
         KeyBinding::new(KeyCode::Char('c'), "c", "setup-cd"),
-        KeyBinding::new(KeyCode::Char('q'), "q", "no pane"),
         KeyBinding::new(KeyCode::Char('?'), "?", "help"),
     ],
 };
@@ -646,7 +627,6 @@ pub static USERS_PANE_CONFIRMED: Pane = Pane {
         KeyBinding::new(KeyCode::Char('r'), "r", "remove key"),
         KeyBinding::new(KeyCode::Char('a'), "a", "add temp user"),
         KeyBinding::new(KeyCode::Char('s'), "s", "sync"),
-        KeyBinding::new(KeyCode::Char('q'), "q", "no pane"),
         KeyBinding::new(KeyCode::Char('?'), "?", "help"),
     ],
 };
@@ -664,7 +644,6 @@ pub static USERS_PANE_TEMPORARY: Pane = Pane {
         KeyBinding::new(KeyCode::Char('a'), "a", "add temp user"),
         KeyBinding::new(KeyCode::Char('x'), "x", "remove temp user"),
         KeyBinding::new(KeyCode::Char('s'), "s", "sync"),
-        KeyBinding::new(KeyCode::Char('q'), "q", "no pane"),
         KeyBinding::new(KeyCode::Char('?'), "?", "help"),
     ],
 };
@@ -679,7 +658,6 @@ pub static LOGS_PANE: Pane = Pane {
         KeyBinding::new(KeyCode::PageUp, "PgUp", "scroll page"),
         KeyBinding::new(KeyCode::PageDown, "PgDn", "scroll page"),
         KeyBinding::new(KeyCode::Char('v'), "v", "toggle verbose"),
-        KeyBinding::new(KeyCode::Char('q'), "q", "no pane"),
         KeyBinding::new(KeyCode::Char('?'), "?", "help"),
     ],
 };
