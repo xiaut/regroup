@@ -14,27 +14,24 @@ use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, BorderType, Cell, Paragraph, Row, Table, Wrap};
 
+use super::keys::{self, Context};
 use super::logging::{BLINK_MS, KEY_FLASH_MS, PULSE_MS};
-use super::types::{
-    bindings_hint_text, ActivePane, Level, Navigation, QuestionDef, GLOBAL_BINDINGS, HELP_BINDINGS,
-};
+use super::types::{bindings_hint_text, ActivePane, Level, QuestionDef, HELP_BINDINGS};
 
-/// Hint text for the Idle action bar, built from the navigation key
-/// table — the same table key presses are dispatched through.
-pub fn idle_hint_text(nav: &Navigation, has_users: bool, confirmed_user: bool) -> String {
-    nav.hints(has_users, confirmed_user)
+/// Hint text for the Idle action bar, built from the pane's key list —
+/// the same list key presses are dispatched through.
+pub fn idle_hint_text(ctx: Context) -> String {
+    keys::hints(ctx)
         .iter()
         .map(|h| format!("[{}] {}", h.keys, h.description))
         .collect::<Vec<_>>()
         .join("   ")
 }
 
-/// Hint text for a modal question: the question's own bindings plus the
-/// global keys ('q' quit), exactly what key presses are resolved against.
+/// Hint text for a modal question: the question's own bindings, exactly
+/// what key presses are resolved against.
 pub fn modal_hint_text(def: &QuestionDef) -> String {
-    let mut bindings = def.bindings.to_vec();
-    bindings.extend(GLOBAL_BINDINGS.iter().cloned());
-    bindings_hint_text(&bindings)
+    bindings_hint_text(def.bindings)
 }
 
 /// Hint text while the help panel is open.
@@ -92,8 +89,6 @@ pub struct QuestionCtx<'a> {
     pub active_pane: super::types::ActivePane,
     /// Current navigation state (focus + depth), drives the hint line.
     pub navigation: super::types::Navigation,
-    /// Whether the Users panel has users (drives Added-pane hints).
-    pub has_users: bool,
     /// Whether the selected user is confirmed (drives Users-pane hints).
     pub confirmed_user: bool,
     /// Last key press, highlighted in the hint line while recent.
@@ -959,7 +954,11 @@ pub fn render_question(
                 // Hint line driven by the navigation key table: shows the
                 // keys that are actually handled in the current focus + depth.
                 let status_line = ctx.active_pane.name().to_string();
-                let hint = idle_hint_text(&ctx.navigation, ctx.has_users, ctx.confirmed_user);
+                let hint = idle_hint_text(Context::Pane {
+                    focus: ctx.navigation.focus,
+                    depth: ctx.navigation.depth,
+                    confirmed_user: ctx.confirmed_user,
+                });
                 (
                     def.title,
                     Color::Blue,

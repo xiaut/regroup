@@ -12,7 +12,7 @@ use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 use ratatui::layout::{Constraint, Layout};
 use ratatui::DefaultTerminal;
 
-use super::keys::{resolve, KeyContext, KeyResolution};
+use super::keys::{resolve, Context, KeyResolution};
 use super::render::{
     help_hint_text, idle_hint_text, key_label, modal_hint_text, render_all_panes, render_help,
     render_question, KeyFlash, QuestionCtx, RowFlash,
@@ -89,7 +89,11 @@ fn calculate_question_height(question: &Question, ctx: &QuestionCtx, width: u16)
         Question::Idle(_) => {
             // Hint line driven by the navigation key table, same as render_question
             let status_line = ctx.active_pane.name().to_string();
-            (status_line, idle_hint_text(&ctx.navigation, ctx.has_users, ctx.confirmed_user))
+            (status_line, idle_hint_text(Context::Pane {
+                focus: ctx.navigation.focus,
+                depth: ctx.navigation.depth,
+                confirmed_user: ctx.confirmed_user,
+            }))
         }
         Question::AddDevice(def, name, ip) => {
             (
@@ -333,14 +337,23 @@ impl TtyUi {
             .users_selected
             .and_then(|i| self.users.get(i))
             .is_some_and(|u| u.status != UserStatus::Temporary);
-        let ctx = KeyContext {
-            navigation: self.navigation,
-            question: &self.question,
-            show_help: self.show_help,
-            has_users: !self.users.is_empty(),
-            confirmed_user,
+        let ctx = if self.show_help {
+            Context::Help
+        } else {
+            let def = self.question.def();
+            if matches!(self.question, Question::Rename(..) | Question::AddTempUser(..)) {
+                Context::TextInput(def)
+            } else if matches!(self.question, Question::Idle(_)) {
+                Context::Pane {
+                    focus: self.navigation.focus,
+                    depth: self.navigation.depth,
+                    confirmed_user,
+                }
+            } else {
+                Context::Modal(def)
+            }
         };
-        match resolve(&ctx, key.code) {
+        match resolve(ctx, key.code) {
             // Not in the table: not handled at all.
             None => None,
             Some(KeyResolution::Action(action)) => Some(action),
@@ -504,7 +517,6 @@ impl TtyUi {
         let mut cursor = None;
         terminal.draw(|frame| {
             // Calculate the height needed for the question block
-            let has_users = !users.is_empty();
             let confirmed_user = users_selected
                 .and_then(|i| users.get(i))
                 .is_some_and(|u| u.status != UserStatus::Temporary);
@@ -515,7 +527,6 @@ impl TtyUi {
                 verbose: *verbose,
                 active_pane: *active_pane,
                 navigation: *navigation,
-                has_users,
                 confirmed_user,
                 key_flash: key_flash.as_ref(),
             };

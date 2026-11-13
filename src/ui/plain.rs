@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use crossterm::event::KeyCode;
 
-use super::types::{Action, Effect, KeyBinding, Question, GLOBAL_BINDINGS};
+use super::types::{Action, Effect, KeyBinding, Question};
 
 /// Plain line-based fallback for non-terminal stdout, mirroring the
 /// interface the tool had before the full-screen ui.
@@ -107,14 +107,12 @@ impl PlainUi {
     }
 
     /// Translate an input line into an Action by looking the line up in
-    /// the current question's binding table (plus the global keys) — the
-    /// same table the prompt is printed from, so an advertised key always
-    /// works. A line maps to a key: empty means Enter, a single character
-    /// means that character.
+    /// the current question's binding table — the same table the prompt
+    /// is printed from, so an advertised key always works. A line maps
+    /// to a key: empty means Enter, a single character means that char.
     fn translate_action(&self, line: &str) -> Option<Action> {
         let line = line.trim();
-        let mut table: Vec<&KeyBinding> = self.question.def().bindings.iter().collect();
-        table.extend(GLOBAL_BINDINGS.iter());
+        let table: Vec<&KeyBinding> = self.question.def().bindings.iter().collect();
         let code = if line.is_empty() {
             Some(KeyCode::Enter)
         } else {

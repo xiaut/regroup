@@ -39,11 +39,9 @@ impl KeyBinding {
     }
 }
 
-/// Keys that work in every state, modal questions included: they are
-/// appended to every hint line and handled everywhere.
-pub static GLOBAL_BINDINGS: &[KeyBinding] = &[
-    KeyBinding::new(KeyCode::Char('q'), "q", "quit", Effect::Action(Action::Quit)),
-];
+/// The one key that works in every pane state: help. `bindings()` in
+/// ui::keys appends it to every pane's key list.
+pub const HELP_KEY: KeyBinding = KeyBinding::internal(KeyCode::Char('?'), "?", "help");
 
 /// Keys that work while the help panel is open.
 pub static HELP_BINDINGS: &[KeyBinding] = &[
@@ -283,159 +281,129 @@ impl Navigation {
         }
     }
 
-    /// The single key table for this navigation state (Idle question):
-    /// navigation keys, then pane command keys, then the keys that work
-    /// everywhere ('q' quit, '?' help). Both the action-bar hints and
-    /// the key dispatch are derived from this list, so a key that is
-    /// not listed here is not handled.
-    pub fn bindings(&self, has_users: bool, confirmed_user: bool) -> Vec<KeyBinding> {
-        let mut bindings = self.nav_keys(has_users);
-        bindings.extend(self.command_keys(confirmed_user));
-        bindings.extend(GLOBAL_BINDINGS.iter().cloned());
-        bindings.push(KeyBinding::internal(KeyCode::Char('?'), "?", "help"));
-        bindings
-    }
+}
 
-    /// Hints for the action bar, projected from `bindings()`. Entries
-    /// that share the same description are merged, e.g. `[Left/d]
-    /// Detected`.
-    pub fn hints(&self, has_users: bool, confirmed_user: bool) -> Vec<Hint> {
-        let pairs: Vec<(&'static str, &'static str)> = self
-            .bindings(has_users, confirmed_user)
-            .iter()
-            .map(|b| (b.label, b.description))
-            .collect();
-        merge_hints(&pairs)
-    }
-
-    /// Navigation keys that work in this state (from `handle_key` +
-    /// `list_nav_action`). Handled internally by the ui.
-    fn nav_keys(&self, _has_users: bool) -> Vec<KeyBinding> {
-        use KeyCode::*;
-        use NavDepth::*;
-        use NavFocus::*;
-        match (self.focus, self.depth) {
-            (Center, None) => vec![
-                KeyBinding::internal(Left, "Left", "Detected"),
-                KeyBinding::internal(Right, "Right", "Added"),
-                KeyBinding::internal(Down, "Down", "Logs"),
-            ],
-            (Detected, Some(Selected)) => vec![
-                KeyBinding::internal(Enter, "Enter", "fullscreen"),
-                KeyBinding::internal(Left, "Left", "fullscreen"),
-                KeyBinding::internal(Esc, "Esc", "back"),
-                KeyBinding::internal(Right, "Right", "back"),
-            ],
-            (Detected, Some(Fullscreen)) => vec![
-                KeyBinding::internal(Esc, "Esc", "back"),
-                KeyBinding::internal(Right, "Right", "back"),
-                KeyBinding::internal(Up, "Up", "select"),
-                KeyBinding::internal(Down, "Down", "select"),
-            ],
-            (Added, Some(Selected)) => vec![
-                KeyBinding::internal(Enter, "Enter", "fullscreen"),
-                KeyBinding::internal(Right, "Right", "fullscreen"),
-                KeyBinding::internal(Esc, "Esc", "back"),
-                KeyBinding::internal(Left, "Left", "back"),
-            ],
-            (Added, Some(Fullscreen)) => vec![
-                KeyBinding::internal(Esc, "Esc", "back"),
-                KeyBinding::internal(Left, "Left", "back"),
-                KeyBinding::internal(Up, "Up", "select"),
-                KeyBinding::internal(Down, "Down", "select"),
-                KeyBinding::internal(Enter, "Enter", "users"),
-                KeyBinding::internal(Right, "Right", "users"),
-            ],
-            (Users, Some(Fullscreen)) => vec![
-                KeyBinding::internal(Esc, "Esc", "machines"),
-                KeyBinding::internal(Left, "Left", "machines"),
-                KeyBinding::internal(Up, "Up", "select"),
-                KeyBinding::internal(Down, "Down", "select"),
-            ],
-            (Logs, Some(Selected)) => vec![
-                KeyBinding::internal(Enter, "Enter", "fullscreen"),
-                KeyBinding::internal(Down, "Down", "fullscreen"),
-                KeyBinding::internal(Esc, "Esc", "back"),
-                KeyBinding::internal(Up, "Up", "back"),
-            ],
-            (Logs, Some(Fullscreen)) => vec![
-                KeyBinding::internal(Esc, "Esc", "back"),
-                KeyBinding::internal(Up, "Up", "scroll"),
-                KeyBinding::internal(Down, "Down", "scroll"),
-                KeyBinding::internal(PageUp, "PgUp", "scroll page"),
-                KeyBinding::internal(PageDown, "PgDn", "scroll page"),
-            ],
-            _ => vec![],
-        }
-    }
-
-    /// Command keys (character shortcuts) available in this state.
-    fn command_keys(&self, confirmed_user: bool) -> Vec<KeyBinding> {
-        use KeyCode::*;
-        use NavDepth::*;
-        use NavFocus::*;
-        let action = |key, label, description, a| KeyBinding::new(key, label, description, Effect::Action(a));
-        match (self.focus, self.depth) {
-            (Center, None) => vec![],
-            (Detected, Some(Selected)) => vec![],
-            (Detected, Some(Fullscreen)) => vec![
-                action(Char('a'), "a", "add", Action::Add),
-                action(Char('n'), "n", "ignore", Action::Ignore),
-            ],
-            (Added, Some(Selected)) => vec![],
-            (Added, Some(Fullscreen)) => vec![
-                action(Char('d'), "d", "delete", Action::DeleteSelected),
-                action(Char('s'), "s", "sync", Action::Sync),
-                action(Char('w'), "w", "wipe", Action::WipeMode),
-                action(Char('c'), "c", "setup-cd", Action::SetupCdMode),
-            ],
-            (Users, Some(Fullscreen)) => {
-                let mut v = vec![action(Char('s'), "s", "sync", Action::Sync)];
-                if confirmed_user {
-                    v.extend([
-                        action(Char('i'), "i", "install key", Action::InstallKeyToSelected),
-                        action(Char('r'), "r", "remove key", Action::RemoveKeyFromSelected),
-                        action(Char('a'), "a", "add temp user", Action::AddTempUser),
-                    ]);
-                } else {
-                    v.extend([
-                        action(Char('a'), "a", "add temp user", Action::AddTempUser),
-                        action(Char('x'), "x", "remove temp user", Action::RemoveTempUser),
-                    ]);
-                }
-                v
+/// The key dictionary of a pane state: every key that works in
+/// `(focus, depth)`, navigation and command keys alike, in one list.
+/// `bindings()` in ui::keys appends the one global key (help) on top.
+///
+/// This is the single source of truth for the pane states: the hint
+/// lines and the key dispatch are both derived from these lists, so a
+/// key that is not listed here is not handled.
+pub fn pane_keys(focus: NavFocus, depth: Option<NavDepth>, confirmed_user: bool) -> &'static [KeyBinding] {
+    use NavDepth::*;
+    use NavFocus::*;
+    match (focus, depth) {
+        (Center, None) => CENTER_KEYS,
+        (Center, Some(Selected)) => &[],
+        (Center, Some(Fullscreen)) => &[],
+        (Detected, None) => &[],
+        (Detected, Some(Selected)) => DETECTED_SELECTED_KEYS,
+        (Detected, Some(Fullscreen)) => DETECTED_FULLSCREEN_KEYS,
+        (Added, None) => &[],
+        (Added, Some(Selected)) => ADDED_SELECTED_KEYS,
+        (Added, Some(Fullscreen)) => ADDED_FULLSCREEN_KEYS,
+        (Users, None) => &[],
+        (Users, Some(Selected)) => &[],
+        (Users, Some(Fullscreen)) => {
+            if confirmed_user {
+                USERS_FULLSCREEN_CONFIRMED_KEYS
+            } else {
+                USERS_FULLSCREEN_TEMP_KEYS
             }
-            (Logs, Some(Selected)) => vec![],
-            (Logs, Some(Fullscreen)) => vec![
-                action(Char('v'), "v", "verbose", Action::ToggleVerbose),
-            ],
-            _ => vec![],
         }
+        (Logs, None) => &[],
+        (Logs, Some(Selected)) => LOGS_SELECTED_KEYS,
+        (Logs, Some(Fullscreen)) => LOGS_FULLSCREEN_KEYS,
     }
 }
+
+use KeyCode::*;
+
+static CENTER_KEYS: &[KeyBinding] = &[
+    KeyBinding::internal(Left, "Left", "Detected"),
+    KeyBinding::internal(Right, "Right", "Added"),
+    KeyBinding::internal(Down, "Down", "Logs"),
+    // Quit is only offered on the main menu (overview).
+    KeyBinding::new(Char('q'), "q", "quit", Effect::Action(Action::Quit)),
+];
+
+static DETECTED_SELECTED_KEYS: &[KeyBinding] = &[
+    KeyBinding::internal(Enter, "Enter", "fullscreen"),
+    KeyBinding::internal(Left, "Left", "fullscreen"),
+    KeyBinding::internal(Esc, "Esc", "back"),
+    KeyBinding::internal(Right, "Right", "back"),
+];
+
+static DETECTED_FULLSCREEN_KEYS: &[KeyBinding] = &[
+    KeyBinding::internal(Esc, "Esc", "back"),
+    KeyBinding::internal(Right, "Right", "back"),
+    KeyBinding::internal(Up, "Up", "select"),
+    KeyBinding::internal(Down, "Down", "select"),
+    KeyBinding::new(Char('a'), "a", "add", Effect::Action(Action::Add)),
+    KeyBinding::new(Char('n'), "n", "ignore", Effect::Action(Action::Ignore)),
+];
+
+static ADDED_SELECTED_KEYS: &[KeyBinding] = &[
+    KeyBinding::internal(Enter, "Enter", "fullscreen"),
+    KeyBinding::internal(Right, "Right", "fullscreen"),
+    KeyBinding::internal(Esc, "Esc", "back"),
+    KeyBinding::internal(Left, "Left", "back"),
+];
+
+static ADDED_FULLSCREEN_KEYS: &[KeyBinding] = &[
+    KeyBinding::internal(Esc, "Esc", "back"),
+    KeyBinding::internal(Left, "Left", "back"),
+    KeyBinding::internal(Up, "Up", "select"),
+    KeyBinding::internal(Down, "Down", "select"),
+    KeyBinding::internal(Enter, "Enter", "users"),
+    KeyBinding::internal(Right, "Right", "users"),
+    KeyBinding::new(Char('d'), "d", "delete", Effect::Action(Action::DeleteSelected)),
+    KeyBinding::new(Char('s'), "s", "sync", Effect::Action(Action::Sync)),
+    KeyBinding::new(Char('w'), "w", "wipe", Effect::Action(Action::WipeMode)),
+    KeyBinding::new(Char('c'), "c", "setup-cd", Effect::Action(Action::SetupCdMode)),
+];
+
+static USERS_FULLSCREEN_CONFIRMED_KEYS: &[KeyBinding] = &[
+    KeyBinding::internal(Esc, "Esc", "machines"),
+    KeyBinding::internal(Left, "Left", "machines"),
+    KeyBinding::internal(Up, "Up", "select"),
+    KeyBinding::internal(Down, "Down", "select"),
+    KeyBinding::new(Char('s'), "s", "sync", Effect::Action(Action::Sync)),
+    KeyBinding::new(Char('i'), "i", "install key", Effect::Action(Action::InstallKeyToSelected)),
+    KeyBinding::new(Char('r'), "r", "remove key", Effect::Action(Action::RemoveKeyFromSelected)),
+    KeyBinding::new(Char('a'), "a", "add temp user", Effect::Action(Action::AddTempUser)),
+];
+
+static USERS_FULLSCREEN_TEMP_KEYS: &[KeyBinding] = &[
+    KeyBinding::internal(Esc, "Esc", "machines"),
+    KeyBinding::internal(Left, "Left", "machines"),
+    KeyBinding::internal(Up, "Up", "select"),
+    KeyBinding::internal(Down, "Down", "select"),
+    KeyBinding::new(Char('s'), "s", "sync", Effect::Action(Action::Sync)),
+    KeyBinding::new(Char('a'), "a", "add temp user", Effect::Action(Action::AddTempUser)),
+    KeyBinding::new(Char('x'), "x", "remove temp user", Effect::Action(Action::RemoveTempUser)),
+];
+
+static LOGS_SELECTED_KEYS: &[KeyBinding] = &[
+    KeyBinding::internal(Enter, "Enter", "fullscreen"),
+    KeyBinding::internal(Down, "Down", "fullscreen"),
+    KeyBinding::internal(Esc, "Esc", "back"),
+    KeyBinding::internal(Up, "Up", "back"),
+];
+
+static LOGS_FULLSCREEN_KEYS: &[KeyBinding] = &[
+    KeyBinding::internal(Esc, "Esc", "back"),
+    KeyBinding::internal(Up, "Up", "scroll"),
+    KeyBinding::internal(Down, "Down", "scroll"),
+    KeyBinding::internal(PageUp, "PgUp", "scroll page"),
+    KeyBinding::internal(PageDown, "PgDn", "scroll page"),
+    KeyBinding::new(Char('v'), "v", "verbose", Effect::Action(Action::ToggleVerbose)),
+];
 
 /// Merge (key, description) pairs into Hints, joining keys that share
 /// the same description: ("Left", "Detected") + ("d", "Detected")
 /// becomes Hint { keys: "Left/d", description: "Detected" }.
-fn merge_hints(actions: &[(&'static str, &'static str)]) -> Vec<Hint> {
-    let mut order: Vec<&'static str> = Vec::new();
-    let mut map: Vec<(&'static str, Vec<&'static str>)> = Vec::new();
-    for &(key, desc) in actions {
-        if let Some(entry) = map.iter_mut().find(|(d, _)| *d == desc) {
-            if !entry.1.contains(&key) {
-                entry.1.push(key);
-            }
-        } else {
-            map.push((desc, vec![key]));
-            order.push(desc);
-        }
-    }
-    order.iter().map(|desc| {
-        let keys = map.iter().find(|(d, _)| d == desc).unwrap().1.join("/");
-        Hint { keys, description: desc }
-    }).collect()
-}
-
 /// Which pane is currently active for navigation and actions.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ActivePane {
@@ -691,7 +659,6 @@ pub static ADD_DEVICE_QUESTION: QuestionDef = QuestionDef {
         KeyBinding::new(KeyCode::Char('c'), "c", "setup-cd", Effect::Action(Action::SetupCdMode)),
         KeyBinding::new(KeyCode::Char('k'), "k", "connections", Effect::Action(Action::ConnectionsMode)),
         KeyBinding::new(KeyCode::Char('v'), "v", "verbose", Effect::Action(Action::ToggleVerbose)),
-        KeyBinding::new(KeyCode::Char('q'), "q", "quit", Effect::Action(Action::Quit)),
         KeyBinding::new(KeyCode::Char('?'), "?", "help", Effect::Action(Action::Help)),
     ],
 };
