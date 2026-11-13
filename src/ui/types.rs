@@ -142,19 +142,8 @@ impl Navigation {
         self.focus == NavFocus::Logs
     }
 
-    /// Check if we can navigate in the specified direction.
-    pub fn can_navigate(&self, direction: NavDirection) -> bool {
-        use NavDirection::*;
-        match direction {
-            Left => matches!(self.focus, NavFocus::Detected),
-            Right => matches!(self.focus, NavFocus::Added) || matches!(self.focus, NavFocus::Center),
-            Down => matches!(self.focus, NavFocus::Center),
-            Up => matches!(self.focus, NavFocus::Logs),
-        }
-    }
-
     /// Handle a navigation key press, return the new navigation state.
-    pub fn handle_key(self, key: KeyCode, has_users: bool) -> Self {
+    pub fn handle_key(self, key: KeyCode, _has_users: bool) -> Self {
         use KeyCode::*;
         use NavDepth::*;
         use NavFocus::*;
@@ -180,24 +169,26 @@ impl Navigation {
             // Enter: go one level deeper
             (Detected, Some(Selected), Enter) => Navigation { focus: Detected, depth: Some(Fullscreen) },
             (Added, Some(Selected), Enter) => Navigation { focus: Added, depth: Some(Fullscreen) },
-            (Added, Some(Fullscreen), Enter) if has_users => Navigation { focus: Users, depth: Some(Fullscreen) },
+            (Added, Some(Fullscreen), Enter) => Navigation { focus: Users, depth: Some(Fullscreen) },
             (Logs, Some(Selected), Enter) => Navigation { focus: Logs, depth: Some(Fullscreen) },
 
-            // Left arrow: move left
-            (Detected, Some(Selected), Left) => Navigation::overview(),
-            (Detected, Some(Fullscreen), Left) => Navigation { focus: Detected, depth: Some(Selected) },
+            // Left arrow: toward the Detected panel (left of center),
+            // each press goes one step deeper; Right rewinds.
+            (Detected, Some(Selected), Left) => Navigation { focus: Detected, depth: Some(Fullscreen) },
+            (Detected, Some(Selected), Right) => Navigation::overview(),
+            (Detected, Some(Fullscreen), Right) => Navigation { focus: Detected, depth: Some(Selected) },
             (Added, Some(Selected), Left) => Navigation::overview(),
             (Added, Some(Fullscreen), Left) => Navigation { focus: Added, depth: Some(Selected) },
             (Users, Some(Fullscreen), Left) => Navigation { focus: Added, depth: Some(Fullscreen) },
 
-            // Right arrow: move right
-            (Detected, Some(Selected), Right) => Navigation { focus: Detected, depth: Some(Fullscreen) },
+            // Right arrow: toward the Added panel (right of center),
+            // each press goes one step deeper; Left rewinds.
             (Added, Some(Selected), Right) => Navigation { focus: Added, depth: Some(Fullscreen) },
-            (Added, Some(Fullscreen), Right) if has_users => Navigation { focus: Users, depth: Some(Fullscreen) },
-            (Logs, Some(Selected), Right) => Navigation { focus: Logs, depth: Some(Fullscreen) },
+            (Added, Some(Fullscreen), Right) => Navigation { focus: Users, depth: Some(Fullscreen) },
 
-            // Down arrow
+            // Down/Up arrows: toward the Logs panel (below center)
             (Logs, Some(Selected), Down) => Navigation { focus: Logs, depth: Some(Fullscreen) },
+            (Logs, Some(Selected), Up) => Navigation::overview(),
 
             // Note: in Logs/Fullscreen, Up/Down scroll the content (handled
             // outside handle_key); only Esc exits fullscreen logs.
@@ -256,7 +247,7 @@ impl Navigation {
 
     /// Navigation keys that work in this state (from `handle_key` +
     /// `list_nav_action`). Returns (key_label, description) pairs.
-    fn nav_keys(&self, has_users: bool) -> Vec<(&'static str, &'static str)> {
+    fn nav_keys(&self, _has_users: bool) -> Vec<(&'static str, &'static str)> {
         use NavDepth::*;
         use NavFocus::*;
         match (self.focus, self.depth) {
@@ -267,13 +258,13 @@ impl Navigation {
             ],
             (Detected, Some(Selected)) => vec![
                 ("Enter", "fullscreen"),
-                ("Right", "fullscreen"),
+                ("Left", "fullscreen"),
                 ("Esc", "back"),
-                ("Left", "back"),
+                ("Right", "back"),
             ],
             (Detected, Some(Fullscreen)) => vec![
                 ("Esc", "back"),
-                ("Left", "back"),
+                ("Right", "back"),
                 ("Up", "select"),
                 ("Dn", "select"),
             ],
@@ -283,19 +274,14 @@ impl Navigation {
                 ("Esc", "back"),
                 ("Left", "back"),
             ],
-            (Added, Some(Fullscreen)) => {
-                let mut v = vec![
-                    ("Esc", "back"),
-                    ("Left", "back"),
-                    ("Up", "select"),
-                    ("Dn", "select"),
-                ];
-                if has_users {
-                    v.push(("Enter", "users"));
-                    v.push(("Right", "users"));
-                }
-                v
-            }
+            (Added, Some(Fullscreen)) => vec![
+                ("Esc", "back"),
+                ("Left", "back"),
+                ("Up", "select"),
+                ("Dn", "select"),
+                ("Enter", "users"),
+                ("Right", "users"),
+            ],
             (Users, Some(Fullscreen)) => vec![
                 ("Esc", "machines"),
                 ("Left", "machines"),
@@ -304,9 +290,9 @@ impl Navigation {
             ],
             (Logs, Some(Selected)) => vec![
                 ("Enter", "fullscreen"),
-                ("Right", "fullscreen"),
                 ("Dn", "fullscreen"),
                 ("Esc", "back"),
+                ("Up", "back"),
             ],
             (Logs, Some(Fullscreen)) => vec![
                 ("Esc", "back"),
@@ -388,15 +374,6 @@ fn merge_hints(actions: &[(&'static str, &'static str)]) -> Vec<Hint> {
         let keys = map.iter().find(|(d, _)| d == desc).unwrap().1.join("/");
         Hint { keys, description: desc }
     }).collect()
-}
-
-/// Direction for navigation.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum NavDirection {
-    Left,
-    Right,
-    Up,
-    Down,
 }
 
 /// Which pane is currently active for navigation and actions.
@@ -531,6 +508,7 @@ impl Question {
 
 /// A user decision, translated by the ui from key presses (or, in plain
 /// mode, from input lines).
+#[derive(Debug, PartialEq, Eq)]
 pub enum Action {
     Quit,
     Sync,
@@ -838,11 +816,93 @@ impl Question {
     }
 }
 
-/// Direction for navigation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Direction {
-    Up,
-    Down,
-    Left,
-    Right,
+
+#[cfg(test)]
+mod navigation_tests {
+    use super::*;
+    use crossterm::event::KeyCode::*;
+
+    fn nav(focus: NavFocus, depth: Option<NavDepth>) -> Navigation {
+        Navigation { focus, depth }
+    }
+
+    #[test]
+    fn detected_panel_left_goes_deeper_right_rewinds() {
+        let center = Navigation::overview();
+        let selected = center.handle_key(Left, false);
+        assert_eq!(selected, nav(NavFocus::Detected, Some(NavDepth::Selected)));
+        let fullscreen = selected.handle_key(Left, false);
+        assert_eq!(fullscreen, nav(NavFocus::Detected, Some(NavDepth::Fullscreen)));
+        let back_to_selected = fullscreen.handle_key(Right, false);
+        assert_eq!(back_to_selected, nav(NavFocus::Detected, Some(NavDepth::Selected)));
+        let back_to_center = back_to_selected.handle_key(Right, false);
+        assert_eq!(back_to_center, Navigation::overview());
+    }
+
+    #[test]
+    fn added_panel_right_goes_deeper_left_rewinds() {
+        let selected = Navigation::overview().handle_key(Right, false);
+        assert_eq!(selected, nav(NavFocus::Added, Some(NavDepth::Selected)));
+        let fullscreen = selected.handle_key(Right, false);
+        assert_eq!(fullscreen, nav(NavFocus::Added, Some(NavDepth::Fullscreen)));
+        let back_to_selected = fullscreen.handle_key(Left, false);
+        assert_eq!(back_to_selected, nav(NavFocus::Added, Some(NavDepth::Selected)));
+        let back_to_center = back_to_selected.handle_key(Left, false);
+        assert_eq!(back_to_center, Navigation::overview());
+    }
+
+    #[test]
+    fn users_entry_is_never_skipped_even_with_no_users() {
+        let fullscreen = nav(NavFocus::Added, Some(NavDepth::Fullscreen));
+        assert_eq!(
+            fullscreen.handle_key(Right, false),
+            nav(NavFocus::Users, Some(NavDepth::Fullscreen))
+        );
+        assert_eq!(
+            fullscreen.handle_key(Enter, false),
+            nav(NavFocus::Users, Some(NavDepth::Fullscreen))
+        );
+        let users = nav(NavFocus::Users, Some(NavDepth::Fullscreen));
+        assert_eq!(
+            users.handle_key(Left, false),
+            nav(NavFocus::Added, Some(NavDepth::Fullscreen))
+        );
+        assert_eq!(
+            users.handle_key(Esc, false),
+            nav(NavFocus::Added, Some(NavDepth::Fullscreen))
+        );
+    }
+
+    #[test]
+    fn logs_down_goes_deeper_up_rewinds() {
+        let selected = Navigation::overview().handle_key(Down, false);
+        assert_eq!(selected, nav(NavFocus::Logs, Some(NavDepth::Selected)));
+        let fullscreen = selected.handle_key(Down, false);
+        assert_eq!(fullscreen, nav(NavFocus::Logs, Some(NavDepth::Fullscreen)));
+        // Fullscreen logs: Up/Down scroll the content, only Esc exits.
+        assert_eq!(fullscreen.handle_key(Up, false), fullscreen);
+        assert_eq!(
+            fullscreen.handle_key(Esc, false),
+            nav(NavFocus::Logs, Some(NavDepth::Selected))
+        );
+        let back_to_center = selected.handle_key(Up, false);
+        assert_eq!(back_to_center, Navigation::overview());
+    }
+
+    #[test]
+    fn right_does_not_zoom_the_logs_panel() {
+        let selected = nav(NavFocus::Logs, Some(NavDepth::Selected));
+        assert_eq!(selected.handle_key(Right, false), selected);
+    }
+
+    #[test]
+    fn list_navigation_only_in_fullscreen() {
+        let selected = nav(NavFocus::Added, Some(NavDepth::Selected));
+        assert_eq!(selected.list_nav_action(Up), None);
+        let fullscreen = nav(NavFocus::Added, Some(NavDepth::Fullscreen));
+        assert_eq!(fullscreen.list_nav_action(Up), Some(Action::AddedSelectPrev));
+        assert_eq!(fullscreen.list_nav_action(Down), Some(Action::AddedSelectNext));
+        let logs = nav(NavFocus::Logs, Some(NavDepth::Fullscreen));
+        assert_eq!(logs.list_nav_action(Up), None);
+    }
 }

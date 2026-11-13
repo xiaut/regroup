@@ -947,8 +947,8 @@ impl InteractiveState {
             .iter()
             .position(|n| Some(n) == self.added_selected.as_ref());
         let new_pos = match pos {
-            Some(p) if forward => (p + 1).min(names.len() - 1),
-            Some(p) => p.saturating_sub(1),
+            Some(p) if forward => (p + 1) % names.len(),
+            Some(p) => (p + names.len() - 1) % names.len(),
             None => 0,
         };
         self.added_selected = Some(names[new_pos].clone());
@@ -969,8 +969,8 @@ impl InteractiveState {
             .iter()
             .position(|d| Some(&d.ssh_public_key) == self.pending_selected.as_ref());
         let new_pos = match pos {
-            Some(p) if forward => (p + 1).min(sorted.len() - 1),
-            Some(p) => p.saturating_sub(1),
+            Some(p) if forward => (p + 1) % sorted.len(),
+            Some(p) => (p + sorted.len() - 1) % sorted.len(),
             None => 0,
         };
         self.pending_selected = Some(sorted[new_pos].ssh_public_key.clone());
@@ -1226,8 +1226,8 @@ impl InteractiveState {
             .iter()
             .position(|n| Some(n) == self.users_selected.as_ref());
         let new_pos = match pos {
-            Some(p) if forward => (p + 1).min(names.len() - 1),
-            Some(p) => p.saturating_sub(1),
+            Some(p) if forward => (p + 1) % names.len(),
+            Some(p) => (p + names.len() - 1) % names.len(),
             None => 0,
         };
         self.users_selected = Some(names[new_pos].clone());
