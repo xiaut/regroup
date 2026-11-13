@@ -16,6 +16,16 @@ impl KeyBinding {
     }
 }
 
+/// A hint entry for the action bar: one or more equivalent keys that
+/// trigger the same action, shown as `[Enter/Right] fullscreen`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Hint {
+    /// Key labels joined with `/`, e.g. "Enter/Right".
+    pub keys: String,
+    /// What the key does, e.g. "fullscreen".
+    pub description: &'static str,
+}
+
 /// Pane definition: name and its key bindings
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Pane {
@@ -52,6 +62,312 @@ pub enum UiEvent {
         /// SSH public key: identifies the device's row.
         key: String,
     },
+}
+
+/// New navigation model (docs/navigation.md).
+///
+/// The user is virtually at the center of the screen.
+/// Arrows move directionally: Left (Detected), Right (Added), Down (Logs).
+/// Enter goes deeper, Esc goes back.
+/// Users sub-panel is nested inside Added (reached by Right from Added fullscreen).
+///
+/// Navigation focus: which direction from center.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum NavFocus {
+    /// At center, no panel engaged - all panels visible (overview)
+    Center,
+    /// Focus on Detected panel (left from center)
+    Detected,
+    /// Focus on Added panel (right from center)
+    Added,
+    /// Focus on Users sub-panel (nested inside Added, right from Added fullscreen)
+    Users,
+    /// Focus on Logs panel (down from center)
+    Logs,
+}
+
+/// Navigation depth: how engaged we are with the focused panel.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum NavDepth {
+    /// Panel is selected/highlighted (first step from center)
+    Selected,
+    /// Panel is fullscreen (second step from center)
+    Fullscreen,
+}
+
+/// Complete navigation state: focus + depth.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct Navigation {
+    pub focus: NavFocus,
+    pub depth: Option<NavDepth>,
+}
+
+impl Default for NavFocus {
+    fn default() -> Self {
+        NavFocus::Center
+    }
+}
+
+impl Navigation {
+    /// Create overview state (center, no panel engaged).
+    pub const fn overview() -> Self {
+        Self {
+            focus: NavFocus::Center,
+            depth: None,
+        }
+    }
+
+    /// Check if this is the overview state.
+    pub fn is_overview(&self) -> bool {
+        self.focus == NavFocus::Center && self.depth.is_none()
+    }
+
+    /// Check if a panel is at Selected depth.
+    pub fn is_selected(&self) -> bool {
+        self.depth == Some(NavDepth::Selected)
+    }
+
+    /// Check if a panel is at Fullscreen depth.
+    pub fn is_fullscreen(&self) -> bool {
+        self.depth == Some(NavDepth::Fullscreen)
+    }
+
+    /// Check if we're in the Users sub-panel.
+    pub fn in_users(&self) -> bool {
+        self.focus == NavFocus::Users
+    }
+
+    /// Check if we're in the Logs panel.
+    pub fn in_logs(&self) -> bool {
+        self.focus == NavFocus::Logs
+    }
+
+    /// Handle a navigation key press, return the new navigation state.
+    pub fn handle_key(self, key: KeyCode, _has_users: bool) -> Self {
+        use KeyCode::*;
+        use NavDepth::*;
+        use NavFocus::*;
+
+        match (self.focus, self.depth, key) {
+            // From Center (overview) - panels are always navigable, even when empty
+            (Center, None, Left) => Navigation { focus: Detected, depth: Some(Selected) },
+            (Center, None, Right) => Navigation { focus: Added, depth: Some(Selected) },
+            (Center, None, Down) => Navigation { focus: Logs, depth: Some(Selected) },
+            (Center, None, Up) => self,
+            (Center, None, Enter) => self, // Needs direction first
+            (Center, None, Esc) => self,
+
+            // Esc: always go back
+            (Detected, Some(Selected), Esc) => Navigation::overview(),
+            (Detected, Some(Fullscreen), Esc) => Navigation { focus: Detected, depth: Some(Selected) },
+            (Added, Some(Selected), Esc) => Navigation::overview(),
+            (Added, Some(Fullscreen), Esc) => Navigation { focus: Added, depth: Some(Selected) },
+            (Users, Some(Fullscreen), Esc) => Navigation { focus: Added, depth: Some(Fullscreen) },
+            (Logs, Some(Selected), Esc) => Navigation::overview(),
+            (Logs, Some(Fullscreen), Esc) => Navigation { focus: Logs, depth: Some(Selected) },
+
+            // Enter: go one level deeper
+            (Detected, Some(Selected), Enter) => Navigation { focus: Detected, depth: Some(Fullscreen) },
+            (Added, Some(Selected), Enter) => Navigation { focus: Added, depth: Some(Fullscreen) },
+            (Added, Some(Fullscreen), Enter) => Navigation { focus: Users, depth: Some(Fullscreen) },
+            (Logs, Some(Selected), Enter) => Navigation { focus: Logs, depth: Some(Fullscreen) },
+
+            // Left arrow: toward the Detected panel (left of center),
+            // each press goes one step deeper; Right rewinds.
+            (Detected, Some(Selected), Left) => Navigation { focus: Detected, depth: Some(Fullscreen) },
+            (Detected, Some(Selected), Right) => Navigation::overview(),
+            (Detected, Some(Fullscreen), Right) => Navigation { focus: Detected, depth: Some(Selected) },
+            (Added, Some(Selected), Left) => Navigation::overview(),
+            (Added, Some(Fullscreen), Left) => Navigation { focus: Added, depth: Some(Selected) },
+            (Users, Some(Fullscreen), Left) => Navigation { focus: Added, depth: Some(Fullscreen) },
+
+            // Right arrow: toward the Added panel (right of center),
+            // each press goes one step deeper; Left rewinds.
+            (Added, Some(Selected), Right) => Navigation { focus: Added, depth: Some(Fullscreen) },
+            (Added, Some(Fullscreen), Right) => Navigation { focus: Users, depth: Some(Fullscreen) },
+
+            // Down/Up arrows: toward the Logs panel (below center)
+            (Logs, Some(Selected), Down) => Navigation { focus: Logs, depth: Some(Fullscreen) },
+            (Logs, Some(Selected), Up) => Navigation::overview(),
+
+            // Note: in Logs/Fullscreen, Up/Down scroll the content (handled
+            // outside handle_key); only Esc exits fullscreen logs.
+
+            // Other cases: no navigation change
+            _ => self,
+        }
+    }
+
+    /// Get list navigation action for Up/Down in lists.
+    /// Only returns actions when in Fullscreen depth (not Selected).
+    pub fn list_nav_action(&self, key: KeyCode) -> Option<Action> {
+        use KeyCode::*;
+        
+        // List navigation only works in Fullscreen depth
+        if !self.is_fullscreen() {
+            return None;
+        }
+
+        match (self.focus, key) {
+            (NavFocus::Detected, Up) => Some(Action::PendingSelectPrev),
+            (NavFocus::Detected, Down) => Some(Action::PendingSelectNext),
+            (NavFocus::Added, Up) => Some(Action::AddedSelectPrev),
+            (NavFocus::Added, Down) => Some(Action::AddedSelectNext),
+            (NavFocus::Users, Up) => Some(Action::UsersSelectPrev),
+            (NavFocus::Users, Down) => Some(Action::UsersSelectNext),
+            _ => None,
+        }
+    }
+
+    /// Get the corresponding ActivePane for this navigation state.
+    /// For Selected depth, returns MainMenu to show the dashboard with the panel highlighted.
+    /// For Fullscreen depth, returns the specific pane to show it full-screen.
+    pub fn active_pane(&self) -> ActivePane {
+        match (self.focus, self.depth) {
+            (NavFocus::Center, _) => ActivePane::main_menu(),
+            (NavFocus::Detected, Some(NavDepth::Fullscreen)) => ActivePane::detected(),
+            (NavFocus::Added, Some(NavDepth::Fullscreen)) => ActivePane::added(),
+            (NavFocus::Users, Some(NavDepth::Fullscreen)) => ActivePane::users(false),
+            (NavFocus::Logs, Some(NavDepth::Fullscreen)) => ActivePane::logs(),
+            // For Selected depth, return MainMenu to show dashboard with panel highlighted
+            _ => ActivePane::main_menu(),
+        }
+    }
+
+    /// Hints for the action bar, built dynamically from two sources:
+    /// navigation keys (arrows/Enter/Esc, from the state machine) and
+    /// command keys (character shortcuts, per pane). Entries that share
+    /// the same description are merged, e.g. `[Left/d] Detected`.
+    pub fn hints(&self, has_users: bool, confirmed_user: bool) -> Vec<Hint> {
+        let mut actions: Vec<(&'static str, &'static str)> = Vec::new();
+        actions.extend(self.nav_keys(has_users));
+        actions.extend(self.command_keys(confirmed_user));
+        merge_hints(&actions)
+    }
+
+    /// Navigation keys that work in this state (from `handle_key` +
+    /// `list_nav_action`). Returns (key_label, description) pairs.
+    fn nav_keys(&self, _has_users: bool) -> Vec<(&'static str, &'static str)> {
+        use NavDepth::*;
+        use NavFocus::*;
+        match (self.focus, self.depth) {
+            (Center, None) => vec![
+                ("Left", "Detected"),
+                ("Right", "Added"),
+                ("Down", "Logs"),
+            ],
+            (Detected, Some(Selected)) => vec![
+                ("Enter", "fullscreen"),
+                ("Left", "fullscreen"),
+                ("Esc", "back"),
+                ("Right", "back"),
+            ],
+            (Detected, Some(Fullscreen)) => vec![
+                ("Esc", "back"),
+                ("Right", "back"),
+                ("Up", "select"),
+                ("Down", "select"),
+            ],
+            (Added, Some(Selected)) => vec![
+                ("Enter", "fullscreen"),
+                ("Right", "fullscreen"),
+                ("Esc", "back"),
+                ("Left", "back"),
+            ],
+            (Added, Some(Fullscreen)) => vec![
+                ("Esc", "back"),
+                ("Left", "back"),
+                ("Up", "select"),
+                ("Down", "select"),
+                ("Enter", "users"),
+                ("Right", "users"),
+            ],
+            (Users, Some(Fullscreen)) => vec![
+                ("Esc", "machines"),
+                ("Left", "machines"),
+                ("Up", "select"),
+                ("Down", "select"),
+            ],
+            (Logs, Some(Selected)) => vec![
+                ("Enter", "fullscreen"),
+                ("Down", "fullscreen"),
+                ("Esc", "back"),
+                ("Up", "back"),
+            ],
+            (Logs, Some(Fullscreen)) => vec![
+                ("Esc", "back"),
+                ("Up", "scroll"),
+                ("Down", "scroll"),
+                ("PgUp", "scroll page"),
+                ("PgDn", "scroll page"),
+            ],
+            _ => vec![],
+        }
+    }
+
+    /// Command keys (character shortcuts) available in this state.
+    /// Returns (key_label, description) pairs.
+    fn command_keys(&self, confirmed_user: bool) -> Vec<(&'static str, &'static str)> {
+        use NavDepth::*;
+        use NavFocus::*;
+        match (self.focus, self.depth) {
+            (Center, None) => vec![
+                ("?", "help"),
+                ("q", "quit"),
+            ],
+            (Detected, Some(Selected)) => vec![("?", "help")],
+            (Detected, Some(Fullscreen)) => vec![
+                ("a", "add"),
+                ("n", "ignore"),
+                ("?", "help"),
+            ],
+            (Added, Some(Selected)) => vec![("?", "help")],
+            (Added, Some(Fullscreen)) => vec![
+                ("d", "delete"),
+                ("s", "sync"),
+                ("w", "wipe"),
+                ("c", "setup-cd"),
+                ("?", "help"),
+            ],
+            (Users, Some(Fullscreen)) => {
+                let mut v = vec![("s", "sync"), ("?", "help")];
+                if confirmed_user {
+                    v.extend([("i", "install key"), ("r", "remove key"), ("a", "add temp user")]);
+                } else {
+                    v.extend([("a", "add temp user"), ("x", "remove temp user")]);
+                }
+                v
+            }
+            (Logs, Some(Selected)) => vec![("?", "help")],
+            (Logs, Some(Fullscreen)) => vec![
+                ("v", "verbose"),
+                ("?", "help"),
+            ],
+            _ => vec![],
+        }
+    }
+}
+
+/// Merge (key, description) pairs into Hints, joining keys that share
+/// the same description: ("Left", "Detected") + ("d", "Detected")
+/// becomes Hint { keys: "Left/d", description: "Detected" }.
+fn merge_hints(actions: &[(&'static str, &'static str)]) -> Vec<Hint> {
+    let mut order: Vec<&'static str> = Vec::new();
+    let mut map: Vec<(&'static str, Vec<&'static str>)> = Vec::new();
+    for &(key, desc) in actions {
+        if let Some(entry) = map.iter_mut().find(|(d, _)| *d == desc) {
+            if !entry.1.contains(&key) {
+                entry.1.push(key);
+            }
+        } else {
+            map.push((desc, vec![key]));
+            order.push(desc);
+        }
+    }
+    order.iter().map(|desc| {
+        let keys = map.iter().find(|(d, _)| d == desc).unwrap().1.join("/");
+        Hint { keys, description: desc }
+    }).collect()
 }
 
 /// Which pane is currently active for navigation and actions.
@@ -186,6 +502,7 @@ impl Question {
 
 /// A user decision, translated by the ui from key presses (or, in plain
 /// mode, from input lines).
+#[derive(Debug, PartialEq, Eq)]
 pub enum Action {
     Quit,
     Sync,
@@ -233,14 +550,6 @@ pub enum Action {
     RemoveKeyFromSelected,
     /// Delete the currently selected device in Added pane.
     DeleteSelected,
-    /// Return to Main menu from any pane (key 'q').
-    BackToMainMenu,
-    /// Switch to Detected pane (key 'd').
-    SwitchToDetected,
-    /// Switch to Added pane (key 'a').
-    SwitchToAdded,
-    /// Switch to Logs pane (key 'l').
-    SwitchToLogs,
     /// Print the CLI help (plain mode; the full-screen ui shows its help
     /// panel instead, toggled by '?').
     Help,
@@ -266,9 +575,11 @@ pub enum Action {
 pub static MAIN_MENU_PANE: Pane = Pane {
     name: "Main menu",
     bindings: &[
-        KeyBinding::new(KeyCode::Char('d'), "d", "Detected"),
-        KeyBinding::new(KeyCode::Char('a'), "a", "Added"),
-        KeyBinding::new(KeyCode::Char('l'), "l", "Logs"),
+        KeyBinding::new(KeyCode::Enter, "Enter", "select"),
+        KeyBinding::new(KeyCode::Esc, "Esc", "back"),
+        KeyBinding::new(KeyCode::Left, "Left", "Detected"),
+        KeyBinding::new(KeyCode::Right, "Right", "Added"),
+        KeyBinding::new(KeyCode::Down, "Down", "Logs"),
         KeyBinding::new(KeyCode::Char('?'), "?", "help"),
         KeyBinding::new(KeyCode::Char('q'), "q", "quit"),
     ],
@@ -277,9 +588,10 @@ pub static MAIN_MENU_PANE: Pane = Pane {
 pub static DETECTED_PANE: Pane = Pane {
     name: "Detected devices",
     bindings: &[
-        KeyBinding::new(KeyCode::Char('q'), "q", "no pane"),
+        KeyBinding::new(KeyCode::Enter, "Enter", "fullscreen"),
+        KeyBinding::new(KeyCode::Esc, "Esc", "back"),
         KeyBinding::new(KeyCode::Up, "Up", "select"),
-        KeyBinding::new(KeyCode::Down, "Dn", "select"),
+        KeyBinding::new(KeyCode::Down, "Down", "select"),
         KeyBinding::new(KeyCode::Char('a'), "a", "add"),
         KeyBinding::new(KeyCode::Char('n'), "n", "ignore"),
         KeyBinding::new(KeyCode::Char('?'), "?", "help"),
@@ -289,9 +601,10 @@ pub static DETECTED_PANE: Pane = Pane {
 pub static ADDED_PANE: Pane = Pane {
     name: "Added devices",
     bindings: &[
-        KeyBinding::new(KeyCode::Char('q'), "q", "no pane"),
+        KeyBinding::new(KeyCode::Enter, "Enter", "fullscreen"),
+        KeyBinding::new(KeyCode::Esc, "Esc", "back"),
         KeyBinding::new(KeyCode::Up, "Up", "select"),
-        KeyBinding::new(KeyCode::Down, "Dn", "select"),
+        KeyBinding::new(KeyCode::Down, "Down", "select"),
         KeyBinding::new(KeyCode::Right, "Right", "users"),
         KeyBinding::new(KeyCode::Char('d'), "d", "delete"),
         KeyBinding::new(KeyCode::Char('s'), "s", "sync"),
@@ -305,9 +618,10 @@ pub static ADDED_PANE: Pane = Pane {
 pub static USERS_PANE_CONFIRMED: Pane = Pane {
     name: "Users",
     bindings: &[
-        KeyBinding::new(KeyCode::Char('q'), "q", "no pane"),
+        KeyBinding::new(KeyCode::Enter, "Enter", "select"),
+        KeyBinding::new(KeyCode::Esc, "Esc", "back"),
         KeyBinding::new(KeyCode::Up, "Up", "select"),
-        KeyBinding::new(KeyCode::Down, "Dn", "select"),
+        KeyBinding::new(KeyCode::Down, "Down", "select"),
         KeyBinding::new(KeyCode::Left, "Left", "machines"),
         KeyBinding::new(KeyCode::Char('i'), "i", "install key"),
         KeyBinding::new(KeyCode::Char('r'), "r", "remove key"),
@@ -322,9 +636,10 @@ pub static USERS_PANE_CONFIRMED: Pane = Pane {
 pub static USERS_PANE_TEMPORARY: Pane = Pane {
     name: "Users",
     bindings: &[
-        KeyBinding::new(KeyCode::Char('q'), "q", "no pane"),
+        KeyBinding::new(KeyCode::Enter, "Enter", "select"),
+        KeyBinding::new(KeyCode::Esc, "Esc", "back"),
         KeyBinding::new(KeyCode::Up, "Up", "select"),
-        KeyBinding::new(KeyCode::Down, "Dn", "select"),
+        KeyBinding::new(KeyCode::Down, "Down", "select"),
         KeyBinding::new(KeyCode::Left, "Left", "machines"),
         KeyBinding::new(KeyCode::Char('a'), "a", "add temp user"),
         KeyBinding::new(KeyCode::Char('x'), "x", "remove temp user"),
@@ -336,9 +651,10 @@ pub static USERS_PANE_TEMPORARY: Pane = Pane {
 pub static LOGS_PANE: Pane = Pane {
     name: "Logs",
     bindings: &[
-        KeyBinding::new(KeyCode::Char('q'), "q", "no pane"),
+        KeyBinding::new(KeyCode::Enter, "Enter", "fullscreen"),
+        KeyBinding::new(KeyCode::Esc, "Esc", "back"),
         KeyBinding::new(KeyCode::Up, "Up", "scroll line"),
-        KeyBinding::new(KeyCode::Down, "Dn", "scroll line"),
+        KeyBinding::new(KeyCode::Down, "Down", "scroll line"),
         KeyBinding::new(KeyCode::PageUp, "PgUp", "scroll page"),
         KeyBinding::new(KeyCode::PageDown, "PgDn", "scroll page"),
         KeyBinding::new(KeyCode::Char('v'), "v", "toggle verbose"),
@@ -421,7 +737,7 @@ pub static DELETE_QUESTION: QuestionDef = QuestionDef {
     title: "Delete device",
     bindings: &[
         KeyBinding::new(KeyCode::Up, "Up", "select"),
-        KeyBinding::new(KeyCode::Down, "Dn", "select"),
+        KeyBinding::new(KeyCode::Down, "Down", "select"),
         KeyBinding::new(KeyCode::Char('y'), "y", "confirm"),
         KeyBinding::new(KeyCode::Char('n'), "n", "cancel"),
     ],
@@ -475,5 +791,96 @@ impl Question {
 
     pub fn add_temp_user(device: String) -> Self {
         Question::AddTempUser(ADD_TEMP_USER_QUESTION, device)
+    }
+}
+
+
+#[cfg(test)]
+mod navigation_tests {
+    use super::*;
+    use crossterm::event::KeyCode::*;
+
+    fn nav(focus: NavFocus, depth: Option<NavDepth>) -> Navigation {
+        Navigation { focus, depth }
+    }
+
+    #[test]
+    fn detected_panel_left_goes_deeper_right_rewinds() {
+        let center = Navigation::overview();
+        let selected = center.handle_key(Left, false);
+        assert_eq!(selected, nav(NavFocus::Detected, Some(NavDepth::Selected)));
+        let fullscreen = selected.handle_key(Left, false);
+        assert_eq!(fullscreen, nav(NavFocus::Detected, Some(NavDepth::Fullscreen)));
+        let back_to_selected = fullscreen.handle_key(Right, false);
+        assert_eq!(back_to_selected, nav(NavFocus::Detected, Some(NavDepth::Selected)));
+        let back_to_center = back_to_selected.handle_key(Right, false);
+        assert_eq!(back_to_center, Navigation::overview());
+    }
+
+    #[test]
+    fn added_panel_right_goes_deeper_left_rewinds() {
+        let selected = Navigation::overview().handle_key(Right, false);
+        assert_eq!(selected, nav(NavFocus::Added, Some(NavDepth::Selected)));
+        let fullscreen = selected.handle_key(Right, false);
+        assert_eq!(fullscreen, nav(NavFocus::Added, Some(NavDepth::Fullscreen)));
+        let back_to_selected = fullscreen.handle_key(Left, false);
+        assert_eq!(back_to_selected, nav(NavFocus::Added, Some(NavDepth::Selected)));
+        let back_to_center = back_to_selected.handle_key(Left, false);
+        assert_eq!(back_to_center, Navigation::overview());
+    }
+
+    #[test]
+    fn users_entry_is_never_skipped_even_with_no_users() {
+        let fullscreen = nav(NavFocus::Added, Some(NavDepth::Fullscreen));
+        assert_eq!(
+            fullscreen.handle_key(Right, false),
+            nav(NavFocus::Users, Some(NavDepth::Fullscreen))
+        );
+        assert_eq!(
+            fullscreen.handle_key(Enter, false),
+            nav(NavFocus::Users, Some(NavDepth::Fullscreen))
+        );
+        let users = nav(NavFocus::Users, Some(NavDepth::Fullscreen));
+        assert_eq!(
+            users.handle_key(Left, false),
+            nav(NavFocus::Added, Some(NavDepth::Fullscreen))
+        );
+        assert_eq!(
+            users.handle_key(Esc, false),
+            nav(NavFocus::Added, Some(NavDepth::Fullscreen))
+        );
+    }
+
+    #[test]
+    fn logs_down_goes_deeper_up_rewinds() {
+        let selected = Navigation::overview().handle_key(Down, false);
+        assert_eq!(selected, nav(NavFocus::Logs, Some(NavDepth::Selected)));
+        let fullscreen = selected.handle_key(Down, false);
+        assert_eq!(fullscreen, nav(NavFocus::Logs, Some(NavDepth::Fullscreen)));
+        // Fullscreen logs: Up/Down scroll the content, only Esc exits.
+        assert_eq!(fullscreen.handle_key(Up, false), fullscreen);
+        assert_eq!(
+            fullscreen.handle_key(Esc, false),
+            nav(NavFocus::Logs, Some(NavDepth::Selected))
+        );
+        let back_to_center = selected.handle_key(Up, false);
+        assert_eq!(back_to_center, Navigation::overview());
+    }
+
+    #[test]
+    fn right_does_not_zoom_the_logs_panel() {
+        let selected = nav(NavFocus::Logs, Some(NavDepth::Selected));
+        assert_eq!(selected.handle_key(Right, false), selected);
+    }
+
+    #[test]
+    fn list_navigation_only_in_fullscreen() {
+        let selected = nav(NavFocus::Added, Some(NavDepth::Selected));
+        assert_eq!(selected.list_nav_action(Up), None);
+        let fullscreen = nav(NavFocus::Added, Some(NavDepth::Fullscreen));
+        assert_eq!(fullscreen.list_nav_action(Up), Some(Action::AddedSelectPrev));
+        assert_eq!(fullscreen.list_nav_action(Down), Some(Action::AddedSelectNext));
+        let logs = nav(NavFocus::Logs, Some(NavDepth::Fullscreen));
+        assert_eq!(logs.list_nav_action(Up), None);
     }
 }

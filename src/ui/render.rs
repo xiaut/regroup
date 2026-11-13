@@ -65,6 +65,12 @@ pub struct QuestionCtx<'a> {
     pub verbose: bool,
     /// Which pane is currently active.
     pub active_pane: super::types::ActivePane,
+    /// Current navigation state (focus + depth), drives the hint line.
+    pub navigation: super::types::Navigation,
+    /// Whether the Users panel has users (drives Added-pane hints).
+    pub has_users: bool,
+    /// Whether the selected user is confirmed (drives Users-pane hints).
+    pub confirmed_user: bool,
     /// Last key press, highlighted in the hint line while recent.
     pub key_flash: Option<&'a KeyFlash>,
 }
@@ -197,7 +203,9 @@ pub fn key_label(code: KeyCode) -> Option<String> {
         KeyCode::Enter => Some("Enter".to_string()),
         KeyCode::Esc => Some("Esc".to_string()),
         KeyCode::Up => Some("Up".to_string()),
-        KeyCode::Down => Some("Dn".to_string()),
+        KeyCode::Down => Some("Down".to_string()),
+        KeyCode::Left => Some("Left".to_string()),
+        KeyCode::Right => Some("Right".to_string()),
         KeyCode::PageUp => Some("PgUp".to_string()),
         KeyCode::PageDown => Some("PgDn".to_string()),
         _ => None,
@@ -358,6 +366,7 @@ pub fn render_all_panes(
     frame: &mut Frame,
     area: Rect,
     active_pane: ActivePane,
+    navigation_focus: super::types::NavFocus,
     detected: &[super::types::UiDevice],
     detected_selected: Option<usize>,
     added: &[super::types::UiDevice],
@@ -540,6 +549,11 @@ pub fn render_all_panes(
         }
         ActivePane::MainMenu(_) => {
             // Show all three panes when in MainMenu
+            // Highlight the panel that has focus
+            let detected_selected_focus = matches!(navigation_focus, super::types::NavFocus::Detected);
+            let added_selected_focus = matches!(navigation_focus, super::types::NavFocus::Added);
+            let logs_selected_focus = matches!(navigation_focus, super::types::NavFocus::Logs);
+            
             if width >= min_width_for_side_by_side {
                 // Layout: Detected | Added (top row), Logs (bottom row)
                 let top_height = height / 2;
@@ -563,7 +577,16 @@ pub fn render_all_panes(
 
                 // Render Detected pane
                 let detected_theme = PanelTheme::new("Detected", Color::Yellow, "detected");
-                let detected_border_style = Style::new().fg(Color::Yellow);
+                let detected_border_style = if detected_selected_focus {
+                    Style::new().fg(Color::Yellow).bold()
+                } else {
+                    Style::new().fg(Color::Yellow)
+                };
+                let detected_border_type = if detected_selected_focus {
+                    BorderType::Double
+                } else {
+                    BorderType::Plain
+                };
 
                 let detected_rows = detected.iter().enumerate().map(|(i, d)| {
                     let now = Instant::now();
@@ -610,14 +633,23 @@ pub fn render_all_panes(
                 .block(
                     Block::bordered()
                         .title(format!("{} — {}", detected_theme.title, detected.len()))
-                        .border_type(BorderType::Plain)
+                        .border_type(detected_border_type)
                         .border_style(detected_border_style),
                 );
                 frame.render_widget(detected_table, detected_area);
 
                 // Render Added pane
                 let added_theme = PanelTheme::new("Added", Color::Green, "known");
-                let added_border_style = Style::new().fg(Color::Green);
+                let added_border_style = if added_selected_focus {
+                    Style::new().fg(Color::Green).bold()
+                } else {
+                    Style::new().fg(Color::Green)
+                };
+                let added_border_type = if added_selected_focus {
+                    BorderType::Double
+                } else {
+                    BorderType::Plain
+                };
 
                 let added_rows = added.iter().enumerate().map(|(i, d)| {
                     let now = Instant::now();
@@ -664,17 +696,26 @@ pub fn render_all_panes(
                 .block(
                     Block::bordered()
                         .title(format!("{} — {}", added_theme.title, added.len()))
-                        .border_type(BorderType::Plain)
+                        .border_type(added_border_type)
                         .border_style(added_border_style),
                 );
                 frame.render_widget(added_table, added_area);
 
                 // Render Logs pane
                 let logs_title = if verbose { "Logs — verbose" } else { "Logs" };
-                let logs_border_style = Style::new().fg(Color::Cyan);
+                let logs_border_type = if logs_selected_focus {
+                    BorderType::Double
+                } else {
+                    BorderType::Plain
+                };
+                let logs_border_style = if logs_selected_focus {
+                    Style::new().fg(Color::Cyan).bold()
+                } else {
+                    Style::new().fg(Color::Cyan)
+                };
                 let logs_block = Block::bordered()
                     .title(logs_title)
-                    .border_type(BorderType::Plain)
+                    .border_type(logs_border_type)
                     .border_style(logs_border_style);
 
                 let visible = logs_area.height.saturating_sub(2) as usize;
@@ -708,7 +749,16 @@ pub fn render_all_panes(
 
                 // Render Detected pane
                 let detected_theme = PanelTheme::new("Detected", Color::Yellow, "detected");
-                let detected_border_style = Style::new().fg(Color::Yellow);
+                let detected_border_style = if detected_selected_focus {
+                    Style::new().fg(Color::Yellow).bold()
+                } else {
+                    Style::new().fg(Color::Yellow)
+                };
+                let detected_border_type = if detected_selected_focus {
+                    BorderType::Double
+                } else {
+                    BorderType::Plain
+                };
 
                 let detected_rows = detected.iter().enumerate().map(|(i, d)| {
                     let now = Instant::now();
@@ -755,14 +805,23 @@ pub fn render_all_panes(
                 .block(
                     Block::bordered()
                         .title(format!("{} — {}", detected_theme.title, detected.len()))
-                        .border_type(BorderType::Plain)
+                        .border_type(detected_border_type)
                         .border_style(detected_border_style),
                 );
                 frame.render_widget(detected_table, detected_area);
 
                 // Render Added pane
                 let added_theme = PanelTheme::new("Added", Color::Green, "known");
-                let added_border_style = Style::new().fg(Color::Green);
+                let added_border_style = if added_selected_focus {
+                    Style::new().fg(Color::Green).bold()
+                } else {
+                    Style::new().fg(Color::Green)
+                };
+                let added_border_type = if added_selected_focus {
+                    BorderType::Double
+                } else {
+                    BorderType::Plain
+                };
 
                 let added_rows = added.iter().enumerate().map(|(i, d)| {
                     let now = Instant::now();
@@ -809,17 +868,26 @@ pub fn render_all_panes(
                 .block(
                     Block::bordered()
                         .title(format!("{} — {}", added_theme.title, added.len()))
-                        .border_type(BorderType::Plain)
+                        .border_type(added_border_type)
                         .border_style(added_border_style),
                 );
                 frame.render_widget(added_table, added_area);
 
                 // Render Logs pane
                 let logs_title = if verbose { "Logs — verbose" } else { "Logs" };
-                let logs_border_style = Style::new().fg(Color::Cyan);
+                let logs_border_type = if logs_selected_focus {
+                    BorderType::Double
+                } else {
+                    BorderType::Plain
+                };
+                let logs_border_style = if logs_selected_focus {
+                    Style::new().fg(Color::Cyan).bold()
+                } else {
+                    Style::new().fg(Color::Cyan)
+                };
                 let logs_block = Block::bordered()
                     .title(logs_title)
-                    .border_type(BorderType::Plain)
+                    .border_type(logs_border_type)
                     .border_style(logs_border_style);
 
                 let visible = logs_area.height.saturating_sub(2) as usize;
@@ -859,53 +927,21 @@ pub fn render_question(
             Color::Cyan,
             "Command-line and interactive help".to_string(),
             hint_spans(
-                "[Up/Dn/PgUp/PgDn] scroll help   [?] close   [s] sync git   [q] quit",
+                "[Up/Down/PgUp/PgDn] scroll help   [?] close   [s] sync git   [q] quit",
                 ctx.key_flash,
             ),
         )
     } else {
         match question {
             super::types::Question::Idle(def) => {
-                use super::types::ActivePane;
-                // Hint lines depend on the active pane
-                let (status_line, hint) = match ctx.active_pane {
-                    ActivePane::MainMenu(pane) => {
-                        let hint = pane.bindings.iter()
-                            .map(|b| format!("[{}] {}", b.label, b.description))
-                            .collect::<Vec<_>>()
-                            .join("   ");
-                        (pane.name.to_string(), hint)
-                    }
-                    ActivePane::Detected(pane) => {
-                        let hint = pane.bindings.iter()
-                            .map(|b| format!("[{}] {}", b.label, b.description))
-                            .collect::<Vec<_>>()
-                            .join("   ");
-                        (pane.name.to_string(), hint)
-                    }
-                    ActivePane::Added(pane) => {
-                        let hint = pane.bindings.iter()
-                            .map(|b| format!("[{}] {}", b.label, b.description))
-                            .collect::<Vec<_>>()
-                            .join("   ");
-                        (pane.name.to_string(), hint)
-                    }
-                    ActivePane::Users(pane) => {
-                        let hint = pane.bindings.iter()
-                            .map(|b| format!("[{}] {}", b.label, b.description))
-                            .collect::<Vec<_>>()
-                            .join("   ");
-                        (pane.name.to_string(), hint)
-                    }
-                    ActivePane::Logs(pane) => {
-                        let name = if ctx.verbose { "Logs - verbose" } else { pane.name };
-                        let hint = pane.bindings.iter()
-                            .map(|b| format!("[{}] {}", b.label, b.description))
-                            .collect::<Vec<_>>()
-                            .join("   ");
-                        (name.to_string(), hint)
-                    }
-                };
+                // Hint line driven by the navigation state: shows the keys
+                // that actually work in the current focus + depth.
+                let status_line = ctx.active_pane.name().to_string();
+                let hints = ctx.navigation.hints(ctx.has_users, ctx.confirmed_user);
+                let hint = hints.iter()
+                    .map(|h| format!("[{}] {}", h.keys, h.description))
+                    .collect::<Vec<_>>()
+                    .join("   ");
                 (
                     def.title,
                     Color::Blue,

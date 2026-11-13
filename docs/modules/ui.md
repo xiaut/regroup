@@ -220,7 +220,7 @@ The TUI interface uses **ratatui** (formerly tui-rs) with **crossterm** for term
 ├─────────────────────────────────────────┤
 │  [Status]                                │
 │  2 device(s) detected — add them?       │
-│  [Up/Dn] select   [Enter/y] add   [n]    │
+│  [Up/Down] select   [Enter/y] add   [n]    │
 │  ignore   [s] sync   [d] delete   [?]    │
 │  help   [q] quit                         │
 └─────────────────────────────────────────┘
@@ -292,7 +292,7 @@ Add device2 (192.168.1.101) to config? [y/N/q/s]: n
 | `?` | Toggle help panel |
 | `Enter` | Go one level deeper in the context hierarchy (always offered, listed first) |
 | `Esc` | Go one level back (always offered, listed first; only exit from the fullscreen Logs panel) |
-| `Up/Dn/Left/Right` | Walk directionally from the virtual center: overview → panel selected → fullscreen → sub-panel; opposite key rewinds (see [navigation.md](../navigation.md)) |
+| `Up/Down/Left/Right` | Walk directionally from the virtual center: overview → panel selected → fullscreen → sub-panel; opposite key rewinds (see [navigation.md](../navigation.md)) |
 | `PgUp/PgDn` | Scroll Logs pane |
 
 ### In Detected Panel
@@ -314,7 +314,7 @@ Add device2 (192.168.1.101) to config? [y/N/q/s]: n
 
 | Key | Action |
 |-----|--------|
-| `Up/Dn` | Select device in Added panel |
+| `Up/Down` | Select device in Added panel |
 | `Enter` | Confirm deletion |
 | `Esc` | Cancel |
 
@@ -353,7 +353,7 @@ The UI uses color and styling to convey information:
 
 ## Help Panel
 
-Press `?` to show the help panel, which displays the CLI usage text with section headers in bold. Use `Up/Dn/PgUp/PgDn` to scroll, `?` or `Esc` to close.
+Press `?` to show the help panel, which displays the CLI usage text with section headers in bold. Use `Up/Down/PgUp/PgDn` to scroll, `?` or `Esc` to close.
 
 ## Verbose Mode
 

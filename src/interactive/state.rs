@@ -28,7 +28,7 @@ use crate::ssh::config::update_block;
 use crate::ssh::keys::{SigningPublicKeyB64, SshPublicKey};
 use crate::ssh::public_key;
 use crate::ui::{self, Action, Level, Question};
-use crate::ui::types::{ActivePane, UiDevice, UiUser, UserStatus};
+use crate::ui::types::{ActivePane, NavDepth, NavFocus, Navigation, UiDevice, UiUser, UserStatus};
 
 /// How long each loop iteration waits for user input before checking the
 /// beacon channel again.
@@ -132,6 +132,15 @@ pub fn run(ctx: &Context, udp_port: u16, beacons: &Receiver<BeaconDevice>) -> us
             break;
         }
 
+        // Sync navigation state from TtyUi back to state (navigation keys
+        // update the TtyUi directly and return no action)
+        if let Some(nav) = tui.navigation() {
+            if nav != state.navigation {
+                state.navigation = nav;
+                state.active_pane = nav.active_pane();
+            }
+        }
+
         // The display always reflects the state after processing.
         let plain = !matches!(tui, ui::Ui::Tty(_));
         tui.set_question(state.current_question(ctx, plain));
@@ -214,6 +223,7 @@ pub fn run(ctx: &Context, udp_port: u16, beacons: &Receiver<BeaconDevice>) -> us
         tui.set_added_selected(added_selected);
         tui.set_users(users, users_selected);
         tui.set_active_pane(state.active_pane);
+        tui.set_navigation(state.navigation);
         tui.set_verbose(state.verbose);
         tui.draw();
     }
@@ -241,6 +251,8 @@ pub struct InteractiveState {
     pending_keys: HashSet<SshPublicKey>,
     /// Which pane is currently active in the UI.
     active_pane: ActivePane,
+    /// Navigation state: focus + depth in the context hierarchy.
+    navigation: Navigation,
     /// Device selected in the Detected panel (full-screen ui), by public
     /// key. None when the queue is empty.
     pending_selected: Option<SshPublicKey>,
@@ -292,6 +304,7 @@ impl InteractiveState {
             pending_devices: VecDeque::new(),
             pending_keys: HashSet::new(),
             active_pane: ActivePane::main_menu(),
+            navigation: Navigation::overview(),
             pending_selected: None,
             added_selected: None,
             known_ip: HashMap::new(),
@@ -642,12 +655,6 @@ impl InteractiveState {
     fn handle_action(&mut self, ctx: &Context, tui: &mut ui::Ui, action: Action) -> bool {
         match action {
             Action::Quit => return true,
-            Action::BackToMainMenu => {
-                self.active_pane = ActivePane::main_menu();
-                self.pending_selected = None;
-                self.added_selected = None;
-                return false;
-            }
             Action::Sync => {
                 // Dry run must not modify anything: skip git sync
                 if ctx.dry_run {
@@ -752,28 +759,18 @@ impl InteractiveState {
                     self.move_pending_selection(true);
                 }
             }
-            Action::SwitchToDetected => {
-                self.active_pane = ActivePane::detected();
-                self.added_selected = None;
-                // Initialize pending_selected if there are pending devices
-                if self.pending_selected.is_none() && !self.pending_devices.is_empty() {
-                    self.pending_selected = Some(self.pending_devices[0].ssh_public_key.clone());
-                }
-            }
-            Action::SwitchToAdded => {
-                self.active_pane = ActivePane::added();
-                self.pending_selected = None;
-            }
             Action::SwitchToUsers => {
                 // Only reachable from the Added pane with a machine
                 // selected (the tty gates the key). No user is selected
                 // yet: the display loop selects the first one.
+                self.navigation = Navigation { focus: NavFocus::Users, depth: Some(NavDepth::Fullscreen) };
                 self.active_pane = ActivePane::users(false);
                 self.users_selected = None;
             }
             Action::BackToAdded => {
                 // Leaving the sub-panel drops the user selection; the
                 // machine stays selected.
+                self.navigation = Navigation { focus: NavFocus::Added, depth: Some(NavDepth::Fullscreen) };
                 self.active_pane = ActivePane::added();
                 self.users_selected = None;
             }
@@ -796,11 +793,6 @@ impl InteractiveState {
             }
             Action::RemoveTempUser => {
                 self.remove_temp_user();
-            }
-            Action::SwitchToLogs => {
-                self.active_pane = ActivePane::logs();
-                self.pending_selected = None;
-                self.added_selected = None;
             }
             Action::DeleteConfirm => self.delete_selected(ctx, tui),
             Action::DeleteCancel => self.delete_selection = None,
@@ -928,8 +920,8 @@ impl InteractiveState {
             .iter()
             .position(|n| Some(n) == self.added_selected.as_ref());
         let new_pos = match pos {
-            Some(p) if forward => (p + 1).min(names.len() - 1),
-            Some(p) => p.saturating_sub(1),
+            Some(p) if forward => (p + 1) % names.len(),
+            Some(p) => (p + names.len() - 1) % names.len(),
             None => 0,
         };
         self.added_selected = Some(names[new_pos].clone());
@@ -950,8 +942,8 @@ impl InteractiveState {
             .iter()
             .position(|d| Some(&d.ssh_public_key) == self.pending_selected.as_ref());
         let new_pos = match pos {
-            Some(p) if forward => (p + 1).min(sorted.len() - 1),
-            Some(p) => p.saturating_sub(1),
+            Some(p) if forward => (p + 1) % sorted.len(),
+            Some(p) => (p + sorted.len() - 1) % sorted.len(),
             None => 0,
         };
         self.pending_selected = Some(sorted[new_pos].ssh_public_key.clone());
@@ -1207,8 +1199,8 @@ impl InteractiveState {
             .iter()
             .position(|n| Some(n) == self.users_selected.as_ref());
         let new_pos = match pos {
-            Some(p) if forward => (p + 1).min(names.len() - 1),
-            Some(p) => p.saturating_sub(1),
+            Some(p) if forward => (p + 1) % names.len(),
+            Some(p) => (p + names.len() - 1) % names.len(),
             None => 0,
         };
         self.users_selected = Some(names[new_pos].clone());

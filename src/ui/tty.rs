@@ -13,7 +13,7 @@ use ratatui::layout::{Constraint, Layout};
 use ratatui::DefaultTerminal;
 
 use super::render::{key_label, render_all_panes, render_help, render_question, KeyFlash, QuestionCtx, RowFlash};
-use super::types::{ActivePane, Action, Question, UiDevice, UiEvent, UiUser, UserStatus};
+use super::types::{ActivePane, Action, NavFocus, Navigation, Question, UiDevice, UiEvent, UiUser, UserStatus};
 
 /// Calculate how many lines a text will occupy when wrapped to fit a given width.
 /// For hint-like text with "   " (three spaces) separators, treats each token as non-breakable.
@@ -83,53 +83,13 @@ fn calculate_question_height(question: &Question, ctx: &QuestionCtx, width: u16)
             )
         }
         Question::Idle(_) => {
-            let (status_line, hint) = match ctx.active_pane {
-                ActivePane::MainMenu(pane) => {
-                    let hint = pane.bindings.iter()
-                        .map(|b| format!("[{}] {}", b.label, b.description))
-                        .collect::<Vec<_>>()
-                        .join("   ");
-                    (pane.name.to_string(), hint)
-                }
-                ActivePane::Detected(pane) if ctx.pending > 0 => {
-                    // For Detected with pending, we need special bindings that include add/ignore
-                    // This is a special case, so we'll keep the hardcoded hint for now
-                    // In a full refactor, we'd have DetectedWithPending as a separate variant
-                    (
-                        pane.name.to_string(),
-                        "[q] no pane   [Up/Dn] select   [a] add   [n] ignore   [?] help".to_string(),
-                    )
-                }
-                ActivePane::Detected(pane) => {
-                    let hint = pane.bindings.iter()
-                        .map(|b| format!("[{}] {}", b.label, b.description))
-                        .collect::<Vec<_>>()
-                        .join("   ");
-                    (pane.name.to_string(), hint)
-                }
-                ActivePane::Added(pane) => {
-                    let hint = pane.bindings.iter()
-                        .map(|b| format!("[{}] {}", b.label, b.description))
-                        .collect::<Vec<_>>()
-                        .join("   ");
-                    (pane.name.to_string(), hint)
-                }
-                ActivePane::Users(pane) => {
-                    let hint = pane.bindings.iter()
-                        .map(|b| format!("[{}] {}", b.label, b.description))
-                        .collect::<Vec<_>>()
-                        .join("   ");
-                    (pane.name.to_string(), hint)
-                }
-                ActivePane::Logs(pane) => {
-                    let name = if ctx.verbose { "Logs - verbose" } else { pane.name };
-                    let hint = pane.bindings.iter()
-                        .map(|b| format!("[{}] {}", b.label, b.description))
-                        .collect::<Vec<_>>()
-                        .join("   ");
-                    (name.to_string(), hint)
-                }
-            };
+            // Hint line driven by navigation state, same as render_question
+            let status_line = ctx.active_pane.name().to_string();
+            let hints = ctx.navigation.hints(ctx.has_users, ctx.confirmed_user);
+            let hint = hints.iter()
+                .map(|h| format!("[{}] {}", h.keys, h.description))
+                .collect::<Vec<_>>()
+                .join("   ");
             (status_line, hint)
         }
         Question::AddDevice(def, name, ip) => {
@@ -245,7 +205,9 @@ pub struct TtyUi {
     pub users: Vec<UiUser>,
     /// Row of the Users panel highlighted by the selection (passed from state).
     pub users_selected: Option<usize>,
-    /// Which pane is currently active for navigation and actions.
+    /// Navigation state: focus + depth in the context hierarchy.
+    pub navigation: Navigation,
+    /// Which pane is currently active for navigation and actions (derived from navigation).
     pub active_pane: ActivePane,
     /// Whether the help panel is shown (key '?'): it replaces the device
     /// panels and the logs pane; the question block stays interactive.
@@ -370,22 +332,79 @@ impl TtyUi {
         }
     }
 
-    /// Translate one key press into an action. Scroll keys are handled here
-    /// and do not produce actions. Up/Down select a device in the active
-    /// panel. Tab switches between panes. Every press is recorded so the hint
-    /// line can highlight the key.
+    /// Translate one key press into an action.
+    ///
+    /// New navigation model (docs/navigation.md):
+    /// - Arrows move directionally: Left (Detected), Right (Added), Down (Logs)
+    /// - Enter goes one level deeper
+    /// - Esc goes one level back
+    /// - Character keys ('d', 'a', 'l') still work for backward compatibility
+    ///
+    /// Scroll keys are handled here and do not produce actions.
+    /// Up/Down select a device in the active panel.
+    /// Every press is recorded so the hint line can highlight the key.
     pub fn key_action(&mut self, key: KeyEvent) -> Option<Action> {
+        // Record key press for hint highlighting
         if let Some(label) = key_label(key.code) {
             self.key_flash = Some(KeyFlash {
                 key: label,
                 start: Instant::now(),
             });
         }
+        
+        // Ctrl+C or Ctrl+D always quits
         if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL)
             && matches!(key.code, crossterm::event::KeyCode::Char('c') | crossterm::event::KeyCode::Char('d'))
         {
             return Some(Action::Quit);
         }
+        
+        let code = key.code;
+        let has_users = !self.users.is_empty();
+        
+        // New navigation model: handle directional navigation first
+        // This implements the hierarchy from docs/navigation.md
+        let new_nav = self.navigation.handle_key(code, has_users);
+        if new_nav != self.navigation {
+            // Navigation changed - update state and sync active_pane
+            let old_focus = self.navigation.focus;
+            self.navigation = new_nav;
+            self.active_pane = new_nav.active_pane();
+            
+            // Clear selections when switching focus
+            if new_nav.focus != old_focus {
+                match new_nav.focus {
+                    NavFocus::Detected => {
+                        self.added_selected = None;
+                        self.users_selected = None;
+                    }
+                    NavFocus::Added => {
+                        self.detected_selected = None;
+                        self.users_selected = None;
+                    }
+                    NavFocus::Users => {
+                        self.detected_selected = None;
+                    }
+                    NavFocus::Logs => {
+                        self.detected_selected = None;
+                        self.added_selected = None;
+                    }
+                    NavFocus::Center => {
+                        self.detected_selected = None;
+                        self.added_selected = None;
+                        self.users_selected = None;
+                    }
+                }
+            }
+            return None;
+        }
+        
+        // Handle list navigation (Up/Down in lists)
+        if let Some(action) = self.navigation.list_nav_action(code) {
+            return Some(action);
+        }
+        
+        // Check if we're in a modal question
         let in_delete = matches!(self.question, Question::Delete(_, _));
         let in_wipe = matches!(self.question, Question::Wipe(_, _));
         let in_setup = matches!(self.question, Question::SetupCd(_, _));
@@ -395,23 +414,12 @@ impl TtyUi {
         // Check if we're in a modal question (not Idle)
         let in_modal = in_delete || in_wipe || in_setup || in_rename || in_add_temp_user || self.show_help;
         
-        // 'q' key: close help panel, or return to MainMenu/quit from pane
+        // 'q' key: close help panel, or quit
         if matches!(key.code, crossterm::event::KeyCode::Char('q')) {
             if self.show_help {
                 self.show_help = false;
                 self.help_scroll = 0;
                 return None;
-            }
-            // Only handle 'q' for pane navigation if in Idle mode (no question active)
-            if matches!(self.question, Question::Idle(_)) {
-                if self.active_pane != ActivePane::main_menu() {
-                    self.active_pane = ActivePane::main_menu();
-                    self.detected_selected = None;
-                    self.added_selected = None;
-                    return Some(Action::BackToMainMenu);
-                } else {
-                    return Some(Action::Quit);
-                }
             }
             // For non-Idle questions, quit (preserving original behavior)
             // except the input questions, which have their own handler
@@ -686,40 +694,6 @@ impl TtyUi {
             }
         }
         
-        // Pane navigation by letters only (NO TAB)
-        // 'q' returns to no active pane (MainMenu)
-        // Only handle pane navigation if we're not currently in that pane
-        // This allows pane-specific actions (like 'a' to add in Detected pane) to take precedence
-        if !in_modal {
-            match key.code {
-                crossterm::event::KeyCode::Char('d') => {
-                    // Only switch to Detected if we're not already there
-                    if !matches!(self.active_pane, ActivePane::Detected(_)) {
-                        self.active_pane = ActivePane::detected();
-                        self.log_scroll = 0;
-                        return Some(Action::SwitchToDetected);
-                    }
-                }
-                crossterm::event::KeyCode::Char('a') => {
-                    // Only switch to Added if we're not already there
-                    if !matches!(self.active_pane, ActivePane::Added(_)) {
-                        self.active_pane = ActivePane::added();
-                        self.log_scroll = 0;
-                        return Some(Action::SwitchToAdded);
-                    }
-                }
-                crossterm::event::KeyCode::Char('l') => {
-                    // Only switch to Logs if we're not already there
-                    if !matches!(self.active_pane, ActivePane::Logs(_)) {
-                        self.active_pane = ActivePane::logs();
-                        self.log_scroll = 0;
-                        return Some(Action::SwitchToLogs);
-                    }
-                }
-                _ => {}
-            }
-        }
-        
         // Global actions (available from any pane)
         match key.code {
             crossterm::event::KeyCode::Char('?') => {
@@ -752,6 +726,7 @@ impl TtyUi {
             help_scroll,
             verbose,
             active_pane,
+            navigation,
             flashes,
             pulses,
             key_flash,
@@ -760,12 +735,19 @@ impl TtyUi {
         let mut cursor = None;
         terminal.draw(|frame| {
             // Calculate the height needed for the question block
+            let has_users = !users.is_empty();
+            let confirmed_user = users_selected
+                .and_then(|i| users.get(i))
+                .is_some_and(|u| u.status != UserStatus::Temporary);
             let question_ctx = QuestionCtx {
                 input,
                 pending: detected.len(),
                 help: *show_help,
                 verbose: *verbose,
                 active_pane: *active_pane,
+                navigation: *navigation,
+                has_users,
+                confirmed_user,
                 key_flash: key_flash.as_ref(),
             };
             let question_height = calculate_question_height(question, &question_ctx, frame.area().width);
@@ -791,6 +773,7 @@ impl TtyUi {
                     frame,
                     main_area,
                     *active_pane,
+                    navigation.focus,
                     detected,
                     *detected_selected,
                     added,

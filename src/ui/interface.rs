@@ -10,7 +10,8 @@ use std::time::Duration;
 use super::logging::LOG_TX;
 use super::plain::PlainUi;
 use super::tty::TtyUi;
-use super::types::{ActivePane, Action, Question, UiDevice, UiUser};
+use super::types::{Action, Navigation, Question, UiDevice, UiUser};
+use super::types::ActivePane;
 
 /// The interface used by the interactive loop.
 pub enum Ui {
@@ -40,6 +41,7 @@ impl Ui {
                 delete_selected: None,
                 users: Vec::new(),
                 users_selected: None,
+                navigation: Navigation::overview(),
                 active_pane: ActivePane::main_menu(),
                 show_help: false,
                 help_scroll: 0,
@@ -109,10 +111,35 @@ impl Ui {
         }
     }
 
-    /// Set the currently active pane.
+    /// Set the currently active pane (derived from navigation).
     pub fn set_active_pane(&mut self, pane: ActivePane) {
         if let Ui::Tty(ui) = self {
             ui.active_pane = pane;
+        }
+    }
+
+    /// Set the current navigation state.
+    pub fn set_navigation(&mut self, navigation: Navigation) {
+        if let Ui::Tty(ui) = self {
+            ui.navigation = navigation;
+        }
+    }
+
+    /// Get the current navigation state (Tty UI only).
+    pub fn navigation(&self) -> Option<Navigation> {
+        if let Ui::Tty(ui) = self {
+            Some(ui.navigation)
+        } else {
+            None
+        }
+    }
+
+    /// Get the current active pane (Tty UI only).
+    pub fn active_pane(&self) -> Option<ActivePane> {
+        if let Ui::Tty(ui) = self {
+            Some(ui.active_pane)
+        } else {
+            None
         }
     }
 
