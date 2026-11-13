@@ -203,7 +203,7 @@ pub fn key_label(code: KeyCode) -> Option<String> {
         KeyCode::Enter => Some("Enter".to_string()),
         KeyCode::Esc => Some("Esc".to_string()),
         KeyCode::Up => Some("Up".to_string()),
-        KeyCode::Down => Some("Dn".to_string()),
+        KeyCode::Down => Some("Down".to_string()),
         KeyCode::Left => Some("Left".to_string()),
         KeyCode::Right => Some("Right".to_string()),
         KeyCode::PageUp => Some("PgUp".to_string()),
@@ -927,7 +927,7 @@ pub fn render_question(
             Color::Cyan,
             "Command-line and interactive help".to_string(),
             hint_spans(
-                "[Up/Dn/PgUp/PgDn] scroll help   [?] close   [s] sync git   [q] quit",
+                "[Up/Down/PgUp/PgDn] scroll help   [?] close   [s] sync git   [q] quit",
                 ctx.key_flash,
             ),
         )

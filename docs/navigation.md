@@ -45,11 +45,11 @@ walks back.
 ```
 Main screen (dashboard overview)
 ├── Detected panel (left)
-│   └── (device rows; Up/Dn select, wrapping)
+│   └── (device rows; Up/Down select, wrapping)
 ├── Added panel (right)
-│   └── machine rows (Up/Dn select, wrapping)
+│   └── machine rows (Up/Down select, wrapping)
 │       └── Users sub-panel   ← nested INSIDE the Added panel
-│           └── (user rows; Up/Dn select, wrapping)
+│           └── (user rows; Up/Down select, wrapping)
 └── Logs panel (bottom)
     └── fullscreen view (scrolling)
 ```
