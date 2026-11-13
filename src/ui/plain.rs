@@ -7,7 +7,9 @@ use std::io::{self, Write};
 use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
 
-use super::types::{Action, Question};
+use crossterm::event::KeyCode;
+
+use super::types::{Action, Effect, KeyBinding, Question, GLOBAL_BINDINGS};
 
 /// Plain line-based fallback for non-terminal stdout, mirroring the
 /// interface the tool had before the full-screen ui.
@@ -104,44 +106,62 @@ impl PlainUi {
         self.translate_action(line)
     }
 
-    /// Translate an input line into an Action based on the current question.
+    /// Translate an input line into an Action by looking the line up in
+    /// the current question's binding table (plus the global keys) — the
+    /// same table the prompt is printed from, so an advertised key always
+    /// works. A line maps to a key: empty means Enter, a single character
+    /// means that character.
     fn translate_action(&self, line: &str) -> Option<Action> {
-        match (&self.question, line) {
-            (Question::Idle(_), "q") => Some(Action::Quit),
-            (Question::Idle(_), "s") => Some(Action::Sync),
-            (Question::Idle(_), "d") => Some(Action::DeleteMode),
-            (Question::Idle(_), "w") => Some(Action::WipeMode),
-            (Question::Idle(_), "c") => Some(Action::SetupCdMode),
-            (Question::Idle(_), "k") => Some(Action::ConnectionsMode),
-            (Question::Idle(_), "v") => Some(Action::ToggleVerbose),
-            (Question::Idle(_), "h" | "?") => Some(Action::Help),
-            (Question::Idle(_), _) => None,
-            (Question::AddDevice(_, _, _), "y") => Some(Action::AddCurrent),
-            (Question::AddDevice(_, _, _), "n") => Some(Action::SkipCurrent),
-            (Question::AddDevice(_, _, _), "s") => Some(Action::Sync),
-            (Question::AddDevice(_, _, _), "d") => Some(Action::DeleteMode),
-            (Question::AddDevice(_, _, _), "w") => Some(Action::WipeMode),
-            (Question::AddDevice(_, _, _), "c") => Some(Action::SetupCdMode),
-            (Question::AddDevice(_, _, _), "k") => Some(Action::ConnectionsMode),
-            (Question::AddDevice(_, _, _), "q") => Some(Action::Quit),
-            (Question::AddDevice(_, _, _), _) => Some(Action::SkipCurrent),
-            (Question::TrustKey(_, _), "y") => Some(Action::TrustKey),
-            (Question::TrustKey(_, _), "n") => Some(Action::RejectKey),
-            (Question::TrustKey(_, _), _) => Some(Action::RejectKey),
-            (Question::Rename(_, _, suggested), "") => Some(Action::Rename(suggested.clone())),
-            (Question::Rename(_, _, _), "q") => Some(Action::SkipRename),
-            (Question::Rename(_, _, _), name) => Some(Action::Rename(name.to_string())),
-            (Question::Delete(_, _), "y") => Some(Action::DeleteConfirm),
-            (Question::Delete(_, _), "n") => Some(Action::DeleteCancel),
-            (Question::Delete(_, _), _) => Some(Action::DeleteCancel),
-            (Question::Wipe(_, _), "y") => Some(Action::WipeConfirm),
-            (Question::Wipe(_, _), "n") => Some(Action::WipeCancel),
-            (Question::Wipe(_, _), _) => Some(Action::WipeCancel),
-            (Question::SetupCd(_, _), "y") => Some(Action::SetupCdConfirm),
-            (Question::SetupCd(_, _), "n") => Some(Action::SetupCdCancel),
-            (Question::SetupCd(_, _), _) => Some(Action::SetupCdCancel),
-            (Question::AddTempUser(_, _), "") => Some(Action::CancelTempUser),
-            (Question::AddTempUser(_, _), name) => Some(Action::TempUserName(name.to_string())),
+        let line = line.trim();
+        let mut table: Vec<&KeyBinding> = self.question.def().bindings.iter().collect();
+        table.extend(GLOBAL_BINDINGS.iter());
+        let code = if line.is_empty() {
+            Some(KeyCode::Enter)
+        } else {
+            let mut chars = line.chars();
+            match (chars.next(), chars.next()) {
+                (Some(c), None) => Some(KeyCode::Char(c)),
+                _ => None,
+            }
+        };
+        if let Some(code) = code
+            && let Some(binding) = table.iter().find(|b| b.key == code)
+        {
+            return match &binding.effect {
+                Effect::Action(action) => Some(action.clone()),
+                Effect::SubmitInput => match &self.question {
+                    // An empty line accepts the suggested name; an empty
+                    // user name cancels.
+                    Question::Rename(_, _, suggested) => Some(Action::Rename(if line.is_empty() {
+                        suggested.clone()
+                    } else {
+                        line.to_string()
+                    })),
+                    Question::AddTempUser(_, _) => {
+                        if line.is_empty() {
+                            Some(Action::CancelTempUser)
+                        } else {
+                            Some(Action::TempUserName(line.to_string()))
+                        }
+                    }
+                    _ => None,
+                },
+                Effect::Internal => None,
+            };
+        }
+        // Line-based fallbacks: a textual answer for the input questions,
+        // the question's default answer for the confirm questions.
+        match &self.question {
+            Question::Rename(_, _, _) if !line.is_empty() => Some(Action::Rename(line.to_string())),
+            Question::AddTempUser(_, _) if !line.is_empty() => {
+                Some(Action::TempUserName(line.to_string()))
+            }
+            Question::AddDevice(..) => Some(Action::SkipCurrent),
+            Question::TrustKey(..) => Some(Action::RejectKey),
+            Question::Delete(..) => Some(Action::DeleteCancel),
+            Question::Wipe(..) => Some(Action::WipeCancel),
+            Question::SetupCd(..) => Some(Action::SetupCdCancel),
+            _ => None,
         }
     }
 }
