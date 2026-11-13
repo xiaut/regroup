@@ -18,6 +18,7 @@
 //! they are buffered in a channel.
 
 pub mod interface;
+pub mod keys;
 pub mod logging;
 pub mod plain;
 pub mod render;

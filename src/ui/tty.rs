@@ -8,11 +8,15 @@ use std::io;
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
-use crossterm::event::{self, Event, KeyEvent, KeyEventKind};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 use ratatui::layout::{Constraint, Layout};
 use ratatui::DefaultTerminal;
 
-use super::render::{key_label, render_all_panes, render_help, render_question, KeyFlash, QuestionCtx, RowFlash};
+use super::keys::{resolve, Context, KeyResolution};
+use super::render::{
+    help_hint_text, idle_hint_text, key_label, modal_hint_text, render_all_panes, render_help,
+    render_question, KeyFlash, QuestionCtx, RowFlash,
+};
 use super::types::{ActivePane, Action, NavFocus, Navigation, Question, UiDevice, UiEvent, UiUser, UserStatus};
 
 /// Calculate how many lines a text will occupy when wrapped to fit a given width.
@@ -79,42 +83,32 @@ fn calculate_question_height(question: &Question, ctx: &QuestionCtx, width: u16)
         Question::Idle(_) if ctx.help => {
             (
                 "Command-line and interactive help".to_string(),
-                "[Up/Dn/PgUp/PgDn] scroll help   [q/?] close   [s] sync git".to_string(),
+                help_hint_text(),
             )
         }
         Question::Idle(_) => {
-            // Hint line driven by navigation state, same as render_question
+            // Hint line driven by the navigation key table, same as render_question
             let status_line = ctx.active_pane.name().to_string();
-            let hints = ctx.navigation.hints(ctx.has_users, ctx.confirmed_user);
-            let hint = hints.iter()
-                .map(|h| format!("[{}] {}", h.keys, h.description))
-                .collect::<Vec<_>>()
-                .join("   ");
-            (status_line, hint)
+            (status_line, idle_hint_text(Context::Pane {
+                focus: ctx.navigation.focus,
+                depth: ctx.navigation.depth,
+                confirmed_user: ctx.confirmed_user,
+            }))
         }
         Question::AddDevice(def, name, ip) => {
             (
                 format!("Add {name} ({ip}) to config?"),
-                {
-                    let mut hint = def.bindings.iter()
-                        .map(|b| format!("[{}] {}", b.label, b.description))
-                        .collect::<Vec<_>>()
-                        .join("   ");
-                    hint = format!("{hint}   [v] verbose: {}", if ctx.verbose { "on" } else { "off" });
-                    hint
-                },
+                format!(
+                    "{}   [v] verbose: {}",
+                    modal_hint_text(def),
+                    if ctx.verbose { "on" } else { "off" }
+                ),
             )
         }
         Question::TrustKey(def, name) => {
             (
                 format!("Trust the new signing key for {name}? (expected after a reinstall — otherwise it may be spoofing)"),
-                {
-                    let hint = def.bindings.iter()
-                        .map(|b| format!("[{}] {}", b.label, b.description))
-                        .collect::<Vec<_>>()
-                        .join("   ");
-                    hint
-                },
+                modal_hint_text(def),
             )
         }
         Question::Rename(_def, ..) => {
@@ -130,37 +124,19 @@ fn calculate_question_height(question: &Question, ctx: &QuestionCtx, width: u16)
         Question::Delete(def, name) => {
             (
                 format!("Delete {name} from configuration?"),
-                {
-                    let hint = def.bindings.iter()
-                        .map(|b| format!("[{}] {}", b.label, b.description))
-                        .collect::<Vec<_>>()
-                        .join("   ");
-                    hint
-                },
+                modal_hint_text(def),
             )
         }
         Question::Wipe(def, count) => {
             (
                 format!("Delete the ENTIRE configuration ({count} device block(s) + ~/.regroup-config)?"),
-                {
-                    let hint = def.bindings.iter()
-                        .map(|b| format!("[{}] {}", b.label, b.description))
-                        .collect::<Vec<_>>()
-                        .join("   ");
-                    hint
-                },
+                modal_hint_text(def),
             )
         }
         Question::SetupCd(def, file) => {
             (
                 format!("Install the 'regroup-cd' shell function (cd to ~/.regroup-config) in ~/{file}?"),
-                {
-                    let hint = def.bindings.iter()
-                        .map(|b| format!("[{}] {}", b.label, b.description))
-                        .collect::<Vec<_>>()
-                        .join("   ");
-                    hint
-                },
+                modal_hint_text(def),
             )
         }
     };
@@ -334,14 +310,12 @@ impl TtyUi {
 
     /// Translate one key press into an action.
     ///
-    /// New navigation model (docs/navigation.md):
-    /// - Arrows move directionally: Left (Detected), Right (Added), Down (Logs)
-    /// - Enter goes one level deeper
-    /// - Esc goes one level back
-    /// - Character keys ('d', 'a', 'l') still work for backward compatibility
+    /// The key is resolved against the state's binding table
+    /// ([`super::keys::bindings_for`]) — the same table the hint lines
+    /// are built from — so a key that is not advertised is not handled,
+    /// and every advertised key is. Keys marked internal (navigation,
+    /// scrolling, help, text capture) are applied locally here.
     ///
-    /// Scroll keys are handled here and do not produce actions.
-    /// Up/Down select a device in the active panel.
     /// Every press is recorded so the hint line can highlight the key.
     pub fn key_action(&mut self, key: KeyEvent) -> Option<Action> {
         // Record key press for hint highlighting
@@ -351,26 +325,104 @@ impl TtyUi {
                 start: Instant::now(),
             });
         }
-        
+
         // Ctrl+C or Ctrl+D always quits
         if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL)
-            && matches!(key.code, crossterm::event::KeyCode::Char('c') | crossterm::event::KeyCode::Char('d'))
+            && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('d'))
         {
             return Some(Action::Quit);
         }
-        
-        let code = key.code;
+
+        let confirmed_user = self
+            .users_selected
+            .and_then(|i| self.users.get(i))
+            .is_some_and(|u| u.status != UserStatus::Temporary);
+        let ctx = if self.show_help {
+            Context::Help
+        } else {
+            let def = self.question.def();
+            if matches!(self.question, Question::Rename(..) | Question::AddTempUser(..)) {
+                Context::TextInput(def)
+            } else if matches!(self.question, Question::Idle(_)) {
+                Context::Pane {
+                    focus: self.navigation.focus,
+                    depth: self.navigation.depth,
+                    confirmed_user,
+                }
+            } else {
+                Context::Modal(def)
+            }
+        };
+        match resolve(ctx, key.code) {
+            // Not in the table: not handled at all.
+            None => None,
+            Some(KeyResolution::Action(action)) => Some(action),
+            Some(KeyResolution::SubmitInput) => self.submit_input(),
+            Some(KeyResolution::Internal) => self.apply_internal(key.code),
+        }
+    }
+
+    /// Submit the typed text of a text-input question (Enter).
+    fn submit_input(&mut self) -> Option<Action> {
+        let input = std::mem::take(&mut self.input);
+        match &self.question {
+            // An empty name accepts the suggestion.
+            Question::Rename(_, _, suggested) => Some(Action::Rename(if input.is_empty() {
+                suggested.clone()
+            } else {
+                input
+            })),
+            // An empty user name cancels.
+            Question::AddTempUser(_, _) => {
+                if input.is_empty() {
+                    Some(Action::CancelTempUser)
+                } else {
+                    Some(Action::TempUserName(input))
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Apply a key the binding table marked as internal: navigation,
+    /// list selection, logs scrolling, help panel, text capture.
+    fn apply_internal(&mut self, code: KeyCode) -> Option<Action> {
+        // Help panel: scroll it or close it.
+        if self.show_help {
+            match code {
+                KeyCode::Up => self.help_scroll = self.help_scroll.saturating_add(1),
+                KeyCode::Down => self.help_scroll = self.help_scroll.saturating_sub(1),
+                KeyCode::PageUp => self.help_scroll = self.help_scroll.saturating_add(10),
+                KeyCode::PageDown => self.help_scroll = self.help_scroll.saturating_sub(10),
+                KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q') => {
+                    self.show_help = false;
+                    self.help_scroll = 0;
+                }
+                _ => {}
+            }
+            return None;
+        }
+
+        // Text-input questions: capture the typed characters.
+        if matches!(self.question, Question::Rename(..) | Question::AddTempUser(..)) {
+            match code {
+                KeyCode::Char(c) => self.input.push(c),
+                KeyCode::Backspace => {
+                    self.input.pop();
+                }
+                _ => {}
+            }
+            return None;
+        }
+
+        // Navigation state machine (arrows, Enter, Esc).
         let has_users = !self.users.is_empty();
-        
-        // New navigation model: handle directional navigation first
-        // This implements the hierarchy from docs/navigation.md
         let new_nav = self.navigation.handle_key(code, has_users);
         if new_nav != self.navigation {
-            // Navigation changed - update state and sync active_pane
             let old_focus = self.navigation.focus;
             self.navigation = new_nav;
             self.active_pane = new_nav.active_pane();
-            
+
             // Clear selections when switching focus
             if new_nav.focus != old_focus {
                 match new_nav.focus {
@@ -398,311 +450,41 @@ impl TtyUi {
             }
             return None;
         }
-        
-        // Handle list navigation (Up/Down in lists)
+
+        // List selection (Up/Down in fullscreen lists).
         if let Some(action) = self.navigation.list_nav_action(code) {
             return Some(action);
         }
-        
-        // Check if we're in a modal question
-        let in_delete = matches!(self.question, Question::Delete(_, _));
-        let in_wipe = matches!(self.question, Question::Wipe(_, _));
-        let in_setup = matches!(self.question, Question::SetupCd(_, _));
-        let in_rename = matches!(self.question, Question::Rename(_, _, _));
-        let in_add_temp_user = matches!(self.question, Question::AddTempUser(_, _));
-        
-        // Check if we're in a modal question (not Idle)
-        let in_modal = in_delete || in_wipe || in_setup || in_rename || in_add_temp_user || self.show_help;
-        
-        // 'q' key: close help panel, or quit
-        if matches!(key.code, crossterm::event::KeyCode::Char('q')) {
-            if self.show_help {
-                self.show_help = false;
-                self.help_scroll = 0;
-                return None;
-            }
-            // For non-Idle questions, quit (preserving original behavior)
-            // except the input questions, which have their own handler
-            if !matches!(
-                self.question,
-                Question::AddDevice(_, _, _) | Question::AddTempUser(_, _)
-            ) {
-                return Some(Action::Quit);
-            }
-            // For AddDevice, fall through to its specific handler
-        }
-        
-        // Handle help panel scrolling
-        if self.show_help {
-            match key.code {
-                crossterm::event::KeyCode::Up => {
-                    self.help_scroll = self.help_scroll.saturating_add(1);
-                    return None;
-                }
-                crossterm::event::KeyCode::Down => {
-                    self.help_scroll = self.help_scroll.saturating_sub(1);
-                    return None;
-                }
-                crossterm::event::KeyCode::PageUp => {
-                    self.help_scroll = self.help_scroll.saturating_add(10);
-                    return None;
-                }
-                crossterm::event::KeyCode::PageDown => {
-                    self.help_scroll = self.help_scroll.saturating_sub(10);
-                    return None;
-                }
-                crossterm::event::KeyCode::Esc | crossterm::event::KeyCode::Char('?') => {
-                    self.show_help = false;
-                    self.help_scroll = 0;
-                    return None;
-                }
-                _ => {}
-            }
-        }
-        
-        // Handle modal questions (wipe, setup-cd, delete, trust key, rename)
-        if in_wipe {
-            match key.code {
-                crossterm::event::KeyCode::Char('y') => {
-                    return Some(Action::WipeConfirm);
-                }
-                crossterm::event::KeyCode::Char('n') => {
-                    return Some(Action::WipeCancel);
-                }
-                _ => return None,
-            }
-        }
-        
-        if in_setup {
-            match key.code {
-                crossterm::event::KeyCode::Char('y') => {
-                    return Some(Action::SetupCdConfirm);
-                }
-                crossterm::event::KeyCode::Char('n') => {
-                    return Some(Action::SetupCdCancel);
-                }
-                _ => return None,
-            }
-        }
-        
-        if in_delete {
-            match key.code {
-                crossterm::event::KeyCode::Up => return Some(Action::SelectPrev),
-                crossterm::event::KeyCode::Down => return Some(Action::SelectNext),
-                crossterm::event::KeyCode::Char('y') => return Some(Action::DeleteConfirm),
-                crossterm::event::KeyCode::Char('n') => return Some(Action::DeleteCancel),
-                _ => return None,
-            }
-        }
-        
-        if in_rename {
-            match key.code {
-                crossterm::event::KeyCode::Char(c) => {
-                    self.input.push(c);
-                    return None;
-                }
-                crossterm::event::KeyCode::Backspace => {
-                    self.input.pop();
-                    return None;
-                }
-                crossterm::event::KeyCode::Enter => {
-                    let name = std::mem::take(&mut self.input);
-                    return Some(Action::Rename(name));
-                }
-                crossterm::event::KeyCode::Esc => return Some(Action::SkipRename),
-                _ => return None,
-            }
-        }
-        
-        if in_add_temp_user {
-            match key.code {
-                crossterm::event::KeyCode::Char(c) => {
-                    self.input.push(c);
-                    return None;
-                }
-                crossterm::event::KeyCode::Backspace => {
-                    self.input.pop();
-                    return None;
-                }
-                crossterm::event::KeyCode::Enter => {
-                    let name = std::mem::take(&mut self.input);
-                    return Some(Action::TempUserName(name));
-                }
-                crossterm::event::KeyCode::Esc => return Some(Action::CancelTempUser),
-                _ => return None,
-            }
-        }
-        
-        // Handle TrustKey question
-        if matches!(self.question, Question::TrustKey(_, _)) {
-            match key.code {
-                crossterm::event::KeyCode::Char('y') => return Some(Action::TrustKey),
-                crossterm::event::KeyCode::Char('n') | crossterm::event::KeyCode::Char('q') => {
-                    return Some(Action::RejectKey);
-                }
-                _ => return None,
-            }
-        }
-        
-        // Handle AddDevice question (plain mode)
-        if matches!(self.question, Question::AddDevice(_, _, _)) {
-            match key.code {
-                crossterm::event::KeyCode::Char('y') => return Some(Action::AddCurrent),
-                crossterm::event::KeyCode::Char('n') => return Some(Action::SkipCurrent),
-                crossterm::event::KeyCode::Char('s') => return Some(Action::Sync),
-                crossterm::event::KeyCode::Char('d') => return Some(Action::DeleteMode),
-                crossterm::event::KeyCode::Char('w') => return Some(Action::WipeMode),
-                crossterm::event::KeyCode::Char('c') => return Some(Action::SetupCdMode),
-                crossterm::event::KeyCode::Char('k') => return Some(Action::ConnectionsMode),
-                crossterm::event::KeyCode::Char('v') => return Some(Action::ToggleVerbose),
-                crossterm::event::KeyCode::Char('q') => return Some(Action::Quit),
-                crossterm::event::KeyCode::Char('?') => {
-                    self.show_help = true;
-                    self.help_scroll = 0;
-                    return None;
-                }
-                _ => return None,
-            }
-        }
-        
-        // From this point on, we're in Idle mode with no modal questions
-        
-        // Detected pane: navigate detected devices and add them
-        if matches!(self.active_pane, ActivePane::Detected(_)) && !in_modal {
-            match key.code {
-                crossterm::event::KeyCode::Up => {
-                    if !self.detected.is_empty() {
-                        return Some(Action::PendingSelectPrev);
-                    }
-                }
-                crossterm::event::KeyCode::Down => {
-                    if !self.detected.is_empty() {
-                        return Some(Action::PendingSelectNext);
-                    }
-                }
-                crossterm::event::KeyCode::Char('a') => {
-                    return self.detected_selected.map(|_| Action::Add);
-                }
-                crossterm::event::KeyCode::Char('n') => {
-                    return self.detected_selected.map(|_| Action::Ignore);
-                }
-                _ => {}
-            }
-        }
-        
-        // Added pane: navigate added devices and perform actions
-        if matches!(self.active_pane, ActivePane::Added(_)) && !in_modal {
-            match key.code {
-                crossterm::event::KeyCode::Up => {
-                    if !self.added.is_empty() {
-                        return Some(Action::AddedSelectPrev);
-                    }
-                }
-                crossterm::event::KeyCode::Down => {
-                    if !self.added.is_empty() {
-                        return Some(Action::AddedSelectNext);
-                    }
-                }
-                crossterm::event::KeyCode::Right => {
-                    if self.added_selected.is_some() {
-                        return Some(Action::SwitchToUsers);
-                    }
-                }
-                crossterm::event::KeyCode::Char('d') => {
-                    return self.added_selected.map(|_| Action::DeleteSelected);
-                }
-                crossterm::event::KeyCode::Char('s') => {
-                    return Some(Action::Sync);
-                }
-                crossterm::event::KeyCode::Char('w') => {
-                    return Some(Action::WipeMode);
-                }
-                crossterm::event::KeyCode::Char('c') => {
-                    return Some(Action::SetupCdMode);
-                }
-                _ => {}
-            }
-        }
-        
-        // Users pane: navigate users, machine+user actions
-        if matches!(self.active_pane, ActivePane::Users(_)) && !in_modal {
-            let selected_user = self
-                .users_selected
-                .and_then(|i| self.users.get(i));
-            match key.code {
-                crossterm::event::KeyCode::Left => {
-                    return Some(Action::BackToAdded);
-                }
-                crossterm::event::KeyCode::Up => {
-                    if !self.users.is_empty() {
-                        return Some(Action::UsersSelectPrev);
-                    }
-                }
-                crossterm::event::KeyCode::Down => {
-                    if !self.users.is_empty() {
-                        return Some(Action::UsersSelectNext);
-                    }
-                }
-                crossterm::event::KeyCode::Char('a') => {
-                    return Some(Action::AddTempUser);
-                }
-                crossterm::event::KeyCode::Char('x') => {
-                    if selected_user.is_some_and(|u| u.status == UserStatus::Temporary) {
-                        return Some(Action::RemoveTempUser);
-                    }
-                }
-                crossterm::event::KeyCode::Char('i') => {
-                    if selected_user.is_some_and(|u| u.status != UserStatus::Temporary) {
-                        return Some(Action::InstallKeyToSelected);
-                    }
-                }
-                crossterm::event::KeyCode::Char('r') => {
-                    if selected_user.is_some_and(|u| u.status != UserStatus::Temporary) {
-                        return Some(Action::RemoveKeyFromSelected);
-                    }
-                }
-                crossterm::event::KeyCode::Char('s') => {
-                    return Some(Action::Sync);
-                }
-                _ => {}
-            }
-        }
-        
-        // Logs pane: scroll and toggle verbose
-        if matches!(self.active_pane, ActivePane::Logs(_)) && !in_modal {
-            match key.code {
-                crossterm::event::KeyCode::Up => {
+
+        // Logs pane scrolling.
+        if matches!(self.active_pane, ActivePane::Logs(_)) {
+            match code {
+                KeyCode::Up => {
                     self.log_scroll = self.log_scroll.saturating_add(1);
                     return None;
                 }
-                crossterm::event::KeyCode::Down => {
+                KeyCode::Down => {
                     self.log_scroll = self.log_scroll.saturating_sub(1);
                     return None;
                 }
-                crossterm::event::KeyCode::PageUp => {
+                KeyCode::PageUp => {
                     self.log_scroll = self.log_scroll.saturating_add(10);
                     return None;
                 }
-                crossterm::event::KeyCode::PageDown => {
+                KeyCode::PageDown => {
                     self.log_scroll = self.log_scroll.saturating_sub(10);
                     return None;
-                }
-                crossterm::event::KeyCode::Char('v') => {
-                    return Some(Action::ToggleVerbose);
                 }
                 _ => {}
             }
         }
-        
-        // Global actions (available from any pane)
-        match key.code {
-            crossterm::event::KeyCode::Char('?') => {
-                self.show_help = !self.show_help;
-                self.help_scroll = 0;
-                None
-            }
-            _ => None,
+
+        // Help toggle.
+        if code == KeyCode::Char('?') {
+            self.show_help = !self.show_help;
+            self.help_scroll = 0;
         }
+        None
     }
 
     /// Draw the UI frame.
@@ -735,7 +517,6 @@ impl TtyUi {
         let mut cursor = None;
         terminal.draw(|frame| {
             // Calculate the height needed for the question block
-            let has_users = !users.is_empty();
             let confirmed_user = users_selected
                 .and_then(|i| users.get(i))
                 .is_some_and(|u| u.status != UserStatus::Temporary);
@@ -746,7 +527,6 @@ impl TtyUi {
                 verbose: *verbose,
                 active_pane: *active_pane,
                 navigation: *navigation,
-                has_users,
                 confirmed_user,
                 key_flash: key_flash.as_ref(),
             };

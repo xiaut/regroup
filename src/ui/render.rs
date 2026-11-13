@@ -14,8 +14,30 @@ use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, BorderType, Cell, Paragraph, Row, Table, Wrap};
 
+use super::keys::{self, Context};
 use super::logging::{BLINK_MS, KEY_FLASH_MS, PULSE_MS};
-use super::types::{ActivePane, Level};
+use super::types::{bindings_hint_text, ActivePane, Level, QuestionDef, HELP_BINDINGS};
+
+/// Hint text for the Idle action bar, built from the pane's key list —
+/// the same list key presses are dispatched through.
+pub fn idle_hint_text(ctx: Context) -> String {
+    keys::hints(ctx)
+        .iter()
+        .map(|h| format!("[{}] {}", h.keys, h.description))
+        .collect::<Vec<_>>()
+        .join("   ")
+}
+
+/// Hint text for a modal question: the question's own bindings, exactly
+/// what key presses are resolved against.
+pub fn modal_hint_text(def: &QuestionDef) -> String {
+    bindings_hint_text(def.bindings)
+}
+
+/// Hint text while the help panel is open.
+pub fn help_hint_text() -> String {
+    bindings_hint_text(HELP_BINDINGS)
+}
 
 /// Minimum terminal width to display device panels side-by-side.
 /// Below this, panels stack vertically.
@@ -67,8 +89,6 @@ pub struct QuestionCtx<'a> {
     pub active_pane: super::types::ActivePane,
     /// Current navigation state (focus + depth), drives the hint line.
     pub navigation: super::types::Navigation,
-    /// Whether the Users panel has users (drives Added-pane hints).
-    pub has_users: bool,
     /// Whether the selected user is confirmed (drives Users-pane hints).
     pub confirmed_user: bool,
     /// Last key press, highlighted in the hint line while recent.
@@ -926,22 +946,19 @@ pub fn render_question(
             "Help",
             Color::Cyan,
             "Command-line and interactive help".to_string(),
-            hint_spans(
-                "[Up/Down/PgUp/PgDn] scroll help   [?] close   [s] sync git   [q] quit",
-                ctx.key_flash,
-            ),
+            hint_spans(&help_hint_text(), ctx.key_flash),
         )
     } else {
         match question {
             super::types::Question::Idle(def) => {
-                // Hint line driven by the navigation state: shows the keys
-                // that actually work in the current focus + depth.
+                // Hint line driven by the navigation key table: shows the
+                // keys that are actually handled in the current focus + depth.
                 let status_line = ctx.active_pane.name().to_string();
-                let hints = ctx.navigation.hints(ctx.has_users, ctx.confirmed_user);
-                let hint = hints.iter()
-                    .map(|h| format!("[{}] {}", h.keys, h.description))
-                    .collect::<Vec<_>>()
-                    .join("   ");
+                let hint = idle_hint_text(Context::Pane {
+                    focus: ctx.navigation.focus,
+                    depth: ctx.navigation.depth,
+                    confirmed_user: ctx.confirmed_user,
+                });
                 (
                     def.title,
                     Color::Blue,
@@ -954,12 +971,7 @@ pub fn render_question(
                 Color::Yellow,
                 format!("Add {name} ({ip}) to config?"),
                 {
-                    let mut hint = def.bindings.iter()
-                        .map(|b| format!("[{}] {}", b.label, b.description))
-                        .collect::<Vec<_>>()
-                        .join("   ");
-                    // Add verbose hint
-                    hint = format!("{hint}   {verbose_hint}");
+                    let hint = format!("{}   {verbose_hint}", modal_hint_text(def));
                     hint_spans(&hint, ctx.key_flash)
                 },
             ),
@@ -969,37 +981,31 @@ pub fn render_question(
                 format!(
                     "Trust the new signing key for {name}? (expected after a reinstall — otherwise it may be spoofing)"
                 ),
-                {
-                    let hint = def.bindings.iter()
-                        .map(|b| format!("[{}] {}", b.label, b.description))
-                        .collect::<Vec<_>>()
-                        .join("   ");
-                    hint_spans(&hint, ctx.key_flash)
-                },
+                hint_spans(&modal_hint_text(def), ctx.key_flash),
             ),
             super::types::Question::Rename(def, name, suggested) => (
                 def.title,
                 Color::Cyan,
-                format!("New name for {name} ([Enter] = {suggested}, [q] = skip)"),
+                format!(
+                    "New name for {name} ({}; empty = {suggested})",
+                    bindings_hint_text(def.bindings)
+                ),
                 Line::from(format!("> {}", ctx.input)),
             ),
             super::types::Question::AddTempUser(def, device) => (
                 def.title,
                 Color::Cyan,
-                format!("Temporary user on {device} (in memory only, for git sync until its declared users arrive)"),
+                format!(
+                    "Temporary user on {device} (in memory only) — {}",
+                    bindings_hint_text(def.bindings)
+                ),
                 Line::from(format!("> {}", ctx.input)),
             ),
             super::types::Question::Delete(def, name) => (
                 def.title,
                 Color::Red,
                 format!("Delete {name} from configuration?"),
-                {
-                    let hint = def.bindings.iter()
-                        .map(|b| format!("[{}] {}", b.label, b.description))
-                        .collect::<Vec<_>>()
-                        .join("   ");
-                    hint_spans(&hint, ctx.key_flash)
-                },
+                hint_spans(&modal_hint_text(def), ctx.key_flash),
             ),
             super::types::Question::Wipe(def, count) => (
                 def.title,
@@ -1007,13 +1013,7 @@ pub fn render_question(
                 format!(
                     "Delete the ENTIRE configuration ({count} device block(s) + ~/.regroup-config)?"
                 ),
-                {
-                    let hint = def.bindings.iter()
-                        .map(|b| format!("[{}] {}", b.label, b.description))
-                        .collect::<Vec<_>>()
-                        .join("   ");
-                    hint_spans(&hint, ctx.key_flash)
-                },
+                hint_spans(&modal_hint_text(def), ctx.key_flash),
             ),
             super::types::Question::SetupCd(def, file) => (
                 def.title,
@@ -1021,13 +1021,7 @@ pub fn render_question(
                 format!(
                     "Install the 'regroup-cd' shell function (cd to ~/.regroup-config) in ~/{file}?"
                 ),
-                {
-                    let hint = def.bindings.iter()
-                        .map(|b| format!("[{}] {}", b.label, b.description))
-                        .collect::<Vec<_>>()
-                        .join("   ");
-                    hint_spans(&hint, ctx.key_flash)
-                },
+                hint_spans(&modal_hint_text(def), ctx.key_flash),
             ),
         }
     };

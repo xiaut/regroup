@@ -117,6 +117,8 @@ described above.
 | `Up`/`Down` (in a list) | Move selection, wrapping around at the ends |
 | `PgUp`/`PgDn` | Scroll scrollable content (Logs pane, help) |
 
-Character shortcuts (`q` quit, `s` sync, `d` delete, `w` wipe, `c` setup-cd,
-`k` connections, `v` verbose, `?` help) remain unchanged; they act as
-commands, not navigation.
+Character shortcuts act as commands, not navigation, and are listed per
+pane state (see `pane_keys` in `src/ui/types.rs`): `s` sync, `d` delete,
+`w` wipe, `c` setup-cd in the Added panel, `a`/`n` in Detected, `v` in
+Logs, and so on. `q` quit is only offered on the main menu (overview);
+`?` help is the single key that works in every pane state.

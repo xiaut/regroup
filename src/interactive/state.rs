@@ -28,7 +28,7 @@ use crate::ssh::config::update_block;
 use crate::ssh::keys::{SigningPublicKeyB64, SshPublicKey};
 use crate::ssh::public_key;
 use crate::ui::{self, Action, Level, Question};
-use crate::ui::types::{ActivePane, NavDepth, NavFocus, Navigation, UiDevice, UiUser, UserStatus};
+use crate::ui::types::{ActivePane, Navigation, UiDevice, UiUser, UserStatus};
 
 /// How long each loop iteration waits for user input before checking the
 /// beacon channel again.
@@ -178,13 +178,7 @@ pub fn run(ctx: &Context, udp_port: u16, beacons: &Receiver<BeaconDevice>) -> us
             if state.users_selected.is_none() && !users.is_empty() {
                 state.users_selected = Some(users[0].name.clone());
             }
-            // The Users pane bindings follow the selected user's status:
-            // machine+user actions only appear for a confirmed user.
-            let confirmed = users
-                .iter()
-                .position(|u| Some(&u.name) == state.users_selected.as_ref())
-                .is_some_and(|i| users[i].status != UserStatus::Temporary);
-            state.active_pane = ActivePane::users(confirmed);
+            state.active_pane = ActivePane::users();
         }
         let users_selected = state
             .users_selected
@@ -758,21 +752,6 @@ impl InteractiveState {
                 } else {
                     self.move_pending_selection(true);
                 }
-            }
-            Action::SwitchToUsers => {
-                // Only reachable from the Added pane with a machine
-                // selected (the tty gates the key). No user is selected
-                // yet: the display loop selects the first one.
-                self.navigation = Navigation { focus: NavFocus::Users, depth: Some(NavDepth::Fullscreen) };
-                self.active_pane = ActivePane::users(false);
-                self.users_selected = None;
-            }
-            Action::BackToAdded => {
-                // Leaving the sub-panel drops the user selection; the
-                // machine stays selected.
-                self.navigation = Navigation { focus: NavFocus::Added, depth: Some(NavDepth::Fullscreen) };
-                self.active_pane = ActivePane::added();
-                self.users_selected = None;
             }
             Action::UsersSelectPrev => {
                 self.move_users_selection(ctx, false);
