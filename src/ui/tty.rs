@@ -81,7 +81,7 @@ fn calculate_question_height(question: &Question, ctx: &QuestionCtx, width: u16)
         Question::AddTempUser(def, device) => {
             // Input line handled like the rename question
             let question_line = format!(
-                "Temporary user on {device} (in memory only) — {}",
+                "Temporary user on {device} (kept in tmp/) — {}",
                 bindings_hint_text(def.bindings)
             );
             let input_line = format!("> {}", ctx.input);

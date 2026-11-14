@@ -12,11 +12,11 @@ use super::device::{load_device_file, save_device_file};
 use super::settings::{load_global_settings, save_default_global_settings};
 use super::users::ensure_local_user_file;
 use super::{
-    CONFIG_DIR, Conf, DeviceName, DEVICES_DIR, DEVICE_FILE, GLOBAL_CONFIG_FILE, GlobalSettings,
+    CONFIG_DIR, Conf, DeviceName, DEVICES_DIR, GLOBAL_CONFIG_FILE, GlobalSettings,
     Device, device_dir, device_file_path,
 };
 use crate::discovery::local::host_name;
-use crate::git::git_init;
+use crate::git::{check_repo, git_init};
 use crate::ssh::keys::SigningPublicKeyB64;
 use crate::ssh::public_key::get_ssh_server_public_key;
 
@@ -118,16 +118,22 @@ pub fn create_device_config(config_dir: &Path) -> Result<Device, String> {
 ///
 /// Configuration structure:
 /// ~/.regroup-config/              - Root config directory (NOT a git repo)
-///   └── git/                      - Git repository with shared config
-///       ├── devices/<name>/       - One directory per device, written
-///       │   ├── device.json       -   only by that device (see below)
-///       │   ├── users/            -   known users of the device
-///       │   └── connections/      -   connections to/from the device
-///       └── settings.json         - Global settings
+///   ├── settings.json             - Local-only settings (udp_port, wait_secs),
+///   │                               never synced
+///   ├── git/                      - Git repository: source of truth, synced
+///   │   └── devices/<name>/       - One directory per device, written
+///   │       ├── device.json       -   only by that device (see below)
+///   │       ├── users/            -   known users of the device
+///   │       └── connections/      -   connections to/from the device
+///   └── tmp/                      - Temporary overlay (mode 0700), never
+///                                   committed or synced: placeholder
+///                                   device.json files and temporary users
 ///
-/// Storage rule: each device only ever writes inside its own directory;
-/// other devices discover its files through git sync. On conflicts the
-/// most recent commit wins (last-writer-wins).
+/// All reads go through the configuration proxy: the effective view is
+/// `git/ ∪ (tmp/ − git/)`, `git/` wins on overlap and stale `tmp/` copies
+/// are purged (lazily on read, eagerly after each sync). Each device only
+/// ever writes inside its own directory in `git/`; other devices discover
+/// its files through git sync.
 pub fn load_config() -> Conf {
     // Root config directory
     let home = match env::var("HOME") {
@@ -166,36 +172,51 @@ pub fn load_config() -> Conf {
         ));
     }
 
-    // Create default settings if they don't exist
-    if !config_dir.join(GLOBAL_CONFIG_FILE).exists()
-        && let Err(e) = save_default_global_settings(&config_dir)
+    // Create the tmp/ overlay (mode 0700): temporary, never-synced data
+    if let Err(e) = super::proxy::ensure_tmp_dir(&root_config_dir) {
+        die(&format!(
+            "cannot initialize tmp overlay in {}: {}",
+            root_config_dir.join(super::TMP_DIR).display(),
+            e
+        ));
+    }
+
+    // Repository checks: exists, required settings configured, clean tree.
+    // A failing check must not prevent reading the configuration, so it
+    // only warns here.
+    if let Err(e) = check_repo(&config_dir) {
+        warn(&format!("git repository check: {}", e));
+    }
+
+    // Create default settings (outside the repo) if they don't exist
+    if !root_config_dir.join(GLOBAL_CONFIG_FILE).exists()
+        && let Err(e) = save_default_global_settings(&root_config_dir)
     {
         die(&format!("cannot create default settings: {}", e));
     }
 
-    // Create devices directory
+    // Create devices directory in the git layer
     let devices_dir = config_dir.join(DEVICES_DIR);
     if let Err(e) = fs::create_dir_all(&devices_dir) {
         die(&format!("cannot create devices directory: {}", e));
     }
 
-    // Load global settings
+    // Load global settings (local-only, outside the repo)
     let GlobalSettings {
         udp_port,
         wait_secs,
-    } = load_global_settings(&config_dir);
+    } = load_global_settings(&root_config_dir);
 
-    // Load all device configurations: one device.json per device directory
+    // Load all device configurations through the proxy: one effective
+    // device.json per device, merging git/devices/ with tmp/devices/
+    // (git/ wins on overlap, overlapping tmp/ files purged lazily).
     let mut devices: Vec<Device> = Vec::new();
 
-    if let Ok(entries) = fs::read_dir(&devices_dir) {
-        for entry in entries.flatten() {
-            let device_path = entry.path().join(DEVICE_FILE);
-            if device_path.is_file() {
-                match load_device_file(&device_path) {
-                    Ok(device) => devices.push(device),
-                    Err(e) => warn(&format!("skipping {}: {}", device_path.display(), e)),
-                }
+    for name in super::proxy::merged_device_names(&root_config_dir) {
+        if let Some(device_path) = super::proxy::device_file(&root_config_dir, &name) {
+            match load_device_file(&device_path) {
+                Ok(device) => devices.push(device),
+                Err(e) => warn(&format!("skipping {}: {}", device_path.display(), e)),
             }
         }
     }

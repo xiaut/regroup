@@ -37,8 +37,8 @@ ops/
 
 | Function | Purpose |
 |----------|---------|
-| `add_device_to_config(home, ssh_config, beacon, name, new_count) -> Option<Device>` | Verify the announced host key, write the placeholder device file (committed), update `~/.ssh/config` |
-| `remove_device(home, ssh_config, device, last_ip) -> bool` | Delete the device directory (committed, propagates via sync) + local traces |
+| `add_device_to_config(home, ssh_config, beacon, name, new_count) -> Option<Device>` | Verify the announced host key, write the placeholder device file to the `tmp/` overlay (never committed), update `~/.ssh/config` |
+| `remove_device(home, ssh_config, device, last_ip) -> bool` | Delete the device directory in both proxy layers (`git/` deletion committed, propagates via sync; `tmp/` copy removed) + local traces |
 | `remove_local_traces(home, ssh_config, device, last_ip)` | `~/.ssh/config` block, known_hosts entries (last known IP), git remote |
 | `wipe(home, ssh_config, devices) -> Result<(), String>` | Remove all regroup `Host` blocks, then delete `~/.regroup-config` entirely |
 | `device_name_taken` / `find_name_conflicts` / `unique_device_name` | Name-collision checks; `NameConflict` = `RegroupDevice` / `DeviceFileOnDisk` / `SshConfigBlock` |

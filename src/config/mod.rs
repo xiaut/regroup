@@ -53,6 +53,11 @@ pub struct Conf {
 
 pub const CONFIG_DIR: &str = ".regroup-config";
 pub const GIT_DIR: &str = "git";
+/// Temporary overlay: `$HOME/.regroup-config/tmp/` — a plain directory and a
+/// sibling of `git/`, never inside the repository, so it can never be
+/// committed, pushed or pulled. Holds not-yet-authoritative data. See
+/// `proxy`.
+pub const TMP_DIR: &str = "tmp";
 /// Root of the per-device layout: each device owns one directory
 /// `devices/<name>/` and is the only writer inside it (except its device
 /// file, see below).
@@ -61,18 +66,36 @@ pub const DEVICES_DIR: &str = "devices";
 pub const DEVICE_FILE: &str = "device.json";
 /// Known users of a device: one file per user (inside a device dir).
 pub const USERS_DIR: &str = "users";
+/// Local-only settings file: `$HOME/.regroup-config/settings.json` — outside
+/// the git repository, never synced.
 pub const GLOBAL_CONFIG_FILE: &str = "settings.json";
 
 // ============================================================
 // Storage layout helpers
 // ============================================================
 
-/// Directory of a device's own data: `<config>/devices/<name>/`.
+/// Root configuration directory: `<home>/.regroup-config/`.
+pub fn root_config_dir(home: &str) -> std::path::PathBuf {
+    std::path::PathBuf::from(home).join(CONFIG_DIR)
+}
+
+/// The git layer: `<root>/git/` — the repository, source of truth.
+pub fn git_layer(root: &std::path::Path) -> std::path::PathBuf {
+    root.join(GIT_DIR)
+}
+
+/// The tmp layer: `<root>/tmp/` — the temporary overlay, never synced.
+pub fn tmp_layer(root: &std::path::Path) -> std::path::PathBuf {
+    root.join(TMP_DIR)
+}
+
+/// Directory of a device's own data in the git layer: `<git>/devices/<name>/`.
 pub fn device_dir(config_dir: &std::path::Path, device: &(impl AsRef<str> + ?Sized)) -> std::path::PathBuf {
     config_dir.join(DEVICES_DIR).join(device.as_ref())
 }
 
-/// Path of a device's snapshot file: `<config>/devices/<name>/device.json`.
+/// Path of a device's snapshot file in the git layer:
+/// `<git>/devices/<name>/device.json`.
 pub fn device_file_path(config_dir: &std::path::Path, device: &(impl AsRef<str> + ?Sized)) -> std::path::PathBuf {
     device_dir(config_dir, device).join(DEVICE_FILE)
 }
@@ -85,6 +108,7 @@ pub mod connection;
 pub mod device;
 pub mod json_helpers;
 pub mod loading;
+pub mod proxy;
 pub mod settings;
 pub mod users;
 pub mod validation;

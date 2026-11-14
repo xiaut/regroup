@@ -1038,7 +1038,7 @@ pub fn render_question(
                 def.title,
                 Color::Cyan,
                 format!(
-                    "Temporary user on {device} (in memory only) — {}",
+                    "Temporary user on {device} (kept in tmp/) — {}",
                     bindings_hint_text(def.bindings)
                 ),
                 Line::from(format!("> {}", ctx.input)),

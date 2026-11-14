@@ -458,8 +458,9 @@ pub struct UiDevice {
 /// Status of a user on the selected device, shown in the Users panel.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum UserStatus {
-    /// Added manually this run, in memory only: enough to build the git
-    /// remote URL and sync, until the device's declared users arrive.
+    /// Added manually in the Users panel, persisted in the `tmp/` overlay
+    /// (never synced): enough to build the git remote URL and sync, until
+    /// the device's declared users arrive.
     Temporary,
     /// Declared by the device itself in its configuration (users/).
     Confirmed,

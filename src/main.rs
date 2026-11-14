@@ -1,9 +1,11 @@
 // regroup — find devices by their SSH host key fingerprint and update ~/.ssh/config.
 //
-// Configuration is stored in ~/.regroup-config/ git repository where each device
-// owns a directory devices/<name>/ (device.json, its known users, its
-// connections). Git remotes are automatically configured for all other devices
-// to enable decentralized sync; on conflicts the most recent commit wins.
+// Configuration is stored in ~/.regroup-config/git/ (a git repository) where each
+// device owns a directory devices/<name>/ (device.json, its known users, its
+// connections). Local settings live in ~/.regroup-config/settings.json, outside
+// the repo (never synced); temporary, not-yet-authoritative data lives in the
+// ~/.regroup-config/tmp/ overlay and is never committed or synced. Git remotes
+// are automatically configured for all other devices to enable decentralized sync.
 // NOTE: Configuration files are backups of discovered information, not the primary
 // source of truth. Devices identify themselves via their public key (SSH fingerprint).
 //
