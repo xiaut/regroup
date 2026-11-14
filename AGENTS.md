@@ -32,4 +32,4 @@ Rules:
 - Use a descriptive worktree name — the branch name or the PR number (e.g. `.worktrees/pr-42`)
 - `.worktrees/` is ignored via the committed `.gitignore`, so the main worktree's `git status` stays clean
 - Do all work for that branch/PR inside its worktree; do not check out branches in the main worktree
-- When done, clean up with `git worktree remove .worktrees/<name>` followed by `git worktree prune`
+- Do not remove the worktree when the work is done — keep it in place so the developer can test while the PR is open; clean up with `git worktree remove .worktrees/<name>` followed by `git worktree prune` only after the PR is merged or when the developer explicitly asks
