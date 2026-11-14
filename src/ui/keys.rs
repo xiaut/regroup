@@ -10,8 +10,8 @@
 use crossterm::event::KeyCode;
 
 use super::types::{
-    pane_keys, Action, Effect, Hint, KeyBinding, NavDepth, NavFocus, QuestionDef, HELP_BINDINGS,
-    HELP_KEY,
+    pane_keys, Action, Effect, Hint, KeyBinding, NavDepth, NavFocus, PaneKeyCtx, QuestionDef,
+    HELP_BINDINGS, HELP_KEY,
 };
 
 /// The ui context a key press happens in — the whole key-relevant state.
@@ -31,7 +31,7 @@ pub enum Context<'a> {
     Pane {
         focus: NavFocus,
         depth: Option<NavDepth>,
-        confirmed_user: bool,
+        keys_ctx: PaneKeyCtx,
     },
 }
 
@@ -44,9 +44,9 @@ pub fn bindings(ctx: Context) -> Vec<KeyBinding> {
         Context::Pane {
             focus,
             depth,
-            confirmed_user,
+            keys_ctx,
         } => {
-            let mut bindings = pane_keys(focus, depth, confirmed_user).to_vec();
+            let mut bindings = pane_keys(focus, depth, keys_ctx).to_vec();
             bindings.push(HELP_KEY);
             bindings
         }
@@ -133,11 +133,18 @@ mod tests {
     use crate::ui::types::{Navigation, Question};
 
     fn all_pane_contexts() -> Vec<Context<'static>> {
+        use crate::ui::types::DeviceSection;
         let mut contexts = Vec::new();
-        for focus in [NavFocus::Center, NavFocus::Detected, NavFocus::Added, NavFocus::Users, NavFocus::Logs] {
+        for focus in [NavFocus::Center, NavFocus::Devices, NavFocus::Users, NavFocus::Logs] {
             for depth in [None, Some(NavDepth::Selected), Some(NavDepth::Fullscreen)] {
                 for confirmed_user in [false, true] {
-                    contexts.push(Context::Pane { focus, depth, confirmed_user });
+                    for selected_section in [None, Some(DeviceSection::Local), Some(DeviceSection::Added), Some(DeviceSection::Detected)] {
+                        contexts.push(Context::Pane {
+                            focus,
+                            depth,
+                            keys_ctx: PaneKeyCtx { confirmed_user, selected_section },
+                        });
+                    }
                 }
             }
         }
@@ -159,7 +166,11 @@ mod tests {
 
     fn context_of(question: &Question, focus: NavFocus, depth: Option<NavDepth>) -> Context<'_> {
         match question {
-            Question::Idle(_) => Context::Pane { focus, depth, confirmed_user: true },
+            Question::Idle(_) => Context::Pane {
+                focus,
+                depth,
+                keys_ctx: PaneKeyCtx { confirmed_user: true, selected_section: None },
+            },
             q if matches!(q, Question::Rename(..) | Question::AddTempUser(..)) => Context::TextInput(q.def()),
             q => Context::Modal(q.def()),
         }
@@ -168,7 +179,7 @@ mod tests {
     #[test]
     fn every_advertised_key_is_handled() {
         for q in all_questions() {
-            for focus in [NavFocus::Center, NavFocus::Detected, NavFocus::Added, NavFocus::Users, NavFocus::Logs] {
+            for focus in [NavFocus::Center, NavFocus::Devices, NavFocus::Users, NavFocus::Logs] {
                 for depth in [None, Some(NavDepth::Selected), Some(NavDepth::Fullscreen)] {
                     let ctx = context_of(&q, focus, depth);
                     for b in bindings(ctx) {
@@ -192,7 +203,11 @@ mod tests {
     #[test]
     fn q_quits_only_from_the_main_menu() {
         // Overview: 'q' is advertised and quits.
-        let overview = Context::Pane { focus: NavFocus::Center, depth: None, confirmed_user: false };
+        let overview = Context::Pane {
+            focus: NavFocus::Center,
+            depth: None,
+            keys_ctx: PaneKeyCtx { confirmed_user: false, selected_section: None },
+        };
         assert!(
             bindings(overview)
                 .iter()
@@ -255,12 +270,21 @@ mod tests {
 
     #[test]
     fn unadvertised_key_is_not_handled() {
-        // 's' syncs in the Added fullscreen pane, but not in Detected fullscreen.
-        let detected_fs = Context::Pane { focus: NavFocus::Detected, depth: Some(NavDepth::Fullscreen), confirmed_user: false };
-        assert!(!bindings(detected_fs).iter().any(|b| b.key == KeyCode::Char('s')));
-        assert_eq!(resolve(detected_fs, KeyCode::Char('s')), None);
+        use crate::ui::types::DeviceSection;
+        let keys_ctx = |selected_section| PaneKeyCtx { confirmed_user: false, selected_section };
+        // 's' syncs in the Devices fullscreen pane only when an added
+        // device row is selected — not on a detected or local row.
+        for section in [Some(DeviceSection::Detected), Some(DeviceSection::Local), None] {
+            let ctx = Context::Pane { focus: NavFocus::Devices, depth: Some(NavDepth::Fullscreen), keys_ctx: keys_ctx(section) };
+            assert!(!bindings(ctx).iter().any(|b| b.key == KeyCode::Char('s')), "s advertised for section {section:?}");
+            assert_eq!(resolve(ctx, KeyCode::Char('s')), None);
+        }
 
-        let added_fs = Context::Pane { focus: NavFocus::Added, depth: Some(NavDepth::Fullscreen), confirmed_user: false };
+        let added_fs = Context::Pane {
+            focus: NavFocus::Devices,
+            depth: Some(NavDepth::Fullscreen),
+            keys_ctx: keys_ctx(Some(DeviceSection::Added)),
+        };
         assert_eq!(
             resolve(added_fs, KeyCode::Char('s')),
             Some(KeyResolution::Action(Action::Sync))
@@ -276,10 +300,10 @@ mod tests {
             KeyCode::Enter, KeyCode::Esc, KeyCode::PageUp, KeyCode::PageDown,
         ];
         for ctx in all_pane_contexts() {
-            let Context::Pane { focus, depth, .. } = ctx else { continue };
+            let Context::Pane { focus, depth, keys_ctx } = ctx else { continue };
             let nav = Navigation { focus, depth };
             for code in candidates {
-                let nav_changed = nav.handle_key(code, true) != nav;
+                let nav_changed = nav.handle_key(code, keys_ctx.selected_section) != nav;
                 let list_nav = nav.list_nav_action(code).is_some();
                 if nav_changed || list_nav {
                     assert!(

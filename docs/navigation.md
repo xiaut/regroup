@@ -46,44 +46,48 @@ walks back.
 
 ```
 Main screen (dashboard overview)
-├── Detected panel (left)
-│   └── (device rows; Up/Down select, wrapping)
-├── Added panel (right)
-│   └── device rows (Up/Down select, wrapping)
-│       └── Users sub-panel   ← nested INSIDE the Added panel
+├── Devices panel (top, full width)
+│   └── one list, each section under its divider:
+│       ── localhost ── → local device row → ── added ── → added devices
+│       → ── detected ── → detected devices (Up/Down select, wrapping)
+│       └── Users sub-panel   ← nested INSIDE the Devices panel
 │           └── (user rows; Up/Down select, wrapping)
 └── Logs panel (bottom)
     └── fullscreen view (scrolling)
 ```
 
-The **Users sub-panel is part of the Added panel**, not a sibling panel. It
-is a sub-context of the selected device, reached by continuing in the same
-direction (`Right` from the Added panel); `Left` returns to the device
-level. There is no lateral panel switch to reach it.
+The **Devices panel is a single list**, each section under its divider
+row, in the same style: `── localhost ──` with the local device row (the
+one regroup runs on), then `── added ──` with the added (known) devices,
+then `── detected ──` with the detected (pending) ones. The panel sits
+**above** the virtual center, so `Up` opens it from the overview.
 
-`Right` always enters the Users selection mode, whatever the device's user
-list looks like — even a single user, or none. Entering the mode is what
-unlocks the associated user actions; it is never skipped because the list
-is short or empty.
+The **Users sub-panel is part of the Devices panel**, not a sibling panel.
+It is a sub-context of the selected *added* device, reached with `Right`
+or `Enter` from the Devices panel fullscreen; `Left` or `Esc` returns to
+the device level. There is no lateral panel switch to reach it.
+
+`Right`/`Enter` enter the Users selection mode only when the selected row
+is an added device (a detected row has no users yet). Whatever the device's user
+list looks like — even a single user, or none — entering the mode from an
+added device always works. Entering the mode is what unlocks the associated
+user actions; it is never skipped because the list is short or empty.
 
 ## Scenarios
 
-### Side panels (Detected left, Added right)
+### Devices panel (top)
 
-Starting from the center (overview), pressing `Right` walks toward the
-right panel, one step per press:
+The Devices panel is above the center, so the vertical axis walks into
+it, one step per press:
 
 | Press | State |
 |-------|-------|
-| `Right` | Added panel **selected** (highlighted only) |
-| `Right` | Added panel **fullscreen**, device list active (first device selected) |
-| `Right` | **Users sub-panel** of the selected device (first user selected) |
-| `Left` | Back to the device list (Users left) |
-| `Left` | Back to Added selected |
-| `Left` | Back to the center, overview |
-
-Symmetrically, `Left` from the center selects the Detected panel, and
-further presses walk into it; `Right` rewinds.
+| `Up` | Devices panel **selected** (highlighted only) |
+| `Up`, `Right` or `Enter` | Devices panel **fullscreen**, the row list active (first row = the local device selected) |
+| `Right` or `Enter` | **Users sub-panel** of the selected added device (first user selected) — only when an added device row is selected |
+| `Left` (or `Esc`) | Back to Devices selected (from fullscreen, "unbig") |
+| `Down` (or `Esc`) | Back to the center, overview (from selected) |
+| `Left`/`Esc` | From the Users sub-panel: back to the Devices panel fullscreen |
 
 ### Bottom panel (Logs) and fullscreen zoom
 
@@ -127,6 +131,7 @@ described above.
 
 Character shortcuts act as commands, not navigation, and are listed per
 pane state (see `pane_keys` in `src/ui/types.rs`): `s` sync, `d` delete,
-`w` wipe, `c` setup-cd in the Added panel, `a`/`n` in Detected, `v` in
-Logs, and so on. `q` quit is only offered on the main menu (overview);
+`w` wipe, `c` setup-cd and `Enter`/`Right` into Users when an **added** row
+is selected in the Devices panel, `a`/`n` when a **detected** row is
+selected, and so on. `q` quit is only offered on the main menu (overview);
 `?` help is the single key that works in every pane state.

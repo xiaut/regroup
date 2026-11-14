@@ -215,46 +215,54 @@ The TUI interface uses **ratatui** (formerly tui-rs) with **crossterm** for term
 ### Layout
 
 ```
-┌─────────────────────────────────────────┐
-│  [Detected]        │  [Added]           │
-│  ┌─────────────────┐ ┌─────────────────┐ │
-│  │ Name  │ IP      │ │ Name  │ IP      │ │
-│  │-----  │ ------ │ │-----  │ ------ │ │
-│  │ dev1  │ 1.2.3.4│ │ dev2  │ 5.6.7.8│ │
-│  └─────────────────┘ └─────────────────┘ │
-├─────────────────────────────────────────┤
-│  [Logs]                              │
-│  Device dev1 detected                    │
-│  Device dev2 IP updated                  │
-├─────────────────────────────────────────┤
-│  [Status]                                │
-│  2 device(s) detected — add them?       │
-│  [Up/Down] select   [Enter/y] add   [n]    │
-│  ignore   [s] sync   [d] delete   [?]    │
-│  help   [q] quit                         │
-└─────────────────────────────────────────┘
+┌──────────────────────────────────────────────┐
+│  [Devices — 1 added, 1 detected]             │
+│  ┌────────────────────────────────────────┐  │
+│  │ Name               │ IP      │Port│Status │  │
+│  │--------------------│---------│----│-------│  │
+│  │ ── localhost ──                         │  │
+│  │ myhost             │ 1.2.3.4 │ 22 │this dev│  │
+│  │ ── added ──                             │  │
+│  │ dev2               │ 5.6.7.8 │ 22 │known  │  │
+│  │ ── detected ──                          │  │
+│  │ dev1               │ 9.8.7.6 │ 22 │detected│  │
+│  └────────────────────────────────────────┘  │
+├──────────────────────────────────────────────┤
+│  [Logs]                                     │
+│  Device dev1 detected                       │
+│  Device dev2 IP updated                     │
+├─────────────────────────────────────────────┤
+│  [Status]                                   │
+│  1 device(s) detected — add it?            │
+│  [Up] devices   [Down] logs                │
+│  [q] quit   [?] help                        │
+└─────────────────────────────────────────────┘
 ```
 
 ### Panels
 
-- **Detected panel** (left, yellow): Devices that have announced but not been accepted
-- **Added panel** (right, green): Devices already in the configuration.
-  A **Users sub-panel** is nested inside this panel for the selected device;
-  it lists the device's users with their status (temporary — to confirm /
-  confirmed / SSH key installed). It is a sub-context of the device, not a
-  device, not a sibling panel: continuing with `Right` past the Added panel
-  (selected, then fullscreen) enters the sub-panel (first user selected),
-  and `Left` returns to the device level. Device+user actions
-  (install/remove SSH key) live there and only appear for a confirmed user;
-  a temporary user only allows the git sync that brings the device's
-  declared users (the temporary user is stored under `tmp/`, never synced).
-  See [navigation.md](../navigation.md).
-- **Logs pane** (middle): General messages and logs
+- **Devices panel** (top, full width, green): one list, each section
+  opening with a divider row in the same style. The list starts with
+  `── localhost ──` and the local device row (the one regroup runs on),
+  then `── added ──` and the added devices (already in the
+  configuration, with their last known IP), then `── detected ──` and
+  the detected devices (announced but not accepted).
+  A **Users sub-panel** is nested inside this panel for the selected added
+  device; it lists the device's users with their status (temporary — to
+  confirm / confirmed / SSH key installed). It is a sub-context of the
+  device, not a device, not a sibling panel: continuing with `Right` past
+  the Devices panel (selected, then fullscreen, added row selected) enters
+  the sub-panel (first user selected), and `Left` returns to the device
+  level. Device+user actions (install/remove SSH key) live there and only
+  appear for a confirmed user; a temporary user only allows the git sync
+  that brings the device's declared users (the temporary user is stored
+  under `tmp/`, never synced). See [navigation.md](../navigation.md).
+- **Logs pane** (bottom): General messages and logs
 - **Question block** (bottom): Current question and available actions
 
 The **Logs pane is always visible**, like the question block: in the
 overview it takes the bottom half of the main area, and in a fullscreen
-device pane (Detected, Added/Users) it is kept as a fixed-height strip
+Devices pane it is kept as a fixed-height strip
 (6 rows, borders included) at the bottom of the main area, above the
 question block. The strip is dropped when the main area is shorter than
 12 rows, and hidden while the help panel is open. Scrolling the log still
@@ -265,27 +273,6 @@ on the pane's last content row (the log is bottom-anchored, with blank
 rows above when it is shorter than the pane). Scrolling up is only
 possible inside the fullscreen Logs pane and never affects the overview
 or the strip — they always follow the tail.
-
-### Narrow Screen Layout
-
-On screens narrower than 80 characters, panels stack vertically:
-```
-┌─────────────────────────────────────────┐
-│  [Detected]                              │
-│  ┌─────────────────────────────────────┐│
-│  │ Name  │ IP      │ Port │ Status     ││
-│  └─────────────────────────────────────┘│
-├─────────────────────────────────────────┤
-│  [Added]                                 │
-│  ┌─────────────────────────────────────┐│
-│  │ Name  │ IP      │ Port │ Status     ││
-│  └─────────────────────────────────────┘│
-├─────────────────────────────────────────┤
-│  [Logs]                              │
-├─────────────────────────────────────────┤
-│  [Status]                                │
-└─────────────────────────────────────────┘
-```
 
 ## Plain UI
 
@@ -318,12 +305,19 @@ Add device2 (192.168.1.101) to config? [y/N/q/s]: n
 | `Up/Down/Left/Right` | Walk directionally from the virtual center: overview → panel selected → fullscreen → sub-panel; opposite key rewinds (see [navigation.md](../navigation.md)) |
 | `PgUp/PgDn` | Scroll Logs pane |
 
-### In Detected Panel
+### In Devices Panel (detected row selected)
 
 | Key | Action |
 |-----|--------|
-| `Enter` or `y` | Add selected device |
+| `a` | Add selected device |
 | `n` | Ignore selected device |
+
+### In Devices Panel (added row selected)
+
+| Key | Action |
+|-----|--------|
+| `d` | Delete selected device |
+| `Right` or `Enter` | Open the Users sub-panel of the selected device |
 
 ### In Add Device Prompt
 
@@ -337,7 +331,7 @@ Add device2 (192.168.1.101) to config? [y/N/q/s]: n
 
 | Key | Action |
 |-----|--------|
-| `Up/Down` | Select device in Added panel |
+| `Up/Down` | Select device row in the Devices panel |
 | `Enter` | Confirm deletion |
 | `Esc` | Cancel |
 
@@ -362,9 +356,9 @@ The UI uses color and styling to convey information:
 
 | Element | Style |
 |---------|-------|
-| Detected panel | Yellow border |
-| Added panel | Green border |
-| Idle status | Base color (cyan/blue) |
+| Devices panel | Green border |
+| Divider rows between sections | Dark gray |
+| Idle status | Base color (green) |
 | Info message | Cyan text |
 | Success | Green background, black text |
 | Warning | Yellow, blinking |

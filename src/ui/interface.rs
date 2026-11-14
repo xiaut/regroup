@@ -34,10 +34,8 @@ impl Ui {
                 log_scroll: 0,
                 question: Question::idle(),
                 input: String::new(),
-                detected: Vec::new(),
-                added: Vec::new(),
-                detected_selected: None,
-                added_selected: None,
+                devices: Vec::new(),
+                devices_selected: None,
                 delete_selected: None,
                 users: Vec::new(),
                 users_selected: None,
@@ -63,37 +61,29 @@ impl Ui {
         }
     }
 
-    /// Update the device panels (ignored in plain mode).
-    pub fn set_devices(&mut self, detected: Vec<UiDevice>, added: Vec<UiDevice>) {
+    /// Update the Devices panel rows (ignored in plain mode).
+    pub fn set_devices(&mut self, devices: Vec<UiDevice>) {
         if let Ui::Tty(ui) = self {
-            ui.detected = detected;
-            ui.added = added;
+            ui.devices = devices;
         }
     }
 
-    /// Highlight the selected row of the Detected panel.
-    pub fn set_selected(&mut self, selected: Option<usize>) {
+    /// Highlight the selected row of the Devices panel.
+    pub fn set_devices_selected(&mut self, selected: Option<usize>) {
         if let Ui::Tty(ui) = self {
-            ui.detected_selected = selected;
+            ui.devices_selected = selected;
         }
     }
 
-    /// Highlight the selected row of the Added panel (delete mode).
+    /// Highlight the selected row of the Devices panel (delete mode).
     pub fn set_delete_selected(&mut self, selected: Option<usize>) {
         if let Ui::Tty(ui) = self {
             ui.delete_selected = selected;
         }
     }
 
-    /// Highlight the selected row of the Added panel (normal mode).
-    pub fn set_added_selected(&mut self, selected: Option<usize>) {
-        if let Ui::Tty(ui) = self {
-            ui.added_selected = selected;
-        }
-    }
-
-    /// Update the Users panel: the users of the device selected in the
-    /// Added panel, and the selected row (ignored in plain mode).
+    /// Update the Users panel: the users of the added device selected in
+    /// the Devices panel, and the selected row (ignored in plain mode).
     pub fn set_users(&mut self, users: Vec<UiUser>, selected: Option<usize>) {
         if let Ui::Tty(ui) = self {
             ui.users = users;

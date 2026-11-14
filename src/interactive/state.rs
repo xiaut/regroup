@@ -28,7 +28,7 @@ use crate::ssh::config::update_block;
 use crate::ssh::keys::{SigningPublicKeyB64, SshPublicKey};
 use crate::ssh::public_key;
 use crate::ui::{self, Action, Level, Question};
-use crate::ui::types::{ActivePane, Navigation, UiDevice, UiUser, UserStatus};
+use crate::ui::types::{ActivePane, DeviceSection, Navigation, UiDevice, UiUser, UserStatus};
 
 /// How long each loop iteration waits for user input before checking the
 /// beacon channel again.
@@ -73,10 +73,32 @@ pub struct Context<'a> {
     pub local_public_key: &'a SshPublicKey,
     /// Force CLI mode (--cli): disable TUI and show all subprocess output.
     pub cli_mode: bool,
-    /// This device's hostname, for the identity line.
+    /// This device's hostname, for the identity line and its Devices row.
     pub local_name: &'a str,
-    /// This device's IP, for the identity line.
+    /// This device's IP, for the identity line and its Devices row.
     pub local_ip: Option<&'a str>,
+    /// This device's SSH port, for its Devices row.
+    pub local_port: u16,
+}
+
+/// A row of the Devices pane, identified for selection: the local
+/// device, an added device by name, a detected device by SSH public key.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum DeviceRow {
+    Local,
+    Added(String),
+    Detected(SshPublicKey),
+}
+
+impl DeviceRow {
+    /// Whether this row reference still points at `d` in the Devices pane.
+    fn matches(&self, d: &UiDevice) -> bool {
+        match self {
+            DeviceRow::Local => d.section == DeviceSection::Local,
+            DeviceRow::Added(name) => d.section == DeviceSection::Added && &d.name == name,
+            DeviceRow::Detected(key) => d.section == DeviceSection::Detected && d.key == key.as_str(),
+        }
+    }
 }
 
 /// Run the interactive loop until the user quits or the listener thread dies.
@@ -139,17 +161,16 @@ pub fn run(ctx: &Context, udp_port: u16, beacons: &Receiver<BeaconDevice>) -> us
         // The display always reflects the state after processing.
         let plain = !matches!(tui, ui::Ui::Tty(_));
         tui.set_question(state.current_question(ctx, plain));
-        let detected = state.detected_view();
-        let added = state.added_view();
-        
-        // Initialize added_selected if not set and there are added devices
-        if state.added_selected.is_none() && !added.is_empty() {
-            state.added_selected = Some(added[0].name.clone());
+        let devices = state.devices_view(ctx);
+
+        // Initialize the selection if not set: the local device row.
+        if state.device_selected.is_none() && !devices.is_empty() {
+            state.device_selected = Some(DeviceRow::Local);
         }
-        
-        // The Users panel follows the device selected in the Added panel.
-        // It only exists while the Added (or Users) pane is on screen.
-        let users = if matches!(state.active_pane, ActivePane::Added(_) | ActivePane::Users(_)) {
+
+        // The Users panel follows the added device selected in the Devices
+        // panel. It only exists while the Devices (or Users) pane is on screen.
+        let users = if matches!(state.active_pane, ActivePane::Devices(_) | ActivePane::Users(_)) {
             state.users_view(ctx)
         } else {
             Vec::new()
@@ -181,35 +202,29 @@ pub fn run(ctx: &Context, udp_port: u16, beacons: &Receiver<BeaconDevice>) -> us
             .and_then(|name| users.iter().position(|u| &u.name == name));
         
         let selected = state
-            .pending_selected
+            .device_selected
             .as_ref()
-            .and_then(|key| detected.iter().position(|d| d.key == key.as_str()));
+            .and_then(|row| devices.iter().position(|d| row.matches(d)));
         let delete_selected = state
             .delete_selection
             .as_ref()
-            .and_then(|name| added.iter().position(|d| &d.name == name));
-        let added_selected = state
-            .added_selected
-            .as_ref()
-            .and_then(|name| added.iter().position(|d| &d.name == name));
-        
-        // When a pane is not active, its selection must be empty
+            .and_then(|name| {
+                devices
+                    .iter()
+                    .position(|d| d.section == DeviceSection::Added && &d.name == name)
+            });
+
+        // When the Devices pane is not active, its selection must be
+        // empty. In the Users pane the parent device row stays selected
+        // while the selection is refined on one of its users.
         let selected = match state.active_pane {
-            ActivePane::Detected(_) => selected,
+            ActivePane::Devices(_) | ActivePane::Users(_) => selected,
             _ => None,
         };
-        // Multi-level selection: the parent (the device) stays selected
-        // while the selection is refined on one of its users in the Users
-        // pane.
-        let added_selected = match state.active_pane {
-            ActivePane::Added(_) | ActivePane::Users(_) => added_selected,
-            _ => None,
-        };
-        
-        tui.set_devices(detected, added);
-        tui.set_selected(selected);
+
+        tui.set_devices(devices);
+        tui.set_devices_selected(selected);
         tui.set_delete_selected(delete_selected);
-        tui.set_added_selected(added_selected);
         tui.set_users(users, users_selected);
         tui.set_active_pane(state.active_pane);
         tui.set_navigation(state.navigation);
@@ -241,11 +256,9 @@ pub struct InteractiveState {
     active_pane: ActivePane,
     /// Navigation state: focus + depth in the context hierarchy.
     navigation: Navigation,
-    /// Device selected in the Detected panel (full-screen ui), by public
-    /// key. None when the queue is empty.
-    pending_selected: Option<SshPublicKey>,
-    /// Device selected in the Added panel (full-screen ui), by name.
-    added_selected: Option<String>,
+    /// Row selected in the Devices panel (full-screen ui): the local
+    /// device, an added device (by name) or a detected device (by key).
+    device_selected: Option<DeviceRow>,
     /// Last known IP for known devices, to avoid redundant notifications.
     known_ip: HashMap<SshPublicKey, String>,
     /// Devices the user rejected, to avoid re-asking.
@@ -292,8 +305,7 @@ impl InteractiveState {
             pending_keys: HashSet::new(),
             active_pane: ActivePane::main_menu(),
             navigation: Navigation::overview(),
-            pending_selected: None,
-            added_selected: None,
+            device_selected: None,
             known_ip: HashMap::new(),
             rejected_keys: HashSet::new(),
             rename_state: None,
@@ -349,7 +361,7 @@ impl InteractiveState {
     /// The question to display, derived from the current state. Dry run
     /// never asks anything: pending devices are only logged. In plain mode
     /// the pending queue is asked one device at a time; the full-screen ui
-    /// adds devices from the Detected panel instead.
+    /// adds devices from the Devices panel instead.
     fn current_question(&self, ctx: &Context, plain: bool) -> Question {
         if self.wipe_pending {
             Question::wipe(self.key_to_device.len())
@@ -379,37 +391,61 @@ impl InteractiveState {
         }
     }
 
-    /// The devices to show in the Detected panel: announced devices
-    /// waiting for a decision, sorted by name.
-    fn detected_view(&self) -> Vec<UiDevice> {
-        let mut devices: Vec<UiDevice> = self
-            .pending_devices
-            .iter()
-            .map(|d| UiDevice {
-                key: d.ssh_public_key.as_str().to_string(),
-                name: d.name.clone(),
-                ip: Some(d.ip.clone()),
-                port: d.port,
-            })
-            .collect();
-        devices.sort_by(|a, b| a.name.cmp(&b.name));
-        devices
-    }
-
-    /// The devices to show in the Added panel: known devices with their
-    /// last known IP, sorted by name.
-    fn added_view(&self) -> Vec<UiDevice> {
-        let mut devices: Vec<UiDevice> = self
+    /// The rows of the Devices pane, in display order: the local device
+    /// first, then the added devices (name order), then the detected
+    /// devices (name order).
+    fn ordered_rows(&self) -> Vec<DeviceRow> {
+        let mut rows = vec![DeviceRow::Local];
+        let mut added: Vec<String> = self
             .key_to_device
             .values()
-            .map(|m| UiDevice {
-                key: m.ssh_public_key.as_str().to_string(),
-                name: m.name.as_str().to_string(),
-                ip: self.known_ip.get(&m.ssh_public_key).cloned(),
-                port: m.port,
-            })
+            .map(|m| m.name.as_str().to_string())
             .collect();
-        devices.sort_by(|a, b| a.name.cmp(&b.name));
+        added.sort();
+        added.dedup();
+        rows.extend(added.into_iter().map(DeviceRow::Added));
+        let mut detected: Vec<&BeaconDevice> = self.pending_devices.iter().collect();
+        detected.sort_by(|a, b| a.name.cmp(&b.name));
+        rows.extend(
+            detected
+                .into_iter()
+                .map(|d| DeviceRow::Detected(d.ssh_public_key.clone())),
+        );
+        rows
+    }
+
+    /// The rows of the Devices pane, in display order: the local device
+    /// first, then the added devices (known, with their last known IP,
+    /// sorted by name), then the detected devices (waiting for a
+    /// decision, sorted by name). The pane shows them as one list, each
+    /// section under its divider row (localhost / added / detected).
+    fn devices_view(&self, ctx: &Context) -> Vec<UiDevice> {
+        let mut devices = Vec::new();
+        devices.push(UiDevice {
+            key: ctx.local_public_key.as_str().to_string(),
+            name: ctx.local_name.to_string(),
+            ip: ctx.local_ip.map(|s| s.to_string()),
+            port: ctx.local_port,
+            section: DeviceSection::Local,
+        });
+        let mut added: Vec<&Device> = self.key_to_device.values().collect();
+        added.sort_by(|a, b| a.name.as_str().cmp(b.name.as_str()));
+        devices.extend(added.iter().map(|m| UiDevice {
+            key: m.ssh_public_key.as_str().to_string(),
+            name: m.name.as_str().to_string(),
+            ip: self.known_ip.get(&m.ssh_public_key).cloned(),
+            port: m.port,
+            section: DeviceSection::Added,
+        }));
+        let mut detected: Vec<&BeaconDevice> = self.pending_devices.iter().collect();
+        detected.sort_by(|a, b| a.name.cmp(&b.name));
+        devices.extend(detected.iter().map(|d| UiDevice {
+            key: d.ssh_public_key.as_str().to_string(),
+            name: d.name.clone(),
+            ip: Some(d.ip.clone()),
+            port: d.port,
+            section: DeviceSection::Detected,
+        }));
         devices
     }
 
@@ -617,9 +653,12 @@ impl InteractiveState {
             return false;
         }
         self.pending_devices.push_back(device);
-        // Select the new device so it can be added right away.
-        if self.pending_selected.is_none() {
-            self.pending_selected = Some(self.pending_devices.back().unwrap().ssh_public_key.clone());
+        // Select the new device so it can be added right away — but only
+        // while the selection is still on the default local row.
+        if matches!(self.device_selected, None | Some(DeviceRow::Local)) {
+            self.device_selected = Some(DeviceRow::Detected(
+                self.pending_devices.back().unwrap().ssh_public_key.clone(),
+            ));
         }
         let added_device = self.pending_devices.back().unwrap();
         ui::log_device(
@@ -719,30 +758,24 @@ impl InteractiveState {
                     self.move_delete_selection(true);
                 }
             }
-            Action::PendingSelectPrev => {
-                self.move_pending_selection(false);
+            Action::DevicesSelectPrev => {
+                self.move_device_selection(false);
             }
-            Action::PendingSelectNext => {
-                self.move_pending_selection(true);
-            }
-            Action::AddedSelectPrev => {
-                self.move_added_selection(false);
-            }
-            Action::AddedSelectNext => {
-                self.move_added_selection(true);
+            Action::DevicesSelectNext => {
+                self.move_device_selection(true);
             }
             Action::SelectPrev => {
                 if self.delete_selection.is_some() {
                     self.move_delete_selection(false);
                 } else {
-                    self.move_pending_selection(false);
+                    self.move_device_selection(false);
                 }
             }
             Action::SelectNext => {
                 if self.delete_selection.is_some() {
                     self.move_delete_selection(true);
                 } else {
-                    self.move_pending_selection(true);
+                    self.move_device_selection(true);
                 }
             }
             Action::UsersSelectPrev => {
@@ -752,7 +785,7 @@ impl InteractiveState {
                 self.move_users_selection(ctx, true);
             }
             Action::AddTempUser => {
-                if let Some(name) = self.added_selected.clone() {
+                if let Some(name) = self.selected_added_device() {
                     self.temp_user_pending = Some(name);
                 }
             }
@@ -848,7 +881,7 @@ impl InteractiveState {
         names
     }
 
-    /// Move the delete-mode selection (Added panel) to the next (or
+    /// Move the delete-mode selection (Devices panel) to the next (or
     /// previous when `forward` is false) known device. With no selection,
     /// selects the first one.
     fn move_delete_selection(&mut self, forward: bool) {
@@ -868,55 +901,49 @@ impl InteractiveState {
         self.delete_selection = Some(names[new_pos].clone());
     }
 
-    /// Move the selection of the Added panel to the next (or previous
-    /// when `forward` is false) known device, in name order. With no
-    /// selection, selects the first one.
-    fn move_added_selection(&mut self, forward: bool) {
-        let names = self.deletable_names();
-        if names.is_empty() {
-            self.added_selected = None;
+    /// Move the selection of the Devices panel to the next (or previous
+    /// when `forward` is false) row, in display order (local device,
+    /// added devices, detected devices), wrapping around. With no
+    /// selection, selects the first row.
+    fn move_device_selection(&mut self, forward: bool) {
+        let rows = self.ordered_rows();
+        if rows.is_empty() {
+            self.device_selected = None;
             return;
         }
-        let pos = names
+        let pos = rows
             .iter()
-            .position(|n| Some(n) == self.added_selected.as_ref());
+            .position(|r| Some(r) == self.device_selected.as_ref());
         let new_pos = match pos {
-            Some(p) if forward => (p + 1) % names.len(),
-            Some(p) => (p + names.len() - 1) % names.len(),
+            Some(p) if forward => (p + 1) % rows.len(),
+            Some(p) => (p + rows.len() - 1) % rows.len(),
             None => 0,
         };
-        self.added_selected = Some(names[new_pos].clone());
+        self.device_selected = Some(rows[new_pos].clone());
+        // The Users panel follows the selected added device: moving the
+        // device selection drops the user selection.
         self.users_selected = None;
     }
 
-    /// Move the selection of the Detected panel to the next (or previous
-    /// when `forward` is false) pending device, in name order. With no
-    /// selection, selects the first one.
-    fn move_pending_selection(&mut self, forward: bool) {
-        let mut sorted: Vec<&BeaconDevice> = self.pending_devices.iter().collect();
-        sorted.sort_by(|a, b| a.name.cmp(&b.name));
-        if sorted.is_empty() {
-            self.pending_selected = None;
+    /// Point the Devices-panel selection at a sensible row after the
+    /// selected one left the list (added, ignored or deleted): keep the
+    /// selection when it still exists, otherwise move to the first
+    /// detected device (so several can be added in a row), or to the
+    /// local device.
+    fn after_selection_change(&mut self) {
+        let rows = self.ordered_rows();
+        if self
+            .device_selected
+            .as_ref()
+            .is_some_and(|r| rows.contains(r))
+        {
             return;
         }
-        let pos = sorted
+        self.device_selected = rows
             .iter()
-            .position(|d| Some(&d.ssh_public_key) == self.pending_selected.as_ref());
-        let new_pos = match pos {
-            Some(p) if forward => (p + 1) % sorted.len(),
-            Some(p) => (p + sorted.len() - 1) % sorted.len(),
-            None => 0,
-        };
-        self.pending_selected = Some(sorted[new_pos].ssh_public_key.clone());
-    }
-
-    /// Point the Detected-panel selection at a sensible device after the
-    /// selected one left the queue (added or ignored).
-    fn after_selection_change(&mut self) {
-        self.pending_selected = None;
-        if let Some(front) = self.pending_devices.front() {
-            self.pending_selected = Some(front.ssh_public_key.clone());
-        }
+            .find(|r| matches!(r, DeviceRow::Detected(_)))
+            .cloned()
+            .or_else(|| rows.first().cloned());
     }
 
     /// Remove the selected device: delete its config file (committed, so
@@ -956,14 +983,14 @@ impl InteractiveState {
         self.known_ip.remove(&key);
     }
 
-    /// Add the device selected in the Detected panel. A name collision
-    /// redirects to the rename question instead.
+    /// Add the detected device selected in the Devices panel (falls back
+    /// to the front of the pending queue). A name collision redirects to
+    /// the rename question instead.
     fn accept_selected(&mut self, ctx: &Context, tui: &mut ui::Ui) {
-        let Some(key) = self
-            .pending_selected
-            .clone()
-            .or_else(|| self.pending_devices.front().map(|d| d.ssh_public_key.clone()))
-        else {
+        let Some(key) = (match &self.device_selected {
+            Some(DeviceRow::Detected(k)) => Some(k.clone()),
+            _ => self.pending_devices.front().map(|d| d.ssh_public_key.clone()),
+        }) else {
             return;
         };
         let Some(pos) = self
@@ -1009,14 +1036,14 @@ impl InteractiveState {
         self.add_device(ctx, tui, device, name);
     }
 
-    /// Ignore the device selected in the Detected panel: it is dropped
-    /// from the queue and its beacons are ignored for the rest of the run.
+    /// Ignore the detected device selected in the Devices panel (falls
+    /// back to the front of the pending queue): it is dropped from the
+    /// queue and its beacons are ignored for the rest of the run.
     fn ignore_selected(&mut self) {
-        let Some(key) = self
-            .pending_selected
-            .clone()
-            .or_else(|| self.pending_devices.front().map(|d| d.ssh_public_key.clone()))
-        else {
+        let Some(key) = (match &self.device_selected {
+            Some(DeviceRow::Detected(k)) => Some(k.clone()),
+            _ => self.pending_devices.front().map(|d| d.ssh_public_key.clone()),
+        }) else {
             return;
         };
         let Some(pos) = self
@@ -1082,14 +1109,23 @@ impl InteractiveState {
         }
     }
     
-    /// The users of the device selected in the Added panel, for the Users
-    /// panel: the users the device declared in its configuration (users/,
-    /// arrived through git sync), plus the temporary user if one was added
-    /// this run and the sync has not brought a user of the same name yet.
-    /// A confirmed user the local user has an outgoing connection to shows
-    /// as "SSH key installed".
+    /// The name of the added device currently selected in the Devices
+    /// panel, when the selected row is an added device.
+    fn selected_added_device(&self) -> Option<String> {
+        match &self.device_selected {
+            Some(DeviceRow::Added(name)) => Some(name.clone()),
+            _ => None,
+        }
+    }
+
+    /// The users of the added device selected in the Devices panel, for
+    /// the Users panel: the users the device declared in its configuration
+    /// (users/, arrived through git sync), plus the temporary user if one
+    /// was added this run and the sync has not brought a user of the same
+    /// name yet. A confirmed user the local user has an outgoing
+    /// connection to shows as "SSH key installed".
     fn users_view(&self, ctx: &Context) -> Vec<UiUser> {
-        let Some(name) = self.added_selected.as_ref() else {
+        let Some(name) = self.selected_added_device() else {
             return Vec::new();
         };
         let root = root_config_dir(ctx.home);
@@ -1104,7 +1140,7 @@ impl InteractiveState {
         // (Confirmed) or only present in the tmp/ overlay (Temporary). On
         // overlap git/ wins and the stale tmp/ copy is purged, so a
         // temporary user is superseded by a declared user of the same name.
-        if let Ok(known) = load_device_users_merged(&root, name) {
+        if let Ok(known) = load_device_users_merged(&root, &name) {
             for entry in known {
                 let user = entry.user;
                 // Connection file names sanitize their members (see
@@ -1114,7 +1150,7 @@ impl InteractiveState {
                     "{}->{}@{}.json",
                     sanitize(&current_user),
                     sanitize(&user.name),
-                    sanitize(name)
+                    sanitize(&name)
                 );
                 let installed = connections_dir.join(connection_file).exists();
                 let status = if installed {
@@ -1203,7 +1239,8 @@ impl InteractiveState {
 
     /// Remove the selected temporary user of the selected device.
     fn remove_temp_user(&mut self, ctx: &Context) {
-        let (Some(device), Some(user)) = (self.added_selected.clone(), self.users_selected.clone())
+        let (Some(device), Some(user)) =
+            (self.selected_added_device(), self.users_selected.clone())
         else {
             return;
         };
@@ -1231,13 +1268,13 @@ impl InteractiveState {
     }
 
     /// Install the local user's SSH key towards the user selected in the
-    /// Users panel, on the device selected in the Added panel. A device
-    /// action alone is not enough: this is a device+user action.
+    /// Users panel, on the added device selected in the Devices panel. A
+    /// device action alone is not enough: this is a device+user action.
     fn install_key_to_selected(&mut self, ctx: &Context, ui: &mut ui::Ui) {
         let (Some(target_name), Some(target_user)) =
-            (self.added_selected.clone(), self.users_selected.clone())
+            (self.selected_added_device(), self.users_selected.clone())
         else {
-            ui::log("Select a device, then one of its users (Right) first");
+            ui::log("Select an added device, then one of its users (Right) first");
             return;
         };
         if self.is_temporary_user(ctx, &target_name, &target_user) {
@@ -1306,12 +1343,12 @@ impl InteractiveState {
     }
 
     /// Remove the SSH key connection towards the user selected in the
-    /// Users panel, on the device selected in the Added panel.
+    /// Users panel, on the added device selected in the Devices panel.
     fn remove_key_from_selected(&mut self, ctx: &Context, ui: &mut ui::Ui) {
         let (Some(target_name), Some(target_user)) =
-            (self.added_selected.clone(), self.users_selected.clone())
+            (self.selected_added_device(), self.users_selected.clone())
         else {
-            ui::log("Select a device, then one of its users (Right) first");
+            ui::log("Select an added device, then one of its users (Right) first");
             return;
         };
         if self.is_temporary_user(ctx, &target_name, &target_user) {
@@ -1380,10 +1417,10 @@ impl InteractiveState {
         }
     }
 
-    /// Delete the currently selected device from Added pane
+    /// Delete the currently selected added device in the Devices pane
     fn delete_selected_device(&mut self, ctx: &Context, tui: &mut ui::Ui) {
-        let Some(name) = self.added_selected.clone() else {
-            ui::log("No device selected in Added pane");
+        let Some(name) = self.selected_added_device() else {
+            ui::log("No added device selected in the Devices pane");
             return;
         };
         
@@ -1408,7 +1445,7 @@ impl InteractiveState {
         self.pinned_signing_keys.remove(&key);
         self.known_ip.remove(&key);
         self.temp_users.remove(name.as_str());
-        self.added_selected = None;
+        self.device_selected = None;
         self.users_selected = None;
     }
 }
@@ -1436,6 +1473,7 @@ mod tests {
             cli_mode: true,
             local_name: "testhost",
             local_ip: None,
+            local_port: 22,
         }
     }
 
@@ -1450,8 +1488,7 @@ mod tests {
             pending_keys: HashSet::new(),
             active_pane: ActivePane::main_menu(),
             navigation: Navigation::overview(),
-            pending_selected: None,
-            added_selected: Some(device.to_string()),
+            device_selected: Some(DeviceRow::Added(device.to_string())),
             known_ip: HashMap::new(),
             rejected_keys: HashSet::new(),
             rename_state: None,

@@ -156,19 +156,17 @@ Determines what question to display based on the current state:
 - Plain mode with pending devices → Add device prompt
 - Default → Idle
 
-### `detected_view()`
+### `devices_view(ctx)`
 
-Returns devices to show in the Detected panel:
-- Pending devices (announced but not accepted)
-- Sorted by name
-- With SSH public key as identifier
+Returns the rows of the Devices panel, in display order:
+- The local device first (name, IP, SSH port from the context)
+- Then the added devices: known devices from configuration, with their
+  last known IP from state, sorted by name
+- Then the detected devices: pending devices (announced but not
+  accepted), sorted by name, with SSH public key as identifier
 
-### `added_view()`
-
-Returns devices to show in the Added panel:
-- Known devices from configuration
-- With last known IP from state
-- Sorted by name
+Each row carries its section (`Local` / `Added` / `Detected`); the pane
+renders a divider row between sections.
 
 ## Action Handling
 
@@ -180,8 +178,9 @@ Returns devices to show in the Added panel:
 |--------|----------|
 | `Quit` | Return true to exit loop |
 | `Sync` | Run `ops::sync::sync_git()` and reload state |
-| `Add` | Accept selected device from Detected panel |
-| `Ignore` | Reject selected device from Detected panel |
+| `Add` | Accept the detected device selected in the Devices panel |
+| `Ignore` | Reject the detected device selected in the Devices panel |
+| `DevicesSelectPrev/Next` | Move the selection in the Devices panel (local → added → detected rows) |
 | `AddCurrent` | Accept front of pending queue (plain mode) |
 | `SkipCurrent` | Reject front of pending queue (plain mode) |
 
@@ -234,13 +233,15 @@ Returns devices to show in the Added panel:
 
 ### Adding Devices
 
-1. User selects device from Detected panel or accepts front of queue
+1. User selects a detected row in the Devices panel (key `a`) or accepts
+   the front of the queue (plain mode)
 2. Check if name is already taken
    - If yes: prompt for new name (rename_state)
    - If no: proceed to add
 3. Add device to configuration via `ops::devices::add_device_to_config()`
 4. Pin the signing key
-5. Add to known_keys and key_to_device maps
+5. Add to known_keys and key_to_device maps — the device's row moves from
+   the detected section to the added section of the Devices panel
 6. Record IP in known_ip
 
 ### Ignoring Devices
@@ -251,10 +252,10 @@ Returns devices to show in the Added panel:
 
 ### Deleting Devices
 
-1. User selects device from Added panel (device action), or device+user
-   actions go through the Users sub-panel (directional `Right` past the
-   fullscreen Added panel) with a user selected
-2. Confirm deletion
+1. User selects an added row in the Devices panel (device action, key `d`),
+   or device+user actions go through the Users sub-panel (directional
+   `Right` past the fullscreen Devices panel) with a user selected
+2. Confirm deletion (plain mode)
 3. Remove the device's files through the proxy (both the `git/` and `tmp/` layers)
 4. Remove SSH config Host block
 5. Remove git remote

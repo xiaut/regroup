@@ -111,23 +111,58 @@ pub enum UiEvent {
     },
 }
 
+/// Which section of the Devices pane a row belongs to. The Devices pane
+/// is one list, each section under its divider row: localhost (the local
+/// device), then added (known) devices, then detected (pending) ones.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum DeviceSection {
+    /// The device regroup is running on (always the first row).
+    Local,
+    /// A device in the configuration (added).
+    Added,
+    /// A device announced but not yet accepted (detected).
+    Detected,
+}
+
+impl DeviceSection {
+    /// Label of the divider row introducing this section of the
+    /// Devices pane.
+    pub fn label(&self) -> &'static str {
+        match self {
+            DeviceSection::Local => "localhost",
+            DeviceSection::Added => "added",
+            DeviceSection::Detected => "detected",
+        }
+    }
+
+    /// Idle status text of a row in this section, when it has no
+    /// animated message.
+    pub fn idle_status(&self) -> &'static str {
+        match self {
+            DeviceSection::Local => "this device",
+            DeviceSection::Added => "known",
+            DeviceSection::Detected => "detected",
+        }
+    }
+}
+
 /// New navigation model (docs/navigation.md).
 ///
 /// The user is virtually at the center of the screen.
-/// Arrows move directionally: Left (Detected), Right (Added), Down (Logs).
+/// Arrows move directionally: Up (Devices, the single device list on top
+/// of the dashboard), Down (Logs, below).
 /// Enter goes deeper, Esc goes back.
-/// Users sub-panel is nested inside Added (reached by Right from Added fullscreen).
+/// Users sub-panel is nested inside Devices (reached by Right/Enter from
+/// Devices fullscreen with an added device selected).
 ///
 /// Navigation focus: which direction from center.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum NavFocus {
     /// At center, no panel engaged - all panels visible (overview)
     Center,
-    /// Focus on Detected panel (left from center)
-    Detected,
-    /// Focus on Added panel (right from center)
-    Added,
-    /// Focus on Users sub-panel (nested inside Added, right from Added fullscreen)
+    /// Focus on the Devices panel (up from center)
+    Devices,
+    /// Focus on Users sub-panel (nested inside Devices, right from Devices fullscreen)
     Users,
     /// Focus on Logs panel (down from center)
     Logs,
@@ -190,51 +225,50 @@ impl Navigation {
     }
 
     /// Handle a navigation key press, return the new navigation state.
-    pub fn handle_key(self, key: KeyCode, _has_users: bool) -> Self {
+    ///
+    /// `selected_section` is the section of the selected row in the
+    /// Devices pane: from the fullscreen Devices pane, only an added
+    /// device row can open the Users sub-panel (a detected row has no
+    /// users yet); on any other row Right/Enter rewind one step.
+    pub fn handle_key(self, key: KeyCode, selected_section: Option<DeviceSection>) -> Self {
         use KeyCode::*;
         use NavDepth::*;
         use NavFocus::*;
 
         match (self.focus, self.depth, key) {
-            // From Center (overview) - panels are always navigable, even when empty
-            (Center, None, Left) => Navigation { focus: Detected, depth: Some(Selected) },
-            (Center, None, Right) => Navigation { focus: Added, depth: Some(Selected) },
+            // From Center (overview) - panels are always navigable, even
+            // when empty. The Devices panel is above the center, the Logs
+            // panel below: Up and Down point at them.
+            (Center, None, Up) => Navigation { focus: Devices, depth: Some(Selected) },
             (Center, None, Down) => Navigation { focus: Logs, depth: Some(Selected) },
-            (Center, None, Up) => self,
-            (Center, None, Enter) => self, // Needs direction first
-            (Center, None, Esc) => self,
+            (Center, None, Left) | (Center, None, Right) | (Center, None, Enter) | (Center, None, Esc) => self,
 
             // Esc: always go back
-            (Detected, Some(Selected), Esc) => Navigation::overview(),
-            (Detected, Some(Fullscreen), Esc) => Navigation { focus: Detected, depth: Some(Selected) },
-            (Added, Some(Selected), Esc) => Navigation::overview(),
-            (Added, Some(Fullscreen), Esc) => Navigation { focus: Added, depth: Some(Selected) },
-            (Users, Some(Fullscreen), Esc) => Navigation { focus: Added, depth: Some(Fullscreen) },
+            (Devices, Some(Selected), Esc) => Navigation::overview(),
+            (Devices, Some(Fullscreen), Esc) => Navigation { focus: Devices, depth: Some(Selected) },
+            (Users, Some(Fullscreen), Esc) => Navigation { focus: Devices, depth: Some(Fullscreen) },
             (Logs, Some(Selected), Esc) => Navigation::overview(),
             (Logs, Some(Fullscreen), Esc) => Navigation { focus: Logs, depth: Some(Selected) },
 
-            // Enter: go one level deeper
-            (Detected, Some(Selected), Enter) => Navigation { focus: Detected, depth: Some(Fullscreen) },
-            (Added, Some(Selected), Enter) => Navigation { focus: Added, depth: Some(Fullscreen) },
-            (Added, Some(Fullscreen), Enter) => Navigation { focus: Users, depth: Some(Fullscreen) },
-            (Logs, Some(Selected), Enter) => Navigation { focus: Logs, depth: Some(Fullscreen) },
-
-            // Left arrow: toward the Detected panel (left of center),
-            // each press goes one step deeper; Right rewinds.
-            (Detected, Some(Selected), Left) => Navigation { focus: Detected, depth: Some(Fullscreen) },
-            (Detected, Some(Selected), Right) => Navigation::overview(),
-            (Detected, Some(Fullscreen), Right) => Navigation { focus: Detected, depth: Some(Selected) },
-            (Added, Some(Selected), Left) => Navigation::overview(),
-            (Added, Some(Fullscreen), Left) => Navigation { focus: Added, depth: Some(Selected) },
-            (Users, Some(Fullscreen), Left) => Navigation { focus: Added, depth: Some(Fullscreen) },
-
-            // Right arrow: toward the Added panel (right of center),
-            // each press goes one step deeper; Left rewinds.
-            (Added, Some(Selected), Right) => Navigation { focus: Added, depth: Some(Fullscreen) },
-            (Added, Some(Fullscreen), Right) => Navigation { focus: Users, depth: Some(Fullscreen) },
+            // Up walks toward the Devices panel (above the center) and
+            // deeper into it: select, then fullscreen. Right and Enter
+            // are the always-available "deeper" keys too (navigation
+            // exception: arrows and Enter/Esc both walk the hierarchy).
+            (Devices, Some(Selected), Up | Enter | Right) => Navigation { focus: Devices, depth: Some(Fullscreen) },
+            // Left rewinds from fullscreen ("unbig"), Down rewinds from
+            // selected ("unselect").
+            (Devices, Some(Fullscreen), Left) => Navigation { focus: Devices, depth: Some(Selected) },
+            (Devices, Some(Selected), Down) => Navigation::overview(),
+            // Right/Enter from the fullscreen Devices panel open the Users
+            // sub-panel when an added device row is selected.
+            (Devices, Some(Fullscreen), Enter | Right) => match selected_section {
+                Some(DeviceSection::Added) => Navigation { focus: Users, depth: Some(Fullscreen) },
+                _ => self,
+            },
+            (Users, Some(Fullscreen), Left) => Navigation { focus: Devices, depth: Some(Fullscreen) },
 
             // Down/Up arrows: toward the Logs panel (below center)
-            (Logs, Some(Selected), Down) => Navigation { focus: Logs, depth: Some(Fullscreen) },
+            (Logs, Some(Selected), Down | Enter) => Navigation { focus: Logs, depth: Some(Fullscreen) },
             (Logs, Some(Selected), Up) => Navigation::overview(),
 
             // Note: in Logs/Fullscreen, Up/Down scroll the content (handled
@@ -249,17 +283,15 @@ impl Navigation {
     /// Only returns actions when in Fullscreen depth (not Selected).
     pub fn list_nav_action(&self, key: KeyCode) -> Option<Action> {
         use KeyCode::*;
-        
+
         // List navigation only works in Fullscreen depth
         if !self.is_fullscreen() {
             return None;
         }
 
         match (self.focus, key) {
-            (NavFocus::Detected, Up) => Some(Action::PendingSelectPrev),
-            (NavFocus::Detected, Down) => Some(Action::PendingSelectNext),
-            (NavFocus::Added, Up) => Some(Action::AddedSelectPrev),
-            (NavFocus::Added, Down) => Some(Action::AddedSelectNext),
+            (NavFocus::Devices, Up) => Some(Action::DevicesSelectPrev),
+            (NavFocus::Devices, Down) => Some(Action::DevicesSelectNext),
             (NavFocus::Users, Up) => Some(Action::UsersSelectPrev),
             (NavFocus::Users, Down) => Some(Action::UsersSelectNext),
             _ => None,
@@ -272,8 +304,7 @@ impl Navigation {
     pub fn active_pane(&self) -> ActivePane {
         match (self.focus, self.depth) {
             (NavFocus::Center, _) => ActivePane::main_menu(),
-            (NavFocus::Detected, Some(NavDepth::Fullscreen)) => ActivePane::detected(),
-            (NavFocus::Added, Some(NavDepth::Fullscreen)) => ActivePane::added(),
+            (NavFocus::Devices, Some(NavDepth::Fullscreen)) => ActivePane::devices(),
             (NavFocus::Users, Some(NavDepth::Fullscreen)) => ActivePane::users(),
             (NavFocus::Logs, Some(NavDepth::Fullscreen)) => ActivePane::logs(),
             // For Selected depth, return MainMenu to show dashboard with panel highlighted
@@ -283,6 +314,16 @@ impl Navigation {
 
 }
 
+/// The extra context the key dictionary of a pane state depends on,
+/// beyond `(focus, depth)`: which row is selected in the Devices pane
+/// (drives the action keys of the fullscreen Devices pane) and whether
+/// the selected user in the Users pane is confirmed.
+#[derive(Clone, Copy, Debug)]
+pub struct PaneKeyCtx {
+    pub confirmed_user: bool,
+    pub selected_section: Option<DeviceSection>,
+}
+
 /// The key dictionary of a pane state: every key that works in
 /// `(focus, depth)`, navigation and command keys alike, in one list.
 /// `bindings()` in ui::keys appends the one global key (help) on top.
@@ -290,23 +331,24 @@ impl Navigation {
 /// This is the single source of truth for the pane states: the hint
 /// lines and the key dispatch are both derived from these lists, so a
 /// key that is not listed here is not handled.
-pub fn pane_keys(focus: NavFocus, depth: Option<NavDepth>, confirmed_user: bool) -> &'static [KeyBinding] {
+pub fn pane_keys(focus: NavFocus, depth: Option<NavDepth>, ctx: PaneKeyCtx) -> &'static [KeyBinding] {
     use NavDepth::*;
     use NavFocus::*;
     match (focus, depth) {
         (Center, None) => CENTER_KEYS,
         (Center, Some(Selected)) => &[],
         (Center, Some(Fullscreen)) => &[],
-        (Detected, None) => &[],
-        (Detected, Some(Selected)) => DETECTED_SELECTED_KEYS,
-        (Detected, Some(Fullscreen)) => DETECTED_FULLSCREEN_KEYS,
-        (Added, None) => &[],
-        (Added, Some(Selected)) => ADDED_SELECTED_KEYS,
-        (Added, Some(Fullscreen)) => ADDED_FULLSCREEN_KEYS,
+        (Devices, None) => &[],
+        (Devices, Some(Selected)) => DEVICES_SELECTED_KEYS,
+        (Devices, Some(Fullscreen)) => match ctx.selected_section {
+            Some(DeviceSection::Added) => DEVICES_FULLSCREEN_ADDED_KEYS,
+            Some(DeviceSection::Detected) => DEVICES_FULLSCREEN_DETECTED_KEYS,
+            _ => DEVICES_FULLSCREEN_LOCAL_KEYS,
+        },
         (Users, None) => &[],
         (Users, Some(Selected)) => &[],
         (Users, Some(Fullscreen)) => {
-            if confirmed_user {
+            if ctx.confirmed_user {
                 USERS_FULLSCREEN_CONFIRMED_KEYS
             } else {
                 USERS_FULLSCREEN_TEMP_KEYS
@@ -321,37 +363,34 @@ pub fn pane_keys(focus: NavFocus, depth: Option<NavDepth>, confirmed_user: bool)
 use KeyCode::*;
 
 static CENTER_KEYS: &[KeyBinding] = &[
-    KeyBinding::internal(Left, "Left", "Detected"),
-    KeyBinding::internal(Right, "Right", "Added"),
-    KeyBinding::internal(Down, "Down", "Logs"),
+    // The Devices panel is above the center, the Logs panel below.
+    KeyBinding::internal(Up, "Up", "devices"),
+    KeyBinding::internal(Down, "Down", "logs"),
     // Quit is only offered on the main menu (overview).
     KeyBinding::new(Char('q'), "q", "quit", Effect::Action(Action::Quit)),
 ];
 
-static DETECTED_SELECTED_KEYS: &[KeyBinding] = &[
-    KeyBinding::internal(Enter, "Enter", "fullscreen"),
-    KeyBinding::internal(Left, "Left", "fullscreen"),
-    KeyBinding::internal(Esc, "Esc", "back"),
-    KeyBinding::internal(Right, "Right", "back"),
-];
-
-static DETECTED_FULLSCREEN_KEYS: &[KeyBinding] = &[
-    KeyBinding::internal(Esc, "Esc", "back"),
-    KeyBinding::internal(Right, "Right", "back"),
-    KeyBinding::internal(Up, "Up", "select"),
-    KeyBinding::internal(Down, "Down", "select"),
-    KeyBinding::new(Char('a'), "a", "add", Effect::Action(Action::Add)),
-    KeyBinding::new(Char('n'), "n", "ignore", Effect::Action(Action::Ignore)),
-];
-
-static ADDED_SELECTED_KEYS: &[KeyBinding] = &[
+static DEVICES_SELECTED_KEYS: &[KeyBinding] = &[
+    // Up/Right/Enter go deeper (fullscreen), Down/Esc rewind to the overview.
+    KeyBinding::internal(Up, "Up", "fullscreen"),
     KeyBinding::internal(Enter, "Enter", "fullscreen"),
     KeyBinding::internal(Right, "Right", "fullscreen"),
+    KeyBinding::internal(Down, "Down", "back"),
     KeyBinding::internal(Esc, "Esc", "back"),
-    KeyBinding::internal(Left, "Left", "back"),
 ];
 
-static ADDED_FULLSCREEN_KEYS: &[KeyBinding] = &[
+/// Fullscreen Devices pane with the local device selected: the local
+/// row has no action keys, only navigation and selection.
+static DEVICES_FULLSCREEN_LOCAL_KEYS: &[KeyBinding] = &[
+    KeyBinding::internal(Esc, "Esc", "back"),
+    KeyBinding::internal(Left, "Left", "back"),
+    KeyBinding::internal(Up, "Up", "select"),
+    KeyBinding::internal(Down, "Down", "select"),
+];
+
+/// Fullscreen Devices pane with an added device selected: device
+/// actions plus entry into the Users sub-panel (Right/Enter).
+static DEVICES_FULLSCREEN_ADDED_KEYS: &[KeyBinding] = &[
     KeyBinding::internal(Esc, "Esc", "back"),
     KeyBinding::internal(Left, "Left", "back"),
     KeyBinding::internal(Up, "Up", "select"),
@@ -362,6 +401,17 @@ static ADDED_FULLSCREEN_KEYS: &[KeyBinding] = &[
     KeyBinding::new(Char('s'), "s", "sync", Effect::Action(Action::Sync)),
     KeyBinding::new(Char('w'), "w", "wipe", Effect::Action(Action::WipeMode)),
     KeyBinding::new(Char('c'), "c", "setup-cd", Effect::Action(Action::SetupCdMode)),
+];
+
+/// Fullscreen Devices pane with a detected device selected: only
+/// add/ignore make sense on a pending device.
+static DEVICES_FULLSCREEN_DETECTED_KEYS: &[KeyBinding] = &[
+    KeyBinding::internal(Esc, "Esc", "back"),
+    KeyBinding::internal(Left, "Left", "back"),
+    KeyBinding::internal(Up, "Up", "select"),
+    KeyBinding::internal(Down, "Down", "select"),
+    KeyBinding::new(Char('a'), "a", "add", Effect::Action(Action::Add)),
+    KeyBinding::new(Char('n'), "n", "ignore", Effect::Action(Action::Ignore)),
 ];
 
 static USERS_FULLSCREEN_CONFIRMED_KEYS: &[KeyBinding] = &[
@@ -408,12 +458,11 @@ static LOGS_FULLSCREEN_KEYS: &[KeyBinding] = &[
 pub enum ActivePane {
     /// No pane active - in Main menu
     MainMenu(Pane),
-    /// Detected devices panel
-    Detected(Pane),
-    /// Added devices panel
-    Added(Pane),
-    /// Users sub-panel of the Added panel: the users of the selected
-    /// device. Device+user actions live here, not in the device panel.
+    /// The single devices panel: one list with the local device, the
+    /// added devices and the detected devices (divider rows between).
+    Devices(Pane),
+    /// Users sub-panel of the Devices panel: the users of the selected
+    /// added device. Device+user actions live here, not in the device panel.
     Users(Pane),
     /// Logs pane (formerly Activity)
     Logs(Pane),
@@ -423,8 +472,7 @@ impl ActivePane {
     pub fn name(&self) -> &'static str {
         match self {
             ActivePane::MainMenu(pane) => pane.name,
-            ActivePane::Detected(pane) => pane.name,
-            ActivePane::Added(pane) => pane.name,
+            ActivePane::Devices(pane) => pane.name,
             ActivePane::Users(pane) => pane.name,
             ActivePane::Logs(pane) => pane.name,
         }
@@ -445,7 +493,7 @@ pub enum Level {
     Security,
 }
 
-/// One device for the device panels.
+/// One device row of the Devices panel.
 #[derive(Clone)]
 pub struct UiDevice {
     /// SSH public key: identifies the row for per-device messages.
@@ -453,6 +501,9 @@ pub struct UiDevice {
     pub name: String,
     pub ip: Option<String>,
     pub port: u16,
+    /// Which section of the Devices pane the row belongs to (local,
+    /// added, detected) — decides the divider rows and the action keys.
+    pub section: DeviceSection,
 }
 
 /// Status of a user on the selected device, shown in the Users panel.
@@ -494,7 +545,7 @@ pub enum Question {
     /// Nothing pending: only global keys.
     Idle(QuestionDef),
     /// Add the front of the pending queue (plain mode only: the
-    /// full-screen ui adds devices from the Detected panel instead).
+    /// full-screen ui adds devices from the Devices panel instead).
     AddDevice(QuestionDef, String, String), // name, ip
     TrustKey(QuestionDef, String), // name
     Rename(QuestionDef, String, String), // name, suggested
@@ -531,9 +582,9 @@ impl Question {
 pub enum Action {
     Quit,
     Sync,
-    /// Add the device selected in the Detected panel.
+    /// Add the detected device selected in the Devices panel.
     Add,
-    /// Ignore the device selected in the Detected panel (for this run).
+    /// Ignore the detected device selected in the Devices panel (for this run).
     Ignore,
     /// Add the front of the pending queue (plain mode).
     AddCurrent,
@@ -543,16 +594,12 @@ pub enum Action {
     RejectKey,
     Rename(String),
     SkipRename,
-    /// Enter delete mode (device selection in the Added panel).
+    /// Enter delete mode (device selection in the Devices panel).
     DeleteMode,
-    /// Select previous in Detected panel (Detected pane navigation).
-    PendingSelectPrev,
-    /// Select next in Detected panel (Detected pane navigation).
-    PendingSelectNext,
-    /// Select previous in Added panel (Added pane navigation).
-    AddedSelectPrev,
-    /// Select next in Added panel (Added pane navigation).
-    AddedSelectNext,
+    /// Select previous row in the Devices panel.
+    DevicesSelectPrev,
+    /// Select next row in the Devices panel.
+    DevicesSelectNext,
     SelectPrev,
     SelectNext,
     DeleteConfirm,
@@ -567,11 +614,11 @@ pub enum Action {
     SetupCdCancel,
     /// Enter connections management mode (key 'k').
     ConnectionsMode,
-    /// Install SSH key to the currently selected device in Added pane.
+    /// Install SSH key to the currently selected device in the Devices panel.
     InstallKeyToSelected,
-    /// Remove SSH key from the currently selected device in Added pane.
+    /// Remove SSH key from the currently selected device in the Devices panel.
     RemoveKeyFromSelected,
-    /// Delete the currently selected device in Added pane.
+    /// Delete the currently selected added device in the Devices panel.
     DeleteSelected,
     /// Print the CLI help (plain mode; the full-screen ui shows its help
     /// panel instead, toggled by '?').
@@ -594,9 +641,7 @@ pub enum Action {
 // live in the navigation state's binding table (Navigation::bindings).
 pub static MAIN_MENU_PANE: Pane = Pane { name: "Main menu" };
 
-pub static DETECTED_PANE: Pane = Pane { name: "Detected devices" };
-
-pub static ADDED_PANE: Pane = Pane { name: "Added devices" };
+pub static DEVICES_PANE: Pane = Pane { name: "Devices" };
 
 pub static USERS_PANE: Pane = Pane { name: "Users" };
 
@@ -608,12 +653,8 @@ impl ActivePane {
         ActivePane::MainMenu(MAIN_MENU_PANE)
     }
 
-    pub const fn detected() -> Self {
-        ActivePane::Detected(DETECTED_PANE)
-    }
-
-    pub const fn added() -> Self {
-        ActivePane::Added(ADDED_PANE)
+    pub const fn devices() -> Self {
+        ActivePane::Devices(DEVICES_PANE)
     }
 
     pub const fn users() -> Self {
@@ -757,81 +798,93 @@ mod navigation_tests {
     }
 
     #[test]
-    fn detected_panel_left_goes_deeper_right_rewinds() {
+    fn devices_panel_up_selects_up_fullscreens_left_unbigs_down_unselects() {
         let center = Navigation::overview();
-        let selected = center.handle_key(Left, false);
-        assert_eq!(selected, nav(NavFocus::Detected, Some(NavDepth::Selected)));
-        let fullscreen = selected.handle_key(Left, false);
-        assert_eq!(fullscreen, nav(NavFocus::Detected, Some(NavDepth::Fullscreen)));
-        let back_to_selected = fullscreen.handle_key(Right, false);
-        assert_eq!(back_to_selected, nav(NavFocus::Detected, Some(NavDepth::Selected)));
-        let back_to_center = back_to_selected.handle_key(Right, false);
-        assert_eq!(back_to_center, Navigation::overview());
+        // Up selects the Devices panel (it is above the center).
+        let selected = center.handle_key(Up, None);
+        assert_eq!(selected, nav(NavFocus::Devices, Some(NavDepth::Selected)));
+        // Up again makes it fullscreen; Right/Enter are the always-available
+        // deeper keys too.
+        let fullscreen = selected.handle_key(Up, None);
+        assert_eq!(fullscreen, nav(NavFocus::Devices, Some(NavDepth::Fullscreen)));
+        assert_eq!(selected.handle_key(Enter, None), fullscreen);
+        assert_eq!(selected.handle_key(Right, None), fullscreen);
+        // Left unbigs (fullscreen -> selected), Down unselects (selected -> overview).
+        let unbig = fullscreen.handle_key(Left, None);
+        assert_eq!(unbig, nav(NavFocus::Devices, Some(NavDepth::Selected)));
+        assert_eq!(unbig.handle_key(Down, None), Navigation::overview());
+        // Esc goes back one step from anywhere in the panel.
+        assert_eq!(selected.handle_key(Esc, None), center);
+        assert_eq!(fullscreen.handle_key(Esc, None), selected);
+        // Left/Right no longer open the Devices panel from the overview.
+        assert_eq!(center.handle_key(Left, None), center);
+        assert_eq!(center.handle_key(Right, None), center);
     }
 
     #[test]
-    fn added_panel_right_goes_deeper_left_rewinds() {
-        let selected = Navigation::overview().handle_key(Right, false);
-        assert_eq!(selected, nav(NavFocus::Added, Some(NavDepth::Selected)));
-        let fullscreen = selected.handle_key(Right, false);
-        assert_eq!(fullscreen, nav(NavFocus::Added, Some(NavDepth::Fullscreen)));
-        let back_to_selected = fullscreen.handle_key(Left, false);
-        assert_eq!(back_to_selected, nav(NavFocus::Added, Some(NavDepth::Selected)));
-        let back_to_center = back_to_selected.handle_key(Left, false);
-        assert_eq!(back_to_center, Navigation::overview());
-    }
-
-    #[test]
-    fn users_entry_is_never_skipped_even_with_no_users() {
-        let fullscreen = nav(NavFocus::Added, Some(NavDepth::Fullscreen));
+    fn users_entry_only_from_an_added_device_row() {
+        let fullscreen = nav(NavFocus::Devices, Some(NavDepth::Fullscreen));
+        // An added device row selected: Right/Enter open the Users sub-panel.
+        for key in [Enter, Right] {
+            assert_eq!(
+                fullscreen.handle_key(key, Some(DeviceSection::Added)),
+                nav(NavFocus::Users, Some(NavDepth::Fullscreen))
+            );
+        }
+        // Left always unbigs from the fullscreen Devices pane; on a
+        // detected or local row Right/Enter do nothing.
         assert_eq!(
-            fullscreen.handle_key(Right, false),
-            nav(NavFocus::Users, Some(NavDepth::Fullscreen))
+            fullscreen.handle_key(Left, Some(DeviceSection::Added)),
+            nav(NavFocus::Devices, Some(NavDepth::Selected))
         );
-        assert_eq!(
-            fullscreen.handle_key(Enter, false),
-            nav(NavFocus::Users, Some(NavDepth::Fullscreen))
-        );
+        for section in [Some(DeviceSection::Detected), Some(DeviceSection::Local), None] {
+            assert_eq!(fullscreen.handle_key(Enter, section), fullscreen);
+            assert_eq!(fullscreen.handle_key(Right, section), fullscreen);
+            assert_eq!(
+                fullscreen.handle_key(Left, section),
+                nav(NavFocus::Devices, Some(NavDepth::Selected))
+            );
+        }
         let users = nav(NavFocus::Users, Some(NavDepth::Fullscreen));
         assert_eq!(
-            users.handle_key(Left, false),
-            nav(NavFocus::Added, Some(NavDepth::Fullscreen))
+            users.handle_key(Left, None),
+            nav(NavFocus::Devices, Some(NavDepth::Fullscreen))
         );
         assert_eq!(
-            users.handle_key(Esc, false),
-            nav(NavFocus::Added, Some(NavDepth::Fullscreen))
+            users.handle_key(Esc, None),
+            nav(NavFocus::Devices, Some(NavDepth::Fullscreen))
         );
     }
 
     #[test]
     fn logs_down_goes_deeper_up_rewinds() {
-        let selected = Navigation::overview().handle_key(Down, false);
+        let selected = Navigation::overview().handle_key(Down, None);
         assert_eq!(selected, nav(NavFocus::Logs, Some(NavDepth::Selected)));
-        let fullscreen = selected.handle_key(Down, false);
+        let fullscreen = selected.handle_key(Down, None);
         assert_eq!(fullscreen, nav(NavFocus::Logs, Some(NavDepth::Fullscreen)));
         // Fullscreen logs: Up/Down scroll the content, only Esc exits.
-        assert_eq!(fullscreen.handle_key(Up, false), fullscreen);
+        assert_eq!(fullscreen.handle_key(Up, None), fullscreen);
         assert_eq!(
-            fullscreen.handle_key(Esc, false),
+            fullscreen.handle_key(Esc, None),
             nav(NavFocus::Logs, Some(NavDepth::Selected))
         );
-        let back_to_center = selected.handle_key(Up, false);
+        let back_to_center = selected.handle_key(Up, None);
         assert_eq!(back_to_center, Navigation::overview());
     }
 
     #[test]
     fn right_does_not_zoom_the_logs_panel() {
         let selected = nav(NavFocus::Logs, Some(NavDepth::Selected));
-        assert_eq!(selected.handle_key(Right, false), selected);
+        assert_eq!(selected.handle_key(Right, None), selected);
     }
 
     #[test]
     fn list_navigation_only_in_fullscreen() {
-        let selected = nav(NavFocus::Added, Some(NavDepth::Selected));
+        let selected = nav(NavFocus::Devices, Some(NavDepth::Selected));
         assert_eq!(selected.list_nav_action(Up), None);
-        let fullscreen = nav(NavFocus::Added, Some(NavDepth::Fullscreen));
-        assert_eq!(fullscreen.list_nav_action(Up), Some(Action::AddedSelectPrev));
-        assert_eq!(fullscreen.list_nav_action(Down), Some(Action::AddedSelectNext));
+        let fullscreen = nav(NavFocus::Devices, Some(NavDepth::Fullscreen));
+        assert_eq!(fullscreen.list_nav_action(Up), Some(Action::DevicesSelectPrev));
+        assert_eq!(fullscreen.list_nav_action(Down), Some(Action::DevicesSelectNext));
         let logs = nav(NavFocus::Logs, Some(NavDepth::Fullscreen));
         assert_eq!(logs.list_nav_action(Up), None);
     }

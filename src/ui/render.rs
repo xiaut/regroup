@@ -16,7 +16,10 @@ use ratatui::widgets::{Block, BorderType, Cell, Paragraph, Row, Table, Wrap};
 
 use super::keys::{self, Context};
 use super::logging::{BLINK_MS, KEY_FLASH_MS, PULSE_MS};
-use super::types::{bindings_hint_text, ActivePane, Level, QuestionDef, HELP_BINDINGS};
+use super::types::{
+    bindings_hint_text, ActivePane, DeviceSection, Level, PaneKeyCtx, QuestionDef, UiDevice,
+    HELP_BINDINGS,
+};
 
 /// Hint text for the Idle action bar, built from the pane's key list —
 /// the same list key presses are dispatched through.
@@ -38,10 +41,6 @@ pub fn modal_hint_text(def: &QuestionDef) -> String {
 pub fn help_hint_text() -> String {
     bindings_hint_text(HELP_BINDINGS)
 }
-
-/// Minimum terminal width to display device panels side-by-side.
-/// Below this, panels stack vertically.
-pub const MIN_WIDTH_FOR_SIDE_BY_SIDE: u16 = 80;
 
 /// Height of the Logs strip (borders included) kept visible under a
 /// fullscreen device pane, like the action pane below the main area.
@@ -119,22 +118,107 @@ pub(crate) fn count_wrapped_lines(text: &str, width: usize, is_hint: bool) -> us
     wrapped_metrics(text, width, is_hint).0
 }
 
-/// Static look of one device panel: title, border color and the status
-/// shown when the device has no animated message.
-pub struct PanelTheme {
-    pub title: &'static str,
-    pub border: Color,
-    pub idle_status: &'static str,
+/// Divider row between two sections of the Devices pane (added,
+/// detected): a non-selectable labeled line in dark gray.
+fn divider_row(label: &str) -> Row<'static> {
+    Row::new([
+        Cell::from(format!("── {label} ──")),
+        Cell::from(""),
+        Cell::from(""),
+        Cell::from(""),
+    ])
+    .style(Style::new().fg(Color::DarkGray))
 }
 
-impl PanelTheme {
-    pub fn new(title: &'static str, border: Color, idle_status: &'static str) -> Self {
-        Self {
-            title,
-            border,
-            idle_status,
+/// The rows of the Devices pane: one row per device, each section
+/// opening with its divider row (localhost, then added, then
+/// detected). `selected` is an index into `devices`; dividers are
+/// not selectable.
+fn device_rows(
+    devices: &[UiDevice],
+    selected: Option<usize>,
+    flashes: &HashMap<String, RowFlash>,
+    pulses: &HashMap<String, Instant>,
+    base: Color,
+) -> Vec<Row<'static>> {
+    let now = Instant::now();
+    let pulse_duration = Duration::from_millis(PULSE_MS);
+    let mut rows: Vec<Row<'static>> = Vec::new();
+    let mut last_section: Option<DeviceSection> = None;
+    for (i, d) in devices.iter().enumerate() {
+        // Every section opens with its divider row, in the same style:
+        // "── localhost ──", "── added ──", "── detected ──" (a section is
+        // non-empty here: we are about to render one of its rows).
+        if last_section != Some(d.section) {
+            rows.push(divider_row(d.section.label()));
         }
+        last_section = Some(d.section);
+        let flash = flashes
+            .get(&d.key)
+            .filter(|f| now.duration_since(f.start) < super::logging::flash_duration(f.level));
+        let pulse = pulses
+            .get(&d.key)
+            .map(|t| now.duration_since(*t))
+            .filter(|e| *e < pulse_duration);
+        let status = if let Some(f) = flash {
+            f.msg.clone()
+        } else if pulse.is_some() {
+            "beacon received".to_string()
+        } else {
+            d.section.idle_status().to_string()
+        };
+        let style = row_style(base, selected == Some(i), flash, pulse, now);
+        rows.push(
+            Row::new([
+                Cell::from(d.name.clone()),
+                Cell::from(d.ip.clone().unwrap_or_else(|| "-".to_string())),
+                Cell::from(d.port.to_string()),
+                Cell::from(status),
+            ])
+            .style(style),
+        );
     }
+    rows
+}
+
+/// The Devices pane: one table where each section opens with its
+/// divider row — localhost, added, detected.
+fn render_devices_pane(
+    frame: &mut Frame,
+    area: Rect,
+    devices: &[UiDevice],
+    selected: Option<usize>,
+    flashes: &HashMap<String, RowFlash>,
+    pulses: &HashMap<String, Instant>,
+    border_style: Style,
+    border_type: BorderType,
+) {
+    let added = devices
+        .iter()
+        .filter(|d| d.section == DeviceSection::Added)
+        .count();
+    let detected = devices
+        .iter()
+        .filter(|d| d.section == DeviceSection::Detected)
+        .count();
+    let rows = device_rows(devices, selected, flashes, pulses, Color::Green);
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Percentage(35),
+            Constraint::Percentage(30),
+            Constraint::Length(5),
+            Constraint::Min(8),
+        ],
+    )
+    .header(Row::new(["Name", "IP", "Port", "Status"]).style(Style::new().bold()))
+    .block(
+        Block::bordered()
+            .title(format!("Devices — {added} added, {detected} detected"))
+            .border_type(border_type)
+            .border_style(border_style),
+    );
+    frame.render_widget(table, area);
 }
 
 /// A device's animated status, shown in the last column of its row.
@@ -165,65 +249,11 @@ pub struct QuestionCtx<'a> {
     pub navigation: super::types::Navigation,
     /// Whether the selected user is confirmed (drives Users-pane hints).
     pub confirmed_user: bool,
+    /// Section of the selected row in the Devices pane (drives the
+    /// Devices-pane hints: which action keys are offered).
+    pub selected_section: Option<DeviceSection>,
     /// Last key press, highlighted in the hint line while recent.
     pub key_flash: Option<&'a KeyFlash>,
-}
-
-/// A device panel: one row per device, with the animated per-device
-/// status in the last column. `selected` highlights a row (selection in
-/// the Detected panel, delete mode in the Added panel). A recent beacon
-/// pulses the row: bright background fading back to the base color.
-pub fn render_devices(
-    frame: &mut Frame,
-    area: Rect,
-    theme: PanelTheme,
-    devices: &[super::types::UiDevice],
-    selected: Option<usize>,
-    flashes: &HashMap<String, RowFlash>,
-    pulses: &HashMap<String, Instant>,
-) {
-    let now = Instant::now();
-    let pulse_duration = Duration::from_millis(PULSE_MS);
-    let rows = devices.iter().enumerate().map(|(i, d)| {
-        let flash = flashes
-            .get(&d.key)
-            .filter(|f| now.duration_since(f.start) < super::logging::flash_duration(f.level));
-        let pulse = pulses
-            .get(&d.key)
-            .map(|t| now.duration_since(*t))
-            .filter(|e| *e < pulse_duration);
-        let status = if let Some(f) = flash {
-            f.msg.clone()
-        } else if pulse.is_some() {
-            "beacon received".to_string()
-        } else {
-            theme.idle_status.to_string()
-        };
-        let style = row_style(theme.border, selected == Some(i), flash, pulse, now);
-        Row::new([
-            Cell::from(d.name.clone()),
-            Cell::from(d.ip.clone().unwrap_or_else(|| "-".to_string())),
-            Cell::from(d.port.to_string()),
-            Cell::from(status),
-        ])
-        .style(style)
-    });
-    let table = Table::new(
-        rows,
-        [
-            Constraint::Percentage(35),
-            Constraint::Percentage(30),
-            Constraint::Length(5),
-            Constraint::Min(8),
-        ],
-    )
-    .header(Row::new(["Name", "IP", "Port", "Status"]).style(Style::new().bold()))
-    .block(
-        Block::bordered()
-            .title(format!("{} — {}", theme.title, devices.len()))
-            .border_style(Style::new().fg(theme.border)),
-    );
-    frame.render_widget(table, area);
 }
 
 /// Style of a device row: the panel's base color, overridden by the
@@ -464,19 +494,18 @@ pub fn render_users_panel(
 /// Render panes based on the active pane.
 /// When a pane is active, it fills the area it is given (full-screen
 /// mode; the caller keeps the Logs strip visible below it).
-/// When several panels are visible at once (the Added pane and its Users
-/// sub-panel), the active one is marked with a double border; a lone
-/// full-screen panel keeps plain borders.
-/// When in MainMenu, show all three panes side-by-side or stacked.
+/// When several panels are visible at once (the Devices pane and its
+/// Users sub-panel), the active one is marked with a double border; a
+/// lone full-screen panel keeps plain borders.
+/// When in MainMenu, the dashboard shows the Devices pane on top (full
+/// width) and the Logs pane below.
 pub fn render_all_panes(
     frame: &mut Frame,
     area: Rect,
     active_pane: ActivePane,
     navigation_focus: super::types::NavFocus,
-    detected: &[super::types::UiDevice],
-    detected_selected: Option<usize>,
-    added: &[super::types::UiDevice],
-    added_selected: Option<usize>,
+    devices: &[UiDevice],
+    devices_selected: Option<usize>,
     log: &[String],
     log_scroll: u16,
     flashes: &HashMap<String, RowFlash>,
@@ -487,69 +516,11 @@ pub fn render_all_panes(
     let width = area.width;
     let height = area.height;
 
-    // Minimum width for side-by-side top panes
-    let min_width_for_side_by_side = 80;
-
     // If a specific pane is active (not MainMenu), show only that pane full-screen
     match active_pane {
-        ActivePane::Detected(_) => {
-            // Full-screen Detected pane
-            let detected_theme = PanelTheme::new("Detected", Color::Yellow, "detected");
-            let detected_border_style = Style::new().fg(Color::Yellow);
-            
-            let detected_rows = detected.iter().enumerate().map(|(i, d)| {
-                let now = Instant::now();
-                let pulse_duration = Duration::from_millis(PULSE_MS);
-                let flash = flashes
-                    .get(&d.key)
-                    .filter(|f| now.duration_since(f.start) < super::logging::flash_duration(f.level));
-                let pulse = pulses
-                    .get(&d.key)
-                    .map(|t| now.duration_since(*t))
-                    .filter(|e| *e < pulse_duration);
-                let status = if let Some(f) = flash {
-                    f.msg.clone()
-                } else if pulse.is_some() {
-                    "beacon received".to_string()
-                } else {
-                    detected_theme.idle_status.to_string()
-                };
-                let style = row_style(
-                    detected_theme.border,
-                    detected_selected == Some(i),
-                    flash,
-                    pulse,
-                    now,
-                );
-                Row::new([
-                    Cell::from(d.name.clone()),
-                    Cell::from(d.ip.clone().unwrap_or_else(|| "-".to_string())),
-                    Cell::from(d.port.to_string()),
-                    Cell::from(status),
-                ])
-                .style(style)
-            });
-            let detected_table = Table::new(
-                detected_rows,
-                [
-                    Constraint::Percentage(35),
-                    Constraint::Percentage(30),
-                    Constraint::Length(5),
-                    Constraint::Min(8),
-                ],
-            )
-            .header(Row::new(["Name", "IP", "Port", "Status"]).style(Style::new().bold()))
-            .block(
-                Block::bordered()
-                    .title(format!("Detected — {}", detected.len()))
-                    .border_type(BorderType::Plain)
-                    .border_style(detected_border_style),
-            );
-            frame.render_widget(detected_table, area);
-        }
-        ActivePane::Added(_) | ActivePane::Users(_) => {
-            // Full-screen devices pane with the Users sub-panel on the
-            // right: the users of the device selected in the Added panel.
+        ActivePane::Devices(_) | ActivePane::Users(_) => {
+            // Full-screen Devices pane with the Users sub-panel on the
+            // right: the users of the added device selected in the pane.
             let devices_width = (width * 3) / 5;
             let [devices_area, users_area] = Layout::horizontal([
                 Constraint::Length(devices_width),
@@ -557,69 +528,29 @@ pub fn render_all_panes(
             ])
             .areas(area);
 
-            let added_theme = PanelTheme::new("Added", Color::Green, "known");
             // A deactivated panel (another panel is active) gets gray
             // borders; the active one keeps its theme color.
-            let added_active = matches!(active_pane, ActivePane::Added(_));
-            let added_border_style = if added_active {
+            let devices_active = matches!(active_pane, ActivePane::Devices(_));
+            let devices_border_style = if devices_active {
                 Style::new().fg(Color::Green)
             } else {
                 Style::new().fg(Color::DarkGray)
             };
-            
-            let added_rows = added.iter().enumerate().map(|(i, d)| {
-                let now = Instant::now();
-                let pulse_duration = Duration::from_millis(PULSE_MS);
-                let flash = flashes
-                    .get(&d.key)
-                    .filter(|f| now.duration_since(f.start) < super::logging::flash_duration(f.level));
-                let pulse = pulses
-                    .get(&d.key)
-                    .map(|t| now.duration_since(*t))
-                    .filter(|e| *e < pulse_duration);
-                let status = if let Some(f) = flash {
-                    f.msg.clone()
-                } else if pulse.is_some() {
-                    "beacon received".to_string()
-                } else {
-                    added_theme.idle_status.to_string()
-                };
-                let style = row_style(
-                    added_theme.border,
-                    added_selected == Some(i),
-                    flash,
-                    pulse,
-                    now,
-                );
-                Row::new([
-                    Cell::from(d.name.clone()),
-                    Cell::from(d.ip.clone().unwrap_or_else(|| "-".to_string())),
-                    Cell::from(d.port.to_string()),
-                    Cell::from(status),
-                ])
-                .style(style)
-            });
-            let added_table = Table::new(
-                added_rows,
-                [
-                    Constraint::Percentage(35),
-                    Constraint::Percentage(30),
-                    Constraint::Length(5),
-                    Constraint::Min(8),
-                ],
-            )
-            .header(Row::new(["Name", "IP", "Port", "Status"]).style(Style::new().bold()))
-            .block(
-                Block::bordered()
-                    .title(format!("Added — {}", added.len()))
-                    .border_type(if added_active {
-                        BorderType::Double
-                    } else {
-                        BorderType::Plain
-                    })
-                    .border_style(added_border_style),
+            let devices_border_type = if devices_active {
+                BorderType::Double
+            } else {
+                BorderType::Plain
+            };
+            render_devices_pane(
+                frame,
+                devices_area,
+                devices,
+                devices_selected,
+                flashes,
+                pulses,
+                devices_border_style,
+                devices_border_type,
             );
-            frame.render_widget(added_table, devices_area);
 
             render_users_panel(
                 frame,
@@ -631,363 +562,91 @@ pub fn render_all_panes(
         }
         ActivePane::Logs(_) => {
             // Full-screen Logs pane
-            let logs_title = "Logs";
             let logs_border_style = Style::new().fg(Color::Cyan);
             let logs_block = Block::bordered()
-                .title(logs_title)
+                .title("Logs")
                 .border_type(BorderType::Plain)
                 .border_style(logs_border_style);
 
             let visible = height.saturating_sub(2) as usize;
-            let logs_paragraph =
-                Paragraph::new(Text::from(log_lines(log, visible, log_scroll))).block(logs_block);
+            let skip = log
+                .len()
+                .saturating_sub(visible + log_scroll as usize)
+                .min(log.len());
+            let lines: Vec<Line> = log
+                .iter()
+                .map(|msg| Line::styled(msg.clone(), log_style(msg)))
+                .collect();
+            let logs_paragraph = Paragraph::new(Text::from(lines))
+                .block(logs_block)
+                .scroll((skip as u16, 0));
             frame.render_widget(logs_paragraph, area);
         }
         ActivePane::MainMenu(_) => {
-            // Show all three panes when in MainMenu
-            // Highlight the panel that has focus
-            let detected_selected_focus = matches!(navigation_focus, super::types::NavFocus::Detected);
-            let added_selected_focus = matches!(navigation_focus, super::types::NavFocus::Added);
-            let logs_selected_focus = matches!(navigation_focus, super::types::NavFocus::Logs);
-            
-            if width >= min_width_for_side_by_side {
-                // Layout: Detected | Added (top row), Logs (bottom row)
-                let top_height = height / 2;
-                let logs_height = height - top_height;
+            // Dashboard: the Devices pane on top (full width), the Logs
+            // pane below. The focused panel gets a double, bold border.
+            let devices_focus = matches!(navigation_focus, super::types::NavFocus::Devices);
+            let logs_focus = matches!(navigation_focus, super::types::NavFocus::Logs);
 
-                let [top_area, logs_area] = Layout::vertical([
-                    Constraint::Length(top_height),
-                    Constraint::Length(logs_height),
-                ])
-                .areas(area);
+            let top_height = height / 2;
+            let logs_height = height - top_height;
+            let [devices_area, logs_area] = Layout::vertical([
+                Constraint::Length(top_height),
+                Constraint::Length(logs_height),
+            ])
+            .areas(area);
 
-                // Split top area into Detected (left) and Added (right)
-                let detected_width = width / 2;
-                let added_width = width - detected_width;
-
-                let [detected_area, added_area] = Layout::horizontal([
-                    Constraint::Length(detected_width),
-                    Constraint::Length(added_width),
-                ])
-                .areas(top_area);
-
-                // Render Detected pane
-                let detected_theme = PanelTheme::new("Detected", Color::Yellow, "detected");
-                let detected_border_style = if detected_selected_focus {
-                    Style::new().fg(Color::Yellow).bold()
-                } else {
-                    Style::new().fg(Color::Yellow)
-                };
-                let detected_border_type = if detected_selected_focus {
-                    BorderType::Double
-                } else {
-                    BorderType::Plain
-                };
-
-                let detected_rows = detected.iter().enumerate().map(|(i, d)| {
-                    let now = Instant::now();
-                    let pulse_duration = Duration::from_millis(PULSE_MS);
-                    let flash = flashes
-                        .get(&d.key)
-                        .filter(|f| now.duration_since(f.start) < super::logging::flash_duration(f.level));
-                    let pulse = pulses
-                        .get(&d.key)
-                        .map(|t| now.duration_since(*t))
-                        .filter(|e| *e < pulse_duration);
-                    let status = if let Some(f) = flash {
-                        f.msg.clone()
-                    } else if pulse.is_some() {
-                        "beacon received".to_string()
-                    } else {
-                        detected_theme.idle_status.to_string()
-                    };
-                    let style = row_style(
-                        detected_theme.border,
-                        detected_selected == Some(i),
-                        flash,
-                        pulse,
-                        now,
-                    );
-                    Row::new([
-                        Cell::from(d.name.clone()),
-                        Cell::from(d.ip.clone().unwrap_or_else(|| "-".to_string())),
-                        Cell::from(d.port.to_string()),
-                        Cell::from(status),
-                    ])
-                    .style(style)
-                });
-                let detected_table = Table::new(
-                    detected_rows,
-                    [
-                        Constraint::Percentage(35),
-                        Constraint::Percentage(30),
-                        Constraint::Length(5),
-                        Constraint::Min(8),
-                    ],
-                )
-                .header(Row::new(["Name", "IP", "Port", "Status"]).style(Style::new().bold()))
-                .block(
-                    Block::bordered()
-                        .title(format!("{} — {}", detected_theme.title, detected.len()))
-                        .border_type(detected_border_type)
-                        .border_style(detected_border_style),
-                );
-                frame.render_widget(detected_table, detected_area);
-
-                // Render Added pane
-                let added_theme = PanelTheme::new("Added", Color::Green, "known");
-                let added_border_style = if added_selected_focus {
-                    Style::new().fg(Color::Green).bold()
-                } else {
-                    Style::new().fg(Color::Green)
-                };
-                let added_border_type = if added_selected_focus {
-                    BorderType::Double
-                } else {
-                    BorderType::Plain
-                };
-
-                let added_rows = added.iter().enumerate().map(|(i, d)| {
-                    let now = Instant::now();
-                    let pulse_duration = Duration::from_millis(PULSE_MS);
-                    let flash = flashes
-                        .get(&d.key)
-                        .filter(|f| now.duration_since(f.start) < super::logging::flash_duration(f.level));
-                    let pulse = pulses
-                        .get(&d.key)
-                        .map(|t| now.duration_since(*t))
-                        .filter(|e| *e < pulse_duration);
-                    let status = if let Some(f) = flash {
-                        f.msg.clone()
-                    } else if pulse.is_some() {
-                        "beacon received".to_string()
-                    } else {
-                        added_theme.idle_status.to_string()
-                    };
-                    let style = row_style(
-                        added_theme.border,
-                        added_selected == Some(i),
-                        flash,
-                        pulse,
-                        now,
-                    );
-                    Row::new([
-                        Cell::from(d.name.clone()),
-                        Cell::from(d.ip.clone().unwrap_or_else(|| "-".to_string())),
-                        Cell::from(d.port.to_string()),
-                        Cell::from(status),
-                    ])
-                    .style(style)
-                });
-                let added_table = Table::new(
-                    added_rows,
-                    [
-                        Constraint::Percentage(35),
-                        Constraint::Percentage(30),
-                        Constraint::Length(5),
-                        Constraint::Min(8),
-                    ],
-                )
-                .header(Row::new(["Name", "IP", "Port", "Status"]).style(Style::new().bold()))
-                .block(
-                    Block::bordered()
-                        .title(format!("{} — {}", added_theme.title, added.len()))
-                        .border_type(added_border_type)
-                        .border_style(added_border_style),
-                );
-                frame.render_widget(added_table, added_area);
-
-                // Render Logs pane
-                let logs_title = "Logs";
-                let logs_border_type = if logs_selected_focus {
-                    BorderType::Double
-                } else {
-                    BorderType::Plain
-                };
-                let logs_border_style = if logs_selected_focus {
-                    Style::new().fg(Color::Cyan).bold()
-                } else {
-                    Style::new().fg(Color::Cyan)
-                };
-                let logs_block = Block::bordered()
-                    .title(logs_title)
-                    .border_type(logs_border_type)
-                    .border_style(logs_border_style);
-
-                let visible = logs_area.height.saturating_sub(2) as usize;
-                let logs_paragraph =
-                    Paragraph::new(Text::from(log_lines(log, visible, log_scroll)))
-                        .block(logs_block);
-                frame.render_widget(logs_paragraph, logs_area);
+            let devices_border_style = if devices_focus {
+                Style::new().fg(Color::Green).bold()
             } else {
-                // Stacked layout for narrow terminals: Detected, Added, Logs
-                let detected_height = height / 3;
-                let added_height = height / 3;
-                let logs_height = height - detected_height - added_height;
+                Style::new().fg(Color::Green)
+            };
+            let devices_border_type = if devices_focus {
+                BorderType::Double
+            } else {
+                BorderType::Plain
+            };
+            render_devices_pane(
+                frame,
+                devices_area,
+                devices,
+                devices_selected,
+                flashes,
+                pulses,
+                devices_border_style,
+                devices_border_type,
+            );
 
-                let [detected_area, middle_area] =
-                    Layout::vertical([Constraint::Length(detected_height), Constraint::Fill(1)])
-                        .areas(area);
-
-                let [added_area, logs_area] = Layout::vertical([
-                    Constraint::Length(added_height),
-                    Constraint::Length(logs_height),
-                ])
-                .areas(middle_area);
-
-                // Render Detected pane
-                let detected_theme = PanelTheme::new("Detected", Color::Yellow, "detected");
-                let detected_border_style = if detected_selected_focus {
-                    Style::new().fg(Color::Yellow).bold()
-                } else {
-                    Style::new().fg(Color::Yellow)
-                };
-                let detected_border_type = if detected_selected_focus {
-                    BorderType::Double
-                } else {
-                    BorderType::Plain
-                };
-
-                let detected_rows = detected.iter().enumerate().map(|(i, d)| {
-                    let now = Instant::now();
-                    let pulse_duration = Duration::from_millis(PULSE_MS);
-                    let flash = flashes
-                        .get(&d.key)
-                        .filter(|f| now.duration_since(f.start) < super::logging::flash_duration(f.level));
-                    let pulse = pulses
-                        .get(&d.key)
-                        .map(|t| now.duration_since(*t))
-                        .filter(|e| *e < pulse_duration);
-                    let status = if let Some(f) = flash {
-                        f.msg.clone()
-                    } else if pulse.is_some() {
-                        "beacon received".to_string()
-                    } else {
-                        detected_theme.idle_status.to_string()
-                    };
-                    let style = row_style(
-                        detected_theme.border,
-                        detected_selected == Some(i),
-                        flash,
-                        pulse,
-                        now,
-                    );
-                    Row::new([
-                        Cell::from(d.name.clone()),
-                        Cell::from(d.ip.clone().unwrap_or_else(|| "-".to_string())),
-                        Cell::from(d.port.to_string()),
-                        Cell::from(status),
-                    ])
-                    .style(style)
-                });
-                let detected_table = Table::new(
-                    detected_rows,
-                    [
-                        Constraint::Percentage(35),
-                        Constraint::Percentage(30),
-                        Constraint::Length(5),
-                        Constraint::Min(8),
-                    ],
-                )
-                .header(Row::new(["Name", "IP", "Port", "Status"]).style(Style::new().bold()))
-                .block(
-                    Block::bordered()
-                        .title(format!("{} — {}", detected_theme.title, detected.len()))
-                        .border_type(detected_border_type)
-                        .border_style(detected_border_style),
-                );
-                frame.render_widget(detected_table, detected_area);
-
-                // Render Added pane
-                let added_theme = PanelTheme::new("Added", Color::Green, "known");
-                let added_border_style = if added_selected_focus {
-                    Style::new().fg(Color::Green).bold()
-                } else {
-                    Style::new().fg(Color::Green)
-                };
-                let added_border_type = if added_selected_focus {
-                    BorderType::Double
-                } else {
-                    BorderType::Plain
-                };
-
-                let added_rows = added.iter().enumerate().map(|(i, d)| {
-                    let now = Instant::now();
-                    let pulse_duration = Duration::from_millis(PULSE_MS);
-                    let flash = flashes
-                        .get(&d.key)
-                        .filter(|f| now.duration_since(f.start) < super::logging::flash_duration(f.level));
-                    let pulse = pulses
-                        .get(&d.key)
-                        .map(|t| now.duration_since(*t))
-                        .filter(|e| *e < pulse_duration);
-                    let status = if let Some(f) = flash {
-                        f.msg.clone()
-                    } else if pulse.is_some() {
-                        "beacon received".to_string()
-                    } else {
-                        added_theme.idle_status.to_string()
-                    };
-                    let style = row_style(
-                        added_theme.border,
-                        added_selected == Some(i),
-                        flash,
-                        pulse,
-                        now,
-                    );
-                    Row::new([
-                        Cell::from(d.name.clone()),
-                        Cell::from(d.ip.clone().unwrap_or_else(|| "-".to_string())),
-                        Cell::from(d.port.to_string()),
-                        Cell::from(status),
-                    ])
-                    .style(style)
-                });
-                let added_table = Table::new(
-                    added_rows,
-                    [
-                        Constraint::Percentage(35),
-                        Constraint::Percentage(30),
-                        Constraint::Length(5),
-                        Constraint::Min(8),
-                    ],
-                )
-                .header(Row::new(["Name", "IP", "Port", "Status"]).style(Style::new().bold()))
-                .block(
-                    Block::bordered()
-                        .title(format!("{} — {}", added_theme.title, added.len()))
-                        .border_type(added_border_type)
-                        .border_style(added_border_style),
-                );
-                frame.render_widget(added_table, added_area);
-
-                // Render Logs pane
-                let logs_title = "Logs";
-                let logs_border_type = if logs_selected_focus {
-                    BorderType::Double
-                } else {
-                    BorderType::Plain
-                };
-                let logs_border_style = if logs_selected_focus {
-                    Style::new().fg(Color::Cyan).bold()
-                } else {
-                    Style::new().fg(Color::Cyan)
-                };
-                let logs_block = Block::bordered()
-                    .title(logs_title)
-                    .border_type(logs_border_type)
-                    .border_style(logs_border_style);
-
-                let visible = logs_area.height.saturating_sub(2) as usize;
-                let logs_paragraph =
-                    Paragraph::new(Text::from(log_lines(log, visible, log_scroll)))
-                        .block(logs_block);
-                frame.render_widget(logs_paragraph, logs_area);
-            }
+            let logs_border_style = if logs_focus {
+                Style::new().fg(Color::Cyan).bold()
+            } else {
+                Style::new().fg(Color::Cyan)
+            };
+            let logs_border_type = if logs_focus {
+                BorderType::Double
+            } else {
+                BorderType::Plain
+            };
+            let logs_block = Block::bordered()
+                .title("Logs")
+                .border_type(logs_border_type)
+                .border_style(logs_border_style);
+            let visible = logs_area.height.saturating_sub(2) as usize;
+            let skip = log
+                .len()
+                .saturating_sub(visible + log_scroll as usize)
+                .min(log.len());
+            let lines: Vec<Line> = log
+                .iter()
+                .map(|msg| Line::styled(msg.clone(), log_style(msg)))
+                .collect();
+            let logs_paragraph = Paragraph::new(Text::from(lines))
+                .block(logs_block)
+                .scroll((skip as u16, 0));
+            frame.render_widget(logs_paragraph, logs_area);
         }
     }
 }
-
 /// Question block, always the bottom block of the screen. Returns the text
 /// cursor position when the user is typing a name. While the help panel is
 /// shown (`help`), the block describes the help panel instead.
@@ -1015,7 +674,10 @@ pub fn render_question(
                 let hint = idle_hint_text(Context::Pane {
                     focus: ctx.navigation.focus,
                     depth: ctx.navigation.depth,
-                    confirmed_user: ctx.confirmed_user,
+                    keys_ctx: PaneKeyCtx {
+                        confirmed_user: ctx.confirmed_user,
+                        selected_section: ctx.selected_section,
+                    },
                 });
                 (
                     def.title,
@@ -1140,6 +802,7 @@ mod tests {
                 depth: None,
             },
             confirmed_user: false,
+            selected_section: None,
             key_flash: None,
         }
     }
@@ -1221,10 +884,8 @@ mod tests {
                 render_all_panes(
                     frame,
                     pane_area,
-                    ActivePane::detected(),
-                    NavFocus::Detected,
-                    &[],
-                    None,
+                    ActivePane::devices(),
+                    NavFocus::Devices,
                     &[],
                     None,
                     &log,
@@ -1239,7 +900,9 @@ mod tests {
             .unwrap();
         let buf = terminal.backend().buffer();
         // The pane's bottom border sits right above the strip's top border.
-        assert_eq!(buf.cell((0, pane_area.bottom() - 1)).unwrap().symbol(), "└");
+        // The Devices pane is active here (the Users panel is visible next
+        // to it), so it is drawn with a double border.
+        assert_eq!(buf.cell((0, pane_area.bottom() - 1)).unwrap().symbol(), "╚");
         assert_eq!(buf.cell((0, logs_area.y)).unwrap().symbol(), "┌");
         // The strip is titled "Logs".
         assert_eq!(buf.cell((1, logs_area.y)).unwrap().symbol(), "L");
@@ -1312,5 +975,93 @@ mod tests {
         };
         assert!(row_text(1).trim().is_empty(), "row1: {}", row_text(1));
         assert!(row_text(4).starts_with("line0"), "row4: {}", row_text(4));
+    }
+
+    fn ui_device(key: &str, name: &str, section: crate::ui::types::DeviceSection) -> UiDevice {
+        UiDevice {
+            key: key.to_string(),
+            name: name.to_string(),
+            ip: Some("10.0.0.1".to_string()),
+            port: 22,
+            section,
+        }
+    }
+
+    /// The Devices pane is one list with a divider row per section, in
+    /// the same style: "── localhost ──" + the local device row, then
+    /// "── added ──" + the added devices, then "── detected ──" + the
+    /// detected devices. The selection index addresses the device rows,
+    /// not the dividers.
+    #[test]
+    fn devices_pane_renders_local_added_detected_with_dividers_in_order() {
+        use crate::ui::types::DeviceSection;
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let devices = vec![
+            ui_device("k-local", "myhost", DeviceSection::Local),
+            ui_device("k-a", "alpha", DeviceSection::Added),
+            ui_device("k-b", "beta", DeviceSection::Added),
+            ui_device("k-d", "gamma", DeviceSection::Detected),
+        ];
+        terminal
+            .draw(|frame| {
+                render_all_panes(
+                    frame,
+                    frame.area(),
+                    ActivePane::main_menu(),
+                    NavFocus::Center,
+                    &devices,
+                    Some(2), // "beta"
+                    &[],
+                    0,
+                    &HashMap::new(),
+                    &HashMap::new(),
+                    &[],
+                    None,
+                );
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer();
+        let lines: Vec<String> = (0..buf.area.height)
+            .map(|y| {
+                (0..buf.area.width)
+                    .map(|x| buf[(x, y)].symbol().chars().next().unwrap_or(' '))
+                    .collect()
+            })
+            .collect();
+        let pos = |needle: &str| {
+            lines
+                .iter()
+                .position(|l| l.contains(needle))
+                .unwrap_or_else(|| panic!("{needle} not rendered"))
+        };
+        let p_local_div = pos("── localhost ──");
+        let p_local = pos("myhost");
+        let p_added_div = pos("── added ──");
+        let p_alpha = pos("alpha");
+        let p_beta = pos("beta");
+        let p_det_div = pos("── detected ──");
+        let p_gamma = pos("gamma");
+        assert!(
+            p_local_div < p_local
+                && p_local < p_added_div
+                && p_added_div < p_alpha
+                && p_alpha < p_beta
+                && p_beta < p_det_div
+                && p_det_div < p_gamma,
+            "rows out of order: localhost_div={p_local_div} local={p_local} added_div={p_added_div} alpha={p_alpha} beta={p_beta} det_div={p_det_div} gamma={p_gamma}"
+        );
+        assert!(lines.iter().any(|l| l.contains("Devices — 2 added, 1 detected")));
+        // The selection index 2 addresses "beta" (dividers are not rows):
+        // its row is rendered reversed.
+        let beta_row = (0..buf.area.width).any(|x| {
+            buf[(x, p_beta as u16)]
+                .modifier
+                .contains(Modifier::REVERSED)
+        });
+        assert!(beta_row, "selected device row must be highlighted");
+        assert!(!buf[(0, p_local as u16)]
+            .modifier
+            .contains(Modifier::REVERSED));
     }
 }
