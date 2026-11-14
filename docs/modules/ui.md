@@ -252,6 +252,14 @@ The TUI interface uses **ratatui** (formerly tui-rs) with **crossterm** for term
 - **Logs pane** (middle): General messages and logs
 - **Question block** (bottom): Current question and available actions
 
+The **Logs pane is always visible**, like the question block: in the
+overview it takes the bottom half of the main area, and in a fullscreen
+device pane (Detected, Added/Users) it is kept as a fixed-height strip
+(6 rows, borders included) at the bottom of the main area, above the
+question block. The strip is dropped when the main area is shorter than
+12 rows, and hidden while the help panel is open. Scrolling the log still
+requires the Logs pane to be fullscreen.
+
 ### Narrow Screen Layout
 
 On screens narrower than 80 characters, panels stack vertically:

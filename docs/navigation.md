@@ -34,8 +34,10 @@ A panel has exactly **three states**:
 1. **Overview** — the dashboard is displayed, no panel engaged (user at the
    virtual center).
 2. **Selected** — the panel is highlighted (focus), nothing more.
-3. **Fullscreen** — the panel fills the screen and its content becomes
-   navigable (list selection, scrolling).
+3. **Fullscreen** — the panel fills the main area and its content becomes
+   navigable (list selection, scrolling). The Logs pane stays visible as a
+   strip above the action block, except for the Logs pane itself, which
+   fills the main area, and while the help panel is open.
 
 The same arrow key walks through these states in order; the opposite arrow
 walks back.

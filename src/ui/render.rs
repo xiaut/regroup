@@ -43,6 +43,28 @@ pub fn help_hint_text() -> String {
 /// Below this, panels stack vertically.
 pub const MIN_WIDTH_FOR_SIDE_BY_SIDE: u16 = 80;
 
+/// Height of the Logs strip (borders included) kept visible under a
+/// fullscreen device pane, like the action pane below the main area.
+pub const LOG_STRIP_HEIGHT: u16 = 6;
+
+/// Minimum height of the main area for the Logs strip to appear under a
+/// fullscreen pane; below this the pane keeps the whole area.
+pub const MIN_HEIGHT_FOR_LOG_STRIP: u16 = 12;
+
+/// Split `area` into the pane area and the always-visible Logs strip:
+/// `(pane_area, Some(logs_area))` when the strip fits, `(area, None)`
+/// when the main area is too short.
+pub fn split_log_strip(area: Rect) -> (Rect, Option<Rect>) {
+    if area.height >= MIN_HEIGHT_FOR_LOG_STRIP {
+        let [pane_area, logs_area] =
+            Layout::vertical([Constraint::Fill(1), Constraint::Length(LOG_STRIP_HEIGHT)])
+                .areas(area);
+        (pane_area, Some(logs_area))
+    } else {
+        (area, None)
+    }
+}
+
 /// Wrap `text` to `width` the way the question block's `Paragraph`
 /// (`Wrap { trim: false }`) does, and return `(line_count, last_line_width)`.
 /// Hint-like text (with "   " separators) is wrapped token by token so a
@@ -425,7 +447,8 @@ pub fn render_users_panel(
 }
 
 /// Render panes based on the active pane.
-/// When a pane is active, it takes the full screen (full-screen mode).
+/// When a pane is active, it fills the area it is given (full-screen
+/// mode; the caller keeps the Logs strip visible below it).
 /// When several panels are visible at once (the Added pane and its Users
 /// sub-panel), the active one is marked with a double border; a lone
 /// full-screen panel keeps plain borders.
@@ -1173,6 +1196,69 @@ mod tests {
         assert_eq!(
             pos,
             Position::new(area.x + 1 + 2 + 3, area.y + 1 + question_lines as u16)
+        );
+    }
+
+    #[test]
+    fn log_strip_sits_at_the_bottom_of_the_main_area() {
+        let area = Rect::new(0, 0, 80, 30);
+        let (pane_area, logs_area) = split_log_strip(area);
+        let logs_area = logs_area.expect("strip should show at height 30");
+        assert_eq!(logs_area.height, LOG_STRIP_HEIGHT);
+        assert_eq!(pane_area.height, area.height - LOG_STRIP_HEIGHT);
+        assert_eq!(logs_area.y, pane_area.y + pane_area.height);
+        assert_eq!(logs_area.width, area.width);
+    }
+
+    #[test]
+    fn log_strip_is_dropped_when_the_main_area_is_too_short() {
+        let area = Rect::new(0, 0, 80, MIN_HEIGHT_FOR_LOG_STRIP - 1);
+        let (pane_area, logs_area) = split_log_strip(area);
+        assert!(logs_area.is_none());
+        assert_eq!(pane_area, area);
+    }
+
+    #[test]
+    fn fullscreen_pane_and_log_strip_render_side_by_side_without_overlap() {
+        let area = Rect::new(0, 0, 80, 24);
+        let (pane_area, logs_area) = split_log_strip(area);
+        let logs_area = logs_area.unwrap();
+        let log = vec!["hello".to_string(), "SECURITY something".to_string()];
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                render_all_panes(
+                    frame,
+                    pane_area,
+                    ActivePane::detected(),
+                    NavFocus::Detected,
+                    &[],
+                    None,
+                    &[],
+                    None,
+                    &log,
+                    0,
+                    &HashMap::new(),
+                    &HashMap::new(),
+                    &[],
+                    None,
+                );
+                render_log(frame, logs_area, &log, 0);
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer();
+        // The pane's bottom border sits right above the strip's top border.
+        assert_eq!(buf.cell((0, pane_area.bottom() - 1)).unwrap().symbol(), "└");
+        assert_eq!(buf.cell((0, logs_area.y)).unwrap().symbol(), "┌");
+        // The strip is titled "Logs".
+        assert_eq!(buf.cell((1, logs_area.y)).unwrap().symbol(), "L");
+        // A log line is visible inside the strip.
+        assert!(
+            buf.content()
+                .iter()
+                .any(|c| c.symbol() == "S" && c.fg == Color::Red),
+            "the SECURITY log line should be rendered in red"
         );
     }
 }
