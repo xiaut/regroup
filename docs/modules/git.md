@@ -136,9 +136,10 @@ ssh://<user>@<ip>:<port>/.regroup-config/git
 ```
 
 Where:
-- `<user>`: The device's SSH user, resolved from its configuration — a
-  temporary user added this run (interactive Users panel) or the first user
-  the device declared in `users/`; never announced on the network
+- `<user>`: The device's SSH user, resolved through the config proxy — a
+  temporary user (persisted at `tmp/devices/<name>/users/<user>.json`, purged
+  once the device declares the same user in `git/`) or a user the device
+  declared in `users/`; never announced on the network
 - `<ip>`: The device's IP address
 - `<port>`: The SSH port (default: 22)
 

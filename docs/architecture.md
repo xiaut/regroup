@@ -41,7 +41,7 @@ A **regroup** process does three things simultaneously:
 - Each device has its own directory: `devices/<name>/`
 - Decentralized: every device can push/pull from every other device
 - Last-writer-wins for conflict resolution
-- **Write isolation**: Each device only writes its own `device.json`; accepting a device adds a git remote and pulls its authoritative data
+- **Write isolation**: Each device only writes its own files into `git/`; accepting a device adds a git remote and pulls its authoritative data. Beacon-derived placeholders and temporary users go to the `tmp/` overlay and are never synced; they are purged once the authoritative files arrive in `git/` (see [Storage Rules](storage.md#configuration-proxy-the-tmp-overlay))
 
 ## Thread Model
 
@@ -69,7 +69,7 @@ Threads communicate via channels (MPSC for beacon notifications, UI events).
 ~/.regroup-config/
 ├── signing/
 │   └── private_key          # This device's Ed25519 signing key
-├── git/
+├── git/                     # Source of truth, synced with peers via git
 │   ├── .git/                # Git repository
 │   ├── settings.json        # Global settings (udp_port, wait_secs)
 │   └── devices/
@@ -79,6 +79,11 @@ Threads communicate via channels (MPSC for beacon notifications, UI events).
 │           │   └── <user>.json      # Known users on this device
 │           └── connections/
 │               └── <id>.json      # Connection files
+├── tmp/                     # Temporary overlay — never committed, never synced
+│   └── devices/<name>/      # not-yet-authoritative data about another device
+│       ├── device.json      #   e.g. placeholder for an accepted device
+│       └── users/
+│           └── <user>.json  #   e.g. temporary user pending confirmation
 └── .gitignore
 ```
 

@@ -247,10 +247,10 @@ Returns devices to show in the Added panel:
    actions go through the Users sub-panel (directional `Right` past the
    fullscreen Added panel) with a user selected
 2. Confirm deletion
-3. Remove device file from configuration
+3. Remove the device's files through the proxy (both the `git/` and `tmp/` layers)
 4. Remove SSH config Host block
 5. Remove git remote
-6. Remove from in-memory maps
+6. Refresh the in-memory maps from the merged proxy view
 
 ### Renaming Devices
 

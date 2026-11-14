@@ -29,8 +29,85 @@ Each device file contains:
 **Critical rule**: A device only writes inside `devices/<its own name>/`.
 
 - `users/` and `connections/` files are **never** written by peers
-- `device.json` is **only** written by the device itself
+- `device.json` in `git/` is **only** written by the device itself
 - This rule prevents concurrent modification conflicts and ensures data consistency
+- Data about *other* devices that this device is not authoritative for (e.g. the
+  beacon-derived placeholder created at acceptance time) never enters `git/` —
+  it goes to the `tmp/` overlay (see below) and is never synced
+
+## Configuration Proxy: the `tmp/` Overlay
+
+All configuration access goes through a proxy that merges two layers:
+
+- `~/.regroup-config/git/` — the git repository: **source of truth**, synced with peers
+- `~/.regroup-config/tmp/` — a plain directory (a sibling of `git/`, never inside
+  the repository, so it can never be committed, pushed, or pulled) holding
+  **temporary, not-yet-authoritative data**
+
+`tmp/` mirrors the `git/` layout (`tmp/devices/<name>/device.json`,
+`tmp/devices/<name>/users/<user>.json`, ...).
+
+**All state lives on disk**: `git/` + `tmp/` together are the complete
+configuration. In-memory structures (device list, user maps, ...) are only a
+cache of the merged proxy view, never a separate source of truth.
+
+### Write Rule
+
+- Authoritative data — this device's own `devices/<self>/` and `settings.json` —
+  is written to `git/` and synced, as before.
+- Temporary data about **other** devices is written to `tmp/` instead of `git/`:
+  - the placeholder `device.json` written from beacon data when a device is
+    accepted, before its authoritative file can be pulled
+    (`tmp/devices/<name>/device.json`)
+  - the temporary user added in the Users panel
+    (`tmp/devices/<name>/users/<user>.json`)
+
+### Read Rule (Merge)
+
+Reading the configuration merges the two layers per file:
+
+```
+effective = git/ ∪ (tmp/ − git/)
+```
+
+On overlap, `git/` wins: the `tmp/` copy is stale (its authoritative counterpart
+arrived via sync) and **must be removed**. `tmp/` therefore only ever contributes
+paths that do not exist in `git/` yet — it can never override synced data.
+
+### Purge Rule
+
+A `tmp/` file whose relative path also exists in `git/` is stale and is removed:
+
+- **lazily on read** (self-healing), and
+- **eagerly after each successful git sync** (keeps `tmp/` small even if nothing
+  reads that path).
+
+Purge is per file, not per directory: `tmp/devices/X/` keeps its non-overlapping
+files while `tmp/devices/X/device.json` is dropped once `git/devices/X/device.json`
+exists. Same for temporary users: `tmp/devices/X/users/alice.json` is dropped once
+`git/devices/X/users/alice.json` arrives via sync.
+
+### Delete Rule
+
+Removing a device (or any file) deletes the path in **both** layers — otherwise a
+stale `tmp/` placeholder would resurrect a removed device on the next read.
+
+### Concurrency
+
+regroup is multi-threaded (UI + beacon listener). A proxy read snapshots both
+layers and merges them in memory; the lazy purge runs under the same lock as the
+read that triggers it.
+
+### Placement & Permissions
+
+`tmp/` lives at `~/.regroup-config/tmp/` and is created with mode `0700` (it may
+hold not-yet-verified data).
+
+### No Migration
+
+Placeholder `device.json` files already committed in `git/` by older versions
+remain in place (source of truth) until the device's own file arrives via sync and
+wins last-writer-wins.
 
 ## Conflict Resolution
 

@@ -4,7 +4,12 @@ The `config` module handles configuration loading, validation, and storage.
 
 ## Overview
 
-This module manages the device configuration stored in the git repository at `~/.regroup-config/git/`. It provides types for devices, connections, users, and settings, along with functions to load, validate, and save configuration data.
+This module manages the device configuration stored under `~/.regroup-config/`. All access goes through a **proxy** that merges two layers:
+
+- `~/.regroup-config/git/` — the git repository, source of truth, synced with peers
+- `~/.regroup-config/tmp/` — temporary overlay for not-yet-authoritative data (beacon-derived placeholders, temporary users); never committed or synced
+
+Reads merge the layers as `git/ ∪ (tmp/ − git/)`: on overlap `git/` wins and the stale `tmp/` copy is purged (lazily on read, eagerly after each sync). Deletes apply to both layers. All state therefore lives on disk in `git/` + `tmp/`; in-memory structures are only a cache of this merged view. See [Storage Rules](../../storage.md#configuration-proxy-the-tmp-overlay).
 
 ## Module Structure
 
@@ -50,18 +55,20 @@ pub struct Conf {
 ## Storage Constants
 
 - `CONFIG_DIR`: `".regroup-config"`
-- `GIT_DIR`: `"git"`
-- Full config path: `$HOME/.regroup-config/git/`
+- `GIT_DIR`: `"git"` — source-of-truth repository: `$HOME/.regroup-config/git/`
+- `TMP_DIR`: `"tmp"` — temporary overlay: `$HOME/.regroup-config/tmp/` (never synced)
 
 ## Loading Process
 
 `load_config()` performs the following:
 
 1. Ensures the repository exists (creates it if not)
-2. Scans the `devices/` directory for device configurations
+2. Scans `devices/` **through the proxy**: merges `git/devices/` with `tmp/devices/`, where `git/` wins on overlap and overlapping `tmp/` files are purged
 3. Auto-creates a local device entry if not present
-4. Records the current user
-5. Loads settings from `settings.json`
+4. Records the current user in the local device's own `users/` (in `git/`);
+   a temporary user of another device is recorded under `tmp/` instead
+5. Loads settings from `settings.json` (in `git/`)
+6. Purges `tmp/` entries that are now present in `git/` (lazy purge) (in `git/`)
 
 ## Validation
 

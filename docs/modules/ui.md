@@ -237,7 +237,8 @@ The TUI interface uses **ratatui** (formerly tui-rs) with **crossterm** for term
   and `Left` returns to the device level. Device+user actions
   (install/remove SSH key) live there and only appear for a confirmed user;
   a temporary user only allows the git sync that brings the device's
-  declared users. See [navigation.md](../navigation.md).
+  declared users (the temporary user is stored under `tmp/`, never synced).
+  See [navigation.md](../navigation.md).
 - **Logs pane** (middle): General messages and logs
 - **Question block** (bottom): Current question and available actions
 
