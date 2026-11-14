@@ -101,6 +101,12 @@ scroll the content — the arrow cannot be used to zoom out anymore. This is
 where the fallback keys apply: **`Esc` is the only way to leave the
 fullscreen Logs panel** (collapse back to the dashboard).
 
+Every view of the Logs pane (overview, strip under a fullscreen device
+pane, fullscreen) shows the **tail** of the log — the newest lines on the
+pane's last row. Scrolling up exists only in the fullscreen Logs panel;
+leaving it does not carry the scroll over, so the other views always
+follow the tail.
+
 ### List selection
 
 Inside a fullscreen panel (devices, users, detected devices), `Up`/`Down`

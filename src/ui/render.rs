@@ -353,20 +353,35 @@ pub fn hint_spans(text: &str, key_flash: Option<&KeyFlash>) -> Line<'static> {
     Line::from(spans)
 }
 
-/// Logs pane: bottom-anchored log, shifted up by `scroll` lines.
-pub fn render_log(frame: &mut Frame, area: Rect, log: &[String], scroll: u16) {
-    let visible = area.height.saturating_sub(2) as usize;
+/// Lines to show in a log pane of `visible` content rows: the tail of
+/// `log`, shifted up by `scroll` lines. When the remaining lines are
+/// fewer than the pane, blank lines are prepended so the log is
+/// bottom-anchored and the newest line always sits on the pane's
+/// last row.
+pub(crate) fn log_lines(log: &[String], visible: usize, scroll: u16) -> Vec<Line<'static>> {
     let skip = log
         .len()
         .saturating_sub(visible + scroll as usize)
         .min(log.len());
-    let lines: Vec<Line> = log
-        .iter()
-        .map(|msg| Line::styled(msg.clone(), log_style(msg)))
-        .collect();
-    let paragraph = Paragraph::new(Text::from(lines))
-        .block(Block::bordered().title("Logs"))
-        .scroll((skip as u16, 0));
+    let shown = (log.len() - skip).min(visible);
+    let pad = visible - shown;
+    let mut lines = Vec::with_capacity(visible);
+    lines.extend(std::iter::repeat_n(Line::default(), pad));
+    lines.extend(
+        log.iter()
+            .skip(skip)
+            .take(shown)
+            .map(|msg| Line::styled(msg.clone(), log_style(msg))),
+    );
+    lines
+}
+
+/// Logs pane: the tail of the log, bottom-anchored, shifted up by
+/// `scroll` lines; see [`log_lines`].
+pub fn render_log(frame: &mut Frame, area: Rect, log: &[String], scroll: u16) {
+    let visible = area.height.saturating_sub(2) as usize;
+    let paragraph = Paragraph::new(Text::from(log_lines(log, visible, scroll)))
+        .block(Block::bordered().title("Logs"));
     frame.render_widget(paragraph, area);
 }
 
@@ -624,17 +639,8 @@ pub fn render_all_panes(
                 .border_style(logs_border_style);
 
             let visible = height.saturating_sub(2) as usize;
-            let skip = log
-                .len()
-                .saturating_sub(visible + log_scroll as usize)
-                .min(log.len());
-            let lines: Vec<Line> = log
-                .iter()
-                .map(|msg| Line::styled(msg.clone(), log_style(msg)))
-                .collect();
-            let logs_paragraph = Paragraph::new(Text::from(lines))
-                .block(logs_block)
-                .scroll((skip as u16, 0));
+            let logs_paragraph =
+                Paragraph::new(Text::from(log_lines(log, visible, log_scroll))).block(logs_block);
             frame.render_widget(logs_paragraph, area);
         }
         ActivePane::MainMenu(_) => {
@@ -809,17 +815,9 @@ pub fn render_all_panes(
                     .border_style(logs_border_style);
 
                 let visible = logs_area.height.saturating_sub(2) as usize;
-                let skip = log
-                    .len()
-                    .saturating_sub(visible + log_scroll as usize)
-                    .min(log.len());
-                let lines: Vec<Line> = log
-                    .iter()
-                    .map(|msg| Line::styled(msg.clone(), log_style(msg)))
-                    .collect();
-                let logs_paragraph = Paragraph::new(Text::from(lines))
-                    .block(logs_block)
-                    .scroll((skip as u16, 0));
+                let logs_paragraph =
+                    Paragraph::new(Text::from(log_lines(log, visible, log_scroll)))
+                        .block(logs_block);
                 frame.render_widget(logs_paragraph, logs_area);
             } else {
                 // Stacked layout for narrow terminals: Detected, Added, Logs
@@ -981,17 +979,9 @@ pub fn render_all_panes(
                     .border_style(logs_border_style);
 
                 let visible = logs_area.height.saturating_sub(2) as usize;
-                let skip = log
-                    .len()
-                    .saturating_sub(visible + log_scroll as usize)
-                    .min(log.len());
-                let lines: Vec<Line> = log
-                    .iter()
-                    .map(|msg| Line::styled(msg.clone(), log_style(msg)))
-                    .collect();
-                let logs_paragraph = Paragraph::new(Text::from(lines))
-                    .block(logs_block)
-                    .scroll((skip as u16, 0));
+                let logs_paragraph =
+                    Paragraph::new(Text::from(log_lines(log, visible, log_scroll)))
+                        .block(logs_block);
                 frame.render_widget(logs_paragraph, logs_area);
             }
         }
@@ -1260,5 +1250,67 @@ mod tests {
                 .any(|c| c.symbol() == "S" && c.fg == Color::Red),
             "the SECURITY log line should be rendered in red"
         );
+    }
+
+    fn line_text(l: &Line) -> String {
+        l.spans.iter().map(|s| s.content.as_ref()).collect()
+    }
+
+    fn log_of(n: usize) -> Vec<String> {
+        (0..n).map(|i| format!("line{i}")).collect()
+    }
+
+    #[test]
+    fn log_lines_shows_the_tail_when_the_log_is_longer_than_the_pane() {
+        let texts: Vec<String> = log_lines(&log_of(10), 4, 0).iter().map(line_text).collect();
+        assert_eq!(texts, ["line6", "line7", "line8", "line9"]);
+    }
+
+    #[test]
+    fn log_lines_is_bottom_anchored_when_the_log_is_shorter_than_the_pane() {
+        let texts: Vec<String> = log_lines(&log_of(2), 4, 0).iter().map(line_text).collect();
+        // Blank-padded at the top so the newest line is on the last row.
+        assert_eq!(texts, ["", "", "line0", "line1"]);
+    }
+
+    #[test]
+    fn log_lines_scroll_shifts_the_window_up_from_the_tail() {
+        let texts: Vec<String> = log_lines(&log_of(10), 4, 2).iter().map(line_text).collect();
+        assert_eq!(texts, ["line4", "line5", "line6", "line7"]);
+    }
+
+    #[test]
+    fn rendered_log_pane_puts_the_newest_line_on_the_last_content_row() {
+        let backend = TestBackend::new(40, 6);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| render_log(f, f.area(), &log_of(10), 0))
+            .unwrap();
+        let buf = terminal.backend().buffer();
+        let row_text = |y: u16| -> String {
+            (1..10u16)
+                .map(|x| buf.cell((x, y)).unwrap().symbol())
+                .collect()
+        };
+        // 6-row pane: border rows 0 and 5, content rows 1-4.
+        assert!(row_text(1).starts_with("line6"), "row1: {}", row_text(1));
+        assert!(row_text(4).starts_with("line9"), "row4: {}", row_text(4));
+    }
+
+    #[test]
+    fn rendered_log_pane_is_bottom_anchored_when_the_log_is_short() {
+        let backend = TestBackend::new(40, 6);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| render_log(f, f.area(), &log_of(1), 0))
+            .unwrap();
+        let buf = terminal.backend().buffer();
+        let row_text = |y: u16| -> String {
+            (1..8u16)
+                .map(|x| buf.cell((x, y)).unwrap().symbol())
+                .collect()
+        };
+        assert!(row_text(1).trim().is_empty(), "row1: {}", row_text(1));
+        assert!(row_text(4).starts_with("line0"), "row4: {}", row_text(4));
     }
 }
