@@ -134,6 +134,33 @@ pub fn host_name() -> String {
     "device".to_string()
 }
 
+/// Get the name of the user running this process.
+///
+/// USER/LOGNAME are not reliable: they are absent in some launch contexts
+/// (desktop launchers, systemd user units, cron, non-login `ssh host cmd`)
+/// and can be stale after `su` without `-`. Ask the OS for the effective
+/// user first (`whoami`), then fall back to the environment, and only then
+/// to "unknown" — a name that must never silently reach a connection ID
+/// like `unknown->user@host`.
+pub fn local_user() -> String {
+    if let Ok(o) = Command::new("whoami").output()
+        && o.status.success()
+    {
+        let name = String::from_utf8_lossy(&o.stdout).trim().to_string();
+        if !name.is_empty() {
+            return name;
+        }
+    }
+    for var in ["USER", "LOGNAME"] {
+        if let Ok(user) = env::var(var)
+            && !user.is_empty()
+        {
+            return user;
+        }
+    }
+    "unknown".to_string()
+}
+
 /// Get the local IP address
 pub fn my_ip() -> Option<String> {
     use std::net::UdpSocket;
@@ -310,4 +337,19 @@ pub fn get_local_interfaces() -> Vec<NetworkInterface> {
     }
 
     interfaces
+}
+
+#[cfg(test)]
+mod tests {
+    use super::local_user;
+
+    #[test]
+    fn local_user_resolves_a_real_name() {
+        let name = local_user();
+        assert!(!name.is_empty());
+        assert!(!name.chars().any(char::is_whitespace));
+        // The whole point of the OS-level lookup: never the silent fallback
+        // leaking into a connection ID like `unknown->user@host`.
+        assert_ne!(name, "unknown");
+    }
 }

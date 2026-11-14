@@ -253,8 +253,6 @@ pub fn get_local_device_name() -> String {
 
 /// Get the current user
 pub fn get_current_user() -> String {
-    std::env::var("USER").unwrap_or_else(|_| {
-        std::env::var("LOGNAME").unwrap_or_else(|_| "unknown".to_string())
-    })
+    crate::discovery::local_user()
 }
 
