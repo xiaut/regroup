@@ -154,9 +154,9 @@ impl Ui {
     /// function itself and the "press Enter to return" pause — direct
     /// output mode is on, so everything logged during the pass (by this
     /// function or by background threads) is printed to stdout and appears
-    /// in the CLI, while still being queued for the TUI pane so it reappears
-    /// there when the TUI resumes. The guard restores the previous mode
-    /// when the pass ends, even on panic.
+    /// in the CLI, while still being recorded in the one log stream, so the
+    /// full pass reappears in the Logs pane when the TUI resumes. The guard
+    /// restores the previous mode when the pass ends, even on panic.
     pub fn with_clean_terminal<F, R>(&mut self, f: F) -> R
     where
         F: FnOnce() -> R,
@@ -169,7 +169,7 @@ impl Ui {
 
                 // Direct output mode for the whole pass, until the TUI is
                 // re-initialized below: logs print to stdout immediately (and
-                // are still queued in the channel for the TUI pane)
+                // are still recorded in the channel for the Logs pane)
                 let _direct = crate::ui::DirectOutputGuard::new();
 
                 // Execute the function

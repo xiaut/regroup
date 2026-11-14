@@ -5,52 +5,10 @@
 use std::fs;
 use std::io;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Command;
 
-/// Run a git command and log its output.
-/// When in direct output mode (temporary CLI mode), stderr is passed through
-/// directly to allow interactive prompts (e.g., password) to work.
-fn quiet(mut cmd: Command) -> io::Result<std::process::Output> {
-    // Check if we're in direct output mode (temporary CLI mode from TUI)
-    let direct_mode = crate::ui::logging::is_direct_output_mode();
-    
-    // In direct mode, pass stderr through to terminal for interactive prompts
-    // In normal mode, capture stderr to log it
-    let stderr_config = if direct_mode {
-        Stdio::inherit()  // Pass through to terminal
-    } else {
-        Stdio::piped()    // Capture for logging
-    };
-    
-    // Always capture stdout
-    let output = cmd
-        .stdout(Stdio::piped())
-        .stderr(stderr_config)
-        .output()?;
-    
-    // Log stdout
-    if !output.stdout.is_empty() {
-        let stdout_str = String::from_utf8_lossy(&output.stdout);
-        for line in stdout_str.lines() {
-            if !line.is_empty() {
-                crate::ui::log(line);
-            }
-        }
-    }
-    
-    // In normal mode, stderr was captured - log it
-    // In direct mode, stderr was passed through - don't try to log it
-    if !direct_mode && !output.stderr.is_empty() {
-        let stderr_str = String::from_utf8_lossy(&output.stderr);
-        for line in stderr_str.lines() {
-            if !line.is_empty() {
-                crate::ui::log(line);
-            }
-        }
-    }
-    
-    Ok(output)
-}
+// Git commands run through crate::ui::run_logged, which puts their output
+// into the one log stream (see the comment in sync.rs).
 
 /// Check if a directory is a git repository
 pub fn is_git_repo(path: &Path) -> bool {
@@ -90,7 +48,7 @@ fn set_config(repo_path: &Path, key: &str, value: &str) {
         .arg("config")
         .arg(key)
         .arg(value);
-    let _ = quiet(cmd);
+    let _ = crate::ui::run_logged(cmd);
 }
 
 /// Initialize a git repository
@@ -103,13 +61,13 @@ pub fn git_init(repo_path: &Path) -> io::Result<()> {
         // atomically and pull/push operations hardcode "main".
         let mut cmd = Command::new("git");
         cmd.current_dir(repo_path).arg("init").arg("-b").arg("main");
-        let output = quiet(cmd);
+        let output = crate::ui::run_logged(cmd);
         if !output.is_ok_and(|o| o.status.success()) {
             // Fallback for git < 2.28: init with the default branch, then move
             // HEAD to main. Safe here: the repository has no commits yet.
             let mut cmd = Command::new("git");
             cmd.current_dir(repo_path).arg("init");
-            let output = quiet(cmd)?;
+            let output = crate::ui::run_logged(cmd)?;
             if !output.status.success() {
                 return Err(io::Error::other("git init failed"));
             }
@@ -118,7 +76,7 @@ pub fn git_init(repo_path: &Path) -> io::Result<()> {
                 .arg("symbolic-ref")
                 .arg("HEAD")
                 .arg("refs/heads/main");
-            let _ = quiet(cmd);
+            let _ = crate::ui::run_logged(cmd);
         }
     }
 

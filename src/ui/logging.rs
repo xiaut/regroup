@@ -1,7 +1,13 @@
 //! UI logging infrastructure.
 //!
-//! Provides functions for displaying messages through the UI, either in the
-//! activity pane (full-screen mode) or on stdout (plain mode).
+//! There is a single log stream: the UI channel, which the full-screen TUI
+//! shows in full in its Logs pane. [`log`] and [`log_device`] are its entry
+//! points: they always record into the stream and additionally print to
+//! stdout when there is no UI channel (startup, plain mode) or during a
+//! temporary CLI pass from the TUI (direct output mode) — so the CLI shows
+//! exactly the lines emitted during passes. [`record`] adds an event to the
+//! stream without printing, for output already shown live in the CLI during
+//! a pass (see [`crate::ui::subprocess::run_logged`]).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
@@ -67,15 +73,22 @@ pub const PULSE_MS: u64 = 900;
 /// Sender side of the log channel; unset until [`crate::ui::Ui::start`] creates it.
 pub static LOG_TX: OnceLock<Sender<UiEvent>> = OnceLock::new();
 
+/// Record an event in the one log stream (the UI channel when the
+/// full-screen ui runs) without printing it. Used for output that is
+/// already shown live in the CLI during a temporary CLI pass: it appears in
+/// the CLI now and in the TUI Logs pane when the TUI resumes.
+pub fn record(event: UiEvent) {
+    if let Some(tx) = LOG_TX.get() {
+        let _ = tx.send(event);
+    }
+}
+
 /// Display a general message: in the activity pane once the full-screen ui
 /// runs, on stdout otherwise. During a temporary CLI pass (direct output
-/// mode) the message is printed to stdout — it appears in the CLI — and
-/// still sent to the channel, so it also appears in the activity pane when
-/// the TUI resumes.
+/// mode) the message is also printed to stdout — it appears in the CLI —
+/// while still being recorded in the stream for the activity pane.
 pub fn log(msg: &str) {
-    if let Some(tx) = LOG_TX.get() {
-        let _ = tx.send(UiEvent::Global(msg.to_string()));
-    }
+    record(UiEvent::Global(msg.to_string()));
     if is_direct_output_mode() || LOG_TX.get().is_none() {
         println!("{msg}");
     }
@@ -94,15 +107,13 @@ pub fn log_device(
     msg: &str,
     detail: Option<&str>,
 ) {
-    if let Some(tx) = LOG_TX.get() {
-        let _ = tx.send(UiEvent::UiDevice {
-            key: key.as_str().to_string(),
-            name: name.to_string(),
-            level,
-            msg: msg.to_string(),
-            detail: detail.map(str::to_string),
-        });
-    }
+    record(UiEvent::UiDevice {
+        key: key.as_str().to_string(),
+        name: name.to_string(),
+        level,
+        msg: msg.to_string(),
+        detail: detail.map(str::to_string),
+    });
     if is_direct_output_mode() || LOG_TX.get().is_none() {
         match detail {
             Some(detail) => println!("{detail}"),
@@ -169,11 +180,25 @@ mod tests {
                 "msg",
                 Some("detail"),
             );
+
+            // External commands run through run_logged belong to the same
+            // stream: in direct mode their output is shown live in the CLI
+            // (pumped to stdout here) and recorded into the UI channel.
+            let mut echo = std::process::Command::new("echo");
+            echo.arg("pass-echo");
+            let out = crate::ui::run_logged(echo).expect("run echo");
+            assert!(out.status.success());
+            assert!(String::from_utf8_lossy(&out.stdout).contains("pass-echo"));
         }
         assert_eq!(is_direct_output_mode(), before);
 
-        // Outside the pass, logs go to the UI channel (TUI pane) only.
+        // Outside the pass, logs go to the UI channel (TUI pane) only, and
+        // run_logged captures the command output and logs it.
         log("to-pane");
+        let mut echo = std::process::Command::new("echo");
+        echo.arg("normal-echo");
+        let out = crate::ui::run_logged(echo).expect("run echo");
+        assert!(out.status.success());
 
         let received: Vec<UiEvent> = rx.try_iter().collect();
         assert!(
@@ -182,11 +207,19 @@ mod tests {
         );
         assert!(
             received.iter().any(|e| matches!(e, UiEvent::Global(m) if m == "to-cli")),
-            "in direct mode, log() must still be queued for the UI channel (tee)"
+            "in direct mode, log() must still be recorded in the UI channel (one stream)"
         );
         assert!(
             received.iter().any(|e| matches!(e, UiEvent::UiDevice { detail, .. } if detail.as_deref() == Some("detail"))),
-            "in direct mode, log_device() must still be queued for the UI channel (tee)"
+            "in direct mode, log_device() must still be recorded in the UI channel (one stream)"
+        );
+        assert!(
+            received.iter().any(|e| matches!(e, UiEvent::Global(m) if m == "pass-echo")),
+            "in direct mode, run_logged() must record the command output in the UI channel"
+        );
+        assert!(
+            received.iter().any(|e| matches!(e, UiEvent::Global(m) if m == "normal-echo")),
+            "outside direct mode, run_logged() must log the command output"
         );
     }
 }
