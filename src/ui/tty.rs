@@ -57,11 +57,7 @@ fn calculate_question_height(question: &Question, ctx: &QuestionCtx, width: u16)
         Question::AddDevice(def, name, ip) => {
             (
                 format!("Add {name} ({ip}) to config?"),
-                format!(
-                    "{}   [v] verbose: {}",
-                    modal_hint_text(def),
-                    if ctx.verbose { "on" } else { "off" }
-                ),
+                modal_hint_text(def),
             )
         }
         Question::TrustKey(def, name) => {
@@ -162,9 +158,6 @@ pub struct TtyUi {
     pub show_help: bool,
     /// Lines scrolled up from the bottom of the help panel; 0 follows it.
     pub help_scroll: u16,
-    /// Verbose mode: reported in the logs pane title and the status
-    /// hints. The interactive loop keeps it in sync with its own state.
-    pub verbose: bool,
     /// Animated per-device statuses, by SSH public key.
     pub flashes: HashMap<String, RowFlash>,
     /// Rows currently pulsing after a received beacon, by SSH public key.
@@ -478,7 +471,6 @@ impl TtyUi {
             users_selected,
             show_help,
             help_scroll,
-            verbose,
             active_pane,
             navigation,
             flashes,
@@ -496,7 +488,6 @@ impl TtyUi {
                 input,
                 pending: detected.len(),
                 help: *show_help,
-                verbose: *verbose,
                 active_pane: *active_pane,
                 navigation: *navigation,
                 confirmed_user,
@@ -532,7 +523,6 @@ impl TtyUi {
                     *added_selected,
                     log,
                     *log_scroll,
-                    *verbose,
                     flashes,
                     pulses,
                     users,
@@ -562,7 +552,6 @@ mod tests {
             input,
             pending: 0,
             help: false,
-            verbose: false,
             active_pane: ActivePane::main_menu(),
             navigation: Navigation {
                 focus: NavFocus::Center,

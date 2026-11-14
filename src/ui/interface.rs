@@ -45,7 +45,6 @@ impl Ui {
                 active_pane: ActivePane::main_menu(),
                 show_help: false,
                 help_scroll: 0,
-                verbose: false,
                 flashes: std::collections::HashMap::new(),
                 pulses: std::collections::HashMap::new(),
                 key_flash: None,
@@ -99,15 +98,6 @@ impl Ui {
         if let Ui::Tty(ui) = self {
             ui.users = users;
             ui.users_selected = selected;
-        }
-    }
-
-    /// Show the current verbose state: the logs pane title and the
-    /// status hints mention it (ignored in plain mode, where toggling is
-    /// reported through the log).
-    pub fn set_verbose(&mut self, verbose: bool) {
-        if let Ui::Tty(ui) = self {
-            ui.verbose = verbose;
         }
     }
 

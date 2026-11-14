@@ -19,7 +19,6 @@
 //                 ./regroup test           (dry run: nothing is modified)
 //                 ./regroup remove <name>  (remove a device)
 //                 ./regroup wipe [--yes]   (delete the whole configuration)
-//                 ./regroup -v             (verbose: toggle at runtime with 'v' in interactive mode)
 //                 ./regroup selftest       (external tools + ssh-keygen fingerprint checks)
 //                 ./regroup receive-install-key (internal: install SSH key on target device)
 //                 ./regroup receive-remove-key  (internal: remove SSH key from target device)
@@ -32,7 +31,6 @@
 //   w               - wipe the whole configuration (Enter confirms)
 //   i               - install SSH key to a device (first known device)
 //   r               - remove SSH key from a device (first outgoing connection)
-//   v               - toggle verbose mode (identity + git sync details in the activity log)
 //   ?               - show/hide the help panel (full-screen mode)
 //   q               - quit the program
 //
@@ -71,7 +69,6 @@ use ssh::public_key;
 fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
 
-    let mut verbose = false;
     let mut dry_run = false;
     let mut help = false;
     let mut selftest = false;
@@ -98,8 +95,6 @@ fn main() {
         let a = &args[i];
         if a == "test" {
             dry_run = true;
-        } else if a == "-v" || a == "--verbose" {
-            verbose = true;
         } else if a == "-h" || a == "--help" {
             help = true;
         } else if a == "selftest" {
@@ -324,7 +319,6 @@ fn main() {
             ssh_config: &ssh_config,
             dry_run,
             local_public_key: &local_public_key,
-            verbose,
             cli_mode,
             local_name: &local_name,
             local_ip: local_ip.as_deref(),

@@ -71,14 +71,11 @@ pub struct Context<'a> {
     pub dry_run: bool,
     /// This device's SSH server public key: its unique identifier.
     pub local_public_key: &'a SshPublicKey,
-    /// Initial verbose state (-v): extra information in the activity log;
-    /// the user can toggle it at runtime with 'v'.
-    pub verbose: bool,
     /// Force CLI mode (--cli): disable TUI and show all subprocess output.
     pub cli_mode: bool,
-    /// This device's hostname, for the verbose identity line.
+    /// This device's hostname, for the identity line.
     pub local_name: &'a str,
-    /// This device's IP, for the verbose identity line.
+    /// This device's IP, for the identity line.
     pub local_ip: Option<&'a str>,
 }
 
@@ -91,25 +88,23 @@ pub fn run(ctx: &Context, udp_port: u16, beacons: &Receiver<BeaconDevice>) -> us
     let mut tui = ui::Ui::start(ctx.cli_mode);
     let mut state = InteractiveState::new(ctx);
     ui::log(&format!("Listening for devices on UDP port {udp_port}..."));
-    // Verbose identity line: through ui::log so the full-screen ui shows it
+    // Identity line: through ui::log so the full-screen ui shows it
     // in the activity pane instead of losing it to the alternate screen.
-    if state.verbose {
-        let who = format!(
-            "{} / {}",
-            ctx.local_name,
-            ctx.local_ip.unwrap_or("unknown IP")
-        );
-        if ctx.local_public_key.is_empty() {
-            ui::log(&format!(
-                "  . this device: {who} (NO SSH SERVER - not announcing)"
-            ));
-        } else {
-            let key = ctx.local_public_key.as_str();
-            ui::log(&format!(
-                "  . this device: {who} (SSH key: {})",
-                &key[..16.min(key.len())]
-            ));
-        }
+    let who = format!(
+        "{} / {}",
+        ctx.local_name,
+        ctx.local_ip.unwrap_or("unknown IP")
+    );
+    if ctx.local_public_key.is_empty() {
+        ui::log(&format!(
+            "  - this device: {who} (NO SSH SERVER - not announcing)"
+        ));
+    } else {
+        let key = ctx.local_public_key.as_str();
+        ui::log(&format!(
+            "  - this device: {who} (SSH key: {})",
+            &key[..16.min(key.len())]
+        ));
     }
 
     loop {
@@ -218,7 +213,6 @@ pub fn run(ctx: &Context, udp_port: u16, beacons: &Receiver<BeaconDevice>) -> us
         tui.set_users(users, users_selected);
         tui.set_active_pane(state.active_pane);
         tui.set_navigation(state.navigation);
-        tui.set_verbose(state.verbose);
         tui.draw();
     }
     state.new_count
@@ -280,9 +274,6 @@ pub struct InteractiveState {
     users_selected: Option<String>,
     /// Machine waiting for the user to type a temporary user name.
     temp_user_pending: Option<String>,
-    /// Verbose mode: extra information in the activity log. Initialized
-    /// from the -v flag, toggled at runtime with 'v'.
-    verbose: bool,
     /// Devices accepted this run.
     new_count: usize,
 }
@@ -310,7 +301,6 @@ impl InteractiveState {
             temp_users: HashMap::new(),
             users_selected: None,
             temp_user_pending: None,
-            verbose: ctx.verbose,
             new_count: 0,
         };
         state.reload(ctx);
@@ -652,10 +642,10 @@ impl InteractiveState {
             Action::Sync => {
                 // Dry run must not modify anything: skip git sync
                 if ctx.dry_run {
-                    ui::log("  (dry run - git sync skipped)");
+                    ui::log("  - (dry run - git sync skipped)");
                 } else {
                     tui.with_clean_terminal(|| {
-                        sync_git(ctx.home, self.verbose, &self.temp_users);
+                        sync_git(ctx.home, &self.temp_users);
                         // A pull may have brought new device configs and
                         // the machine-declared users: reload
                         self.reload(ctx);
@@ -670,7 +660,7 @@ impl InteractiveState {
                     self.pending_keys.remove(&device.ssh_public_key);
                     // Device rejected, remember to not ask again
                     self.rejected_keys.insert(device.ssh_public_key);
-                    ui::log(&format!("  Skipped {}.", device.name));
+                    ui::log(&format!("  - Skipped {}.", device.name));
                 }
                 self.after_selection_change();
             }
@@ -689,7 +679,7 @@ impl InteractiveState {
                         Level::Success,
                         "new signing key trusted",
                         Some(&format!(
-                            "  + New signing key for {} trusted — its next beacon will be processed normally.",
+                            "  - New signing key for {} trusted — its next beacon will be processed normally.",
                             device.name.as_str()
                         )),
                     );
@@ -721,7 +711,7 @@ impl InteractiveState {
             }
             Action::DeleteMode => {
                 if ctx.dry_run {
-                    ui::log("  (dry run - device removal skipped)");
+                    ui::log("  - (dry run - device removal skipped)");
                 } else {
                     // Select the first deletable device, if any.
                     self.move_delete_selection(true);
@@ -777,7 +767,7 @@ impl InteractiveState {
             Action::DeleteCancel => self.delete_selection = None,
             Action::WipeMode => {
                 if ctx.dry_run {
-                    ui::log("  (dry run - wipe skipped)");
+                    ui::log("  - (dry run - wipe skipped)");
                 } else {
                     self.wipe_pending = true;
                 }
@@ -806,31 +796,23 @@ impl InteractiveState {
             }
             Action::SetupCdMode => {
                 if ctx.dry_run {
-                    ui::log("  (dry run - setup-cd skipped)");
+                    ui::log("  - (dry run - setup-cd skipped)");
                 } else {
                     self.setup_cd_pending = true;
                 }
             }
             Action::SetupCdCancel => self.setup_cd_pending = false,
-            Action::ToggleVerbose => {
-                self.verbose = !self.verbose;
-                ui::log(if self.verbose {
-                    "  . Verbose mode on — identity and git sync details in the activity log"
-                } else {
-                    "  . Verbose mode off"
-                });
-            }
             Action::SetupCdConfirm => {
                 self.setup_cd_pending = false;
                 match setup_cd(ctx.home) {
                     Ok(rc) => {
                         let file = rc.file_name().unwrap_or_default().to_string_lossy();
                         ui::log(&format!(
-                            "  + 'regroup-cd' installed in ~/{file} — run 'source ~/{file}' \
+                            "  - 'regroup-cd' installed in ~/{file} — run 'source ~/{file}' \
                              or open a new terminal, then use: regroup-cd"
                         ));
                     }
-                    Err(e) => ui::log(&format!("  ! could not install 'regroup-cd': {e}")),
+                    Err(e) => ui::log(&format!("  - could not install 'regroup-cd': {e}")),
                 }
             }
             // Plain mode only: the full-screen ui shows its help panel
@@ -964,7 +946,7 @@ impl InteractiveState {
             ));
         } else {
             ui::log(&format!(
-                "  ! Could not fully remove {} — see warnings",
+                "  - Could not fully remove {} — see warnings",
                 device.name
             ));
         }
@@ -1017,7 +999,7 @@ impl InteractiveState {
             let conflicts = find_name_conflicts(&device.name, ctx.home, ctx.ssh_config);
             let conflict_msg = format_name_conflicts(&conflicts);
             ui::log(&format!(
-                "  ! Name '{}' cannot be used: {}",
+                "  - Name '{}' cannot be used: {}",
                 device.name, conflict_msg
             ));
             self.rename_state = Some((device, suggested));
@@ -1066,7 +1048,7 @@ impl InteractiveState {
             let conflicts = find_name_conflicts(&name, ctx.home, ctx.ssh_config);
             let conflict_msg = format_name_conflicts(&conflicts);
             ui::log(&format!(
-                "  ! Name '{}' cannot be used: {}",
+                "  - Name '{}' cannot be used: {}",
                 name, conflict_msg
             ));
             self.rename_state = Some((device, suggested));
@@ -1194,11 +1176,11 @@ impl InteractiveState {
         };
         let name = name.trim().to_string();
         if name.is_empty() || name.contains('@') || name.contains('/') || name.contains(' ') {
-            ui::log("  ! A user name must be non-empty and contain no '@', '/' or space");
+            ui::log("  - A user name must be non-empty and contain no '@', '/' or space");
             return;
         }
         ui::log(&format!(
-            "  + Temporary user {name} on {device} (in memory only) — press 's' to sync and get the machine's declared users"
+            "  - Temporary user {name} on {device} (in memory only) — press 's' to sync and get the machine's declared users"
         ));
         self.temp_users.insert(device.clone(), name.clone());
         self.users_selected = Some(name);
@@ -1229,7 +1211,7 @@ impl InteractiveState {
         };
         if self.is_temporary_user(&target_name, &target_user) {
             ui::log(&format!(
-                "  ! {target_user} on {target_name} is temporary — sync git ('s') to get the machine's declared users first"
+                "  - {target_user} on {target_name} is temporary — sync git ('s') to get the machine's declared users first"
             ));
             return;
         }
@@ -1290,7 +1272,7 @@ impl InteractiveState {
         };
         if self.is_temporary_user(&target_name, &target_user) {
             ui::log(&format!(
-                "  ! {target_user} on {target_name} is temporary — no SSH key connection exists"
+                "  - {target_user} on {target_name} is temporary — no SSH key connection exists"
             ));
             return;
         }
@@ -1359,7 +1341,7 @@ impl InteractiveState {
         }) {
             ui::log(&format!("  - Removed {} (device file, ~/.ssh/config block, git remote)", device.name));
         } else {
-            ui::log(&format!("  ! Could not fully remove {} — see warnings", device.name));
+            ui::log(&format!("  - Could not fully remove {} — see warnings", device.name));
         }
         
         self.known_keys.remove(&key);

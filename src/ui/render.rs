@@ -137,8 +137,6 @@ pub struct QuestionCtx<'a> {
     pub pending: usize,
     /// Whether the help panel is shown.
     pub help: bool,
-    /// Verbose mode: mentioned in the hints.
-    pub verbose: bool,
     /// Which pane is currently active.
     pub active_pane: super::types::ActivePane,
     /// Current navigation state (focus + depth), drives the hint line.
@@ -333,9 +331,8 @@ pub fn hint_spans(text: &str, key_flash: Option<&KeyFlash>) -> Line<'static> {
     Line::from(spans)
 }
 
-/// Logs pane: bottom-anchored log, shifted up by `scroll` lines. While
-/// verbose mode is on, the pane's title says so.
-pub fn render_log(frame: &mut Frame, area: Rect, log: &[String], scroll: u16, verbose: bool) {
+/// Logs pane: bottom-anchored log, shifted up by `scroll` lines.
+pub fn render_log(frame: &mut Frame, area: Rect, log: &[String], scroll: u16) {
     let visible = area.height.saturating_sub(2) as usize;
     let skip = log
         .len()
@@ -345,9 +342,8 @@ pub fn render_log(frame: &mut Frame, area: Rect, log: &[String], scroll: u16, ve
         .iter()
         .map(|msg| Line::styled(msg.clone(), log_style(msg)))
         .collect();
-    let title = if verbose { "Logs — verbose" } else { "Logs" };
     let paragraph = Paragraph::new(Text::from(lines))
-        .block(Block::bordered().title(title))
+        .block(Block::bordered().title("Logs"))
         .scroll((skip as u16, 0));
     frame.render_widget(paragraph, area);
 }
@@ -379,14 +375,12 @@ pub fn render_help(frame: &mut Frame, area: Rect, scroll: u16) {
 pub fn log_style(msg: &str) -> Style {
     if msg.contains("SECURITY") || msg.contains("ERROR") {
         Style::new().fg(Color::Red)
-    } else if msg.starts_with("WARNING") || msg.starts_with("  !") {
+    } else if msg.starts_with("WARNING") {
         Style::new().fg(Color::Yellow)
     } else if msg.starts_with("[~]") {
         Style::new().fg(Color::Cyan)
     } else if msg.starts_with("[DRY RUN]") {
         Style::new().fg(Color::Magenta)
-    } else if msg.starts_with("  +") {
-        Style::new().fg(Color::Green)
     } else {
         Style::new()
     }
@@ -447,7 +441,6 @@ pub fn render_all_panes(
     added_selected: Option<usize>,
     log: &[String],
     log_scroll: u16,
-    verbose: bool,
     flashes: &HashMap<String, RowFlash>,
     pulses: &HashMap<String, Instant>,
     users: &[super::types::UiUser],
@@ -600,7 +593,7 @@ pub fn render_all_panes(
         }
         ActivePane::Logs(_) => {
             // Full-screen Logs pane
-            let logs_title = if verbose { "Logs — verbose" } else { "Logs" };
+            let logs_title = "Logs";
             let logs_border_style = Style::new().fg(Color::Cyan);
             let logs_block = Block::bordered()
                 .title(logs_title)
@@ -776,7 +769,7 @@ pub fn render_all_panes(
                 frame.render_widget(added_table, added_area);
 
                 // Render Logs pane
-                let logs_title = if verbose { "Logs — verbose" } else { "Logs" };
+                let logs_title = "Logs";
                 let logs_border_type = if logs_selected_focus {
                     BorderType::Double
                 } else {
@@ -948,7 +941,7 @@ pub fn render_all_panes(
                 frame.render_widget(added_table, added_area);
 
                 // Render Logs pane
-                let logs_title = if verbose { "Logs — verbose" } else { "Logs" };
+                let logs_title = "Logs";
                 let logs_border_type = if logs_selected_focus {
                     BorderType::Double
                 } else {
@@ -991,8 +984,6 @@ pub fn render_question(
     question: &super::types::Question,
     ctx: &QuestionCtx,
 ) -> Option<Position> {
-    // The status hints mention the verbose key with its current state.
-    let verbose_hint = format!("[v] verbose: {}", if ctx.verbose { "on" } else { "off" });
     let (title, border, question_line, hint_line) = if ctx.help
         && matches!(question, super::types::Question::Idle(_))
     {
@@ -1024,10 +1015,7 @@ pub fn render_question(
                 def.title,
                 Color::Yellow,
                 format!("Add {name} ({ip}) to config?"),
-                {
-                    let hint = format!("{}   {verbose_hint}", modal_hint_text(def));
-                    hint_spans(&hint, ctx.key_flash)
-                },
+                hint_spans(&modal_hint_text(def), ctx.key_flash),
             ),
             super::types::Question::TrustKey(def, name) => (
                 def.title,
@@ -1133,7 +1121,6 @@ mod tests {
             input,
             pending: 0,
             help: false,
-            verbose: false,
             active_pane: ActivePane::main_menu(),
             navigation: Navigation {
                 focus: NavFocus::Center,

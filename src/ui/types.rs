@@ -398,7 +398,6 @@ static LOGS_FULLSCREEN_KEYS: &[KeyBinding] = &[
     KeyBinding::internal(Down, "Down", "scroll"),
     KeyBinding::internal(PageUp, "PgUp", "scroll page"),
     KeyBinding::internal(PageDown, "PgDn", "scroll page"),
-    KeyBinding::new(Char('v'), "v", "verbose", Effect::Action(Action::ToggleVerbose)),
 ];
 
 /// Merge (key, description) pairs into Hints, joining keys that share
@@ -567,8 +566,6 @@ pub enum Action {
     SetupCdCancel,
     /// Enter connections management mode (key 'k').
     ConnectionsMode,
-    /// Toggle verbose mode on/off (key 'v').
-    ToggleVerbose,
     /// Install SSH key to the currently selected device in Added pane.
     InstallKeyToSelected,
     /// Remove SSH key from the currently selected device in Added pane.
@@ -642,7 +639,6 @@ pub static IDLE_QUESTION: QuestionDef = QuestionDef {
         KeyBinding::new(KeyCode::Char('w'), "w", "wipe", Effect::Action(Action::WipeMode)),
         KeyBinding::new(KeyCode::Char('c'), "c", "setup-cd", Effect::Action(Action::SetupCdMode)),
         KeyBinding::new(KeyCode::Char('k'), "k", "connections", Effect::Action(Action::ConnectionsMode)),
-        KeyBinding::new(KeyCode::Char('v'), "v", "verbose", Effect::Action(Action::ToggleVerbose)),
         KeyBinding::new(KeyCode::Char('h'), "h", "help", Effect::Action(Action::Help)),
         KeyBinding::new(KeyCode::Char('?'), "?", "help", Effect::Action(Action::Help)),
     ],
@@ -658,7 +654,6 @@ pub static ADD_DEVICE_QUESTION: QuestionDef = QuestionDef {
         KeyBinding::new(KeyCode::Char('w'), "w", "wipe", Effect::Action(Action::WipeMode)),
         KeyBinding::new(KeyCode::Char('c'), "c", "setup-cd", Effect::Action(Action::SetupCdMode)),
         KeyBinding::new(KeyCode::Char('k'), "k", "connections", Effect::Action(Action::ConnectionsMode)),
-        KeyBinding::new(KeyCode::Char('v'), "v", "verbose", Effect::Action(Action::ToggleVerbose)),
         KeyBinding::new(KeyCode::Char('?'), "?", "help", Effect::Action(Action::Help)),
     ],
 };
