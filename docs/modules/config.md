@@ -1,6 +1,8 @@
 # config Module
 
 The `config` module handles configuration loading, validation, and storage.
+It is a **library module** (`regroup::config`) in the target crate layout —
+shared by the binary's front-ends and any program embedding the library.
 
 ## Overview
 
@@ -96,7 +98,7 @@ The arrow indicates the direction of the connection from the perspective of the 
 ## Example Usage
 
 ```rust
-use crate::config::{load_config, Device};
+use regroup::config::{load_config, Device};
 
 let conf = load_config();
 for device in &conf.devices {

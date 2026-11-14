@@ -2,6 +2,12 @@
 
 The `ui` module provides the terminal user interface for interactive mode.
 
+> **Target of the upcoming refactor:** `ui` is a front-end of the **binary**
+> crate. The log sink (`log`, `log_device`, `pulse_device`, `restore`,
+> `Level`, `UiEvent`) moves to the library as `regroup::logging`
+> (`src/logging.rs`); `ui::mod` re-exports it and `ui::types` re-exports
+> `Level`/`UiEvent`, so call sites keep working.
+
 ## Overview
 
 This module implements two UI backends with the same interface:
@@ -14,14 +20,15 @@ The module automatically selects the appropriate backend based on whether stdout
 ## Module Structure
 
 ```
-ui/
-├── mod.rs          # Module root with public re-exports
-├── types.rs        # Public types: UiEvent, Level, Device, Question, Action
-├── logging.rs      # Logging functions: log, log_device, pulse_device, restore
-├── interface.rs    # Ui enum (Tty/Plain) with unified interface
-├── tty.rs          # TtyUi: full-screen ratatui implementation
-├── plain.rs        # PlainUi: line-based fallback implementation
-└── render.rs       # Rendering functions and styling utilities
+ui/                          # binary front-end
+├── mod.rs                   # Module root; re-exports regroup::logging
+├── types.rs                 # UI types; re-exports Level, UiEvent from regroup::logging
+├── interface.rs             # Ui enum (Tty/Plain) with unified interface
+├── tty.rs                   # TtyUi: full-screen ratatui implementation
+├── plain.rs                 # PlainUi: line-based fallback implementation
+└── render.rs                # Rendering functions and styling utilities
+
+logging.rs (src/logging.rs)  # library: the log sink itself (moved out of ui/)
 ```
 
 ## UI Selection
@@ -145,6 +152,9 @@ pub enum Action {
 ```
 
 ## Logging Functions
+
+These live in the library (`regroup::logging`, `src/logging.rs`) and are
+re-exported by `ui`:
 
 ### `log()`
 
@@ -352,7 +362,9 @@ The UI uses color and styling to convey information:
 
 ## Help Panel
 
-Press `?` to show the help panel, which displays the CLI usage text with section headers in bold. Use `Up/Down/PgUp/PgDn` to scroll, `?` or `Esc` to close.
+Press `?` to show the help panel, which displays the help text
+(`ops::help::usage_text` — interactive commands only, no CLI subcommands) with
+section headers in bold. Use `Up/Down/PgUp/PgDn` to scroll, `?` or `Esc` to close.
 
 ## Logging
 

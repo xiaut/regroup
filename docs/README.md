@@ -8,6 +8,13 @@ This directory contains the technical documentation for the **regroup** project.
 
 Configuration is stored in `~/.regroup-config/git/` (a git repository) where each device owns a directory under `devices/<name>/` holding its state and lists.
 
+> **Target of an upcoming refactor:** these docs describe the target
+> architecture — a `regroup` library crate with a UI-agnostic feature layer
+> (`ops`), plus a thin binary that keeps the TUI and the internal `receive-*`
+> subcommands while the full CLI subcommands are dropped. Where the current
+> code differs, the docs win; the code is being migrated to them (same
+> convention as [Navigation](navigation.md)).
+
 ## Documentation Structure
 
 | Document | Description |
@@ -21,12 +28,22 @@ Configuration is stored in `~/.regroup-config/git/` (a git repository) where eac
 
 ### Modules
 
+Library crate (`regroup`, `src/lib.rs`):
+
+- `logging` — UI-agnostic global log sink shared by every layer
 - [config](modules/config.md) — Configuration types, loading, validation
 - [discovery](modules/discovery.md) — Beacon format, signing, verification
 - [git](modules/git.md) — Repository management, sync, remotes
 - [ssh](modules/ssh.md) — SSH key handling, known_hosts verification
+- [ops](modules/ops.md) — The feature layer: every capability, UI-agnostic
+  (devices, sync, keys, shell, selftest, help)
+
+Binary crate (`src/main.rs`) front-ends:
+
+- [internal](modules/internal.md) — `receive-*` subcommands run over SSH by the key actions
 - [ui](modules/ui.md) — Terminal UI (TUI and plain fallback)
 - [interactive](modules/interactive.md) — Main loop, state management
+- `tui` — Key actions, connections browser
 
 ## Quick Links
 

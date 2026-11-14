@@ -2,11 +2,16 @@
 
 The `interactive` module contains the main interactive loop and state management.
 
+> **Target of the upcoming refactor:** `interactive` is a front-end of the
+> **binary** crate (`src/main.rs`); it calls the features in the library's
+> `regroup::ops` layer (device add/remove/wipe, sync, setup-cd, help text)
+> instead of owning them in a `cli` module.
+
 ## Overview
 
 This module is the heart of regroup's interactive mode. It listens for verified beacons, handles user input, and manages the pending device queue, signing key rotation prompts, and rename prompts.
 
-All decisions that affect what is written to disk live in this module.
+All decisions that affect what is written to disk live in this module; the writes themselves are performed by `ops`.
 
 ## Module Structure
 
@@ -27,12 +32,15 @@ Per-run context shared by every branch of the interactive loop:
 pub struct Context<'a> {
     pub home: &'a str,                  // User's home directory
     pub ssh_config: &'a Path,           // Path to ~/.ssh/config
-    pub dry_run: bool,                  // If true, no modifications
+    pub dry_run: bool,                  // If true, no modifications (front-end capability, no binary flag)
     pub local_public_key: &'a SshPublicKey, // This device's SSH key
     pub local_name: &'a str,            // This device's hostname
     pub local_ip: Option<&'a str>,       // This device's IP
 }
 ```
+
+The UI backend (full-screen vs plain) is auto-detected from stdout in the
+target interface; there is no `--cli` flag anymore.
 
 ## Main Loop
 
@@ -171,7 +179,7 @@ Returns devices to show in the Added panel:
 | Action | Behavior |
 |--------|----------|
 | `Quit` | Return true to exit loop |
-| `Sync` | Run `sync_git()` and reload state |
+| `Sync` | Run `ops::sync::sync_git()` and reload state |
 | `Add` | Accept selected device from Detected panel |
 | `Ignore` | Reject selected device from Detected panel |
 | `AddCurrent` | Accept front of pending queue (plain mode) |
@@ -220,7 +228,7 @@ Returns devices to show in the Added panel:
 
 | Action | Behavior |
 |--------|----------|
-| `Help` | Show CLI help text |
+| `Help` | Show the help text (`ops::help::usage_text`) |
 
 ## Device Management
 
@@ -230,7 +238,7 @@ Returns devices to show in the Added panel:
 2. Check if name is already taken
    - If yes: prompt for new name (rename_state)
    - If no: proceed to add
-3. Add device to configuration via `add_device_to_config()`
+3. Add device to configuration via `ops::devices::add_device_to_config()`
 4. Pin the signing key
 5. Add to known_keys and key_to_device maps
 6. Record IP in known_ip
@@ -255,14 +263,14 @@ Returns devices to show in the Added panel:
 ### Renaming Devices
 
 1. Device name collision detected
-2. Generate unique suggestion with `unique_device_name()`
+2. Generate unique suggestion with `ops::devices::unique_device_name()`
 3. Prompt user for new name
 4. If name is also taken, generate new suggestion
 5. Add device with new name
 
 ## Wipe Configuration
 
-`wipe_config()`:
+`ops::devices::wipe()` (returns `Result<(), String>`):
 - Removes entire `.regroup-config` directory
 - Removes all regroup-managed Host blocks from `~/.ssh/config`
 - Cleans up the known_hosts entries of the last known IPs (recorded in
@@ -273,7 +281,7 @@ Returns devices to show in the Added panel:
 
 ## Git Sync
 
-`sync_git()`:
+`ops::sync::sync_git()`:
 - Pulls from all configured remotes
 - Pushes to all configured remotes
 - Logs the result of each pull/push (see [Logging policy](../logging.md))
@@ -286,6 +294,10 @@ When `ctx.dry_run` is true:
 - No git operations performed
 - Actions are logged but not executed
 - Useful for testing without side effects
+
+In the target interface there is no `regroup test` flag: dry run is a
+`Context` capability that front-ends and tests can enable, not a binary
+subcommand.
 
 ## Utility Functions
 

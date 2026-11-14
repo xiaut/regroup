@@ -1,5 +1,63 @@
 # Architecture
 
+> **Target of the upcoming refactor.** This page describes the target crate
+> layout, layering, and interfaces. The current code is still a single binary
+> crate with a `cli` module and the full CLI subcommands; it is being migrated
+> to the structure described here (same convention as
+> [Navigation](navigation.md): the docs are the spec, the code follows).
+
+## Crate Layout and Layering (target)
+
+The package builds **two crates from the same source tree**:
+
+- **`regroup` library** (`src/lib.rs`) — everything reusable, with no
+  terminal front-end:
+  - `logging` — the UI-agnostic global log sink (`log`, `log_device`,
+    `pulse_device`, `restore`, direct-output mode, `Level`/`UiEvent`).
+    Until a front-end installs its own sink, messages go to stdout.
+  - `config`, `discovery`, `git`, `ssh`, `signing` — the data and protocol
+    layers, reporting through `logging`.
+  - `ops` — the **feature layer**: every user-facing capability, callable
+    from the TUI, from a future CLI, or from any Rust program embedding the
+    library (see [modules/ops.md](modules/ops.md)). `ops` never depends on a
+    front-end and never calls `process::exit`: it reports through `logging`
+    and returns `Result`s.
+
+- **`regroup` binary** (`src/main.rs`, thin) — argument dispatch, app wiring
+  (identity, beacon threads), and the front-ends:
+  - `internal` — the `receive-install-key` / `receive-remove-key`
+    subcommands, run on the target device over SSH by the key actions (see
+    [modules/internal.md](modules/internal.md)).
+  - `ui`, `tui`, `interactive` — the terminal front-end (full-screen TUI with
+    automatic plain fallback, key actions, main loop).
+
+Dependency direction is strictly downward:
+
+```
+main.rs (binary)
+ └── internal, ui, tui, interactive     front-ends
+      └── ops                         features
+           └── logging, config, discovery, git, ssh, signing
+```
+
+## Interfaces (target)
+
+- `regroup` with **no arguments** starts the interactive TUI. When stdout is
+  not a terminal, the plain line-based fallback is selected automatically.
+- The full CLI subcommands — `test`, `remove <name>`, `wipe [--yes]`,
+  `setup-cd`, `selftest`, and the `-h` / `--cli` / `--yes` flags — are
+  **dropped from the binary**. Their logic lives on in the library:
+  `ops::devices::{remove_device, remove_local_traces, wipe}`,
+  `ops::shell::setup_cd`, `ops::selftest::run` (returns a report instead of
+  exiting), and dry-run remains a capability of the interactive front-end
+  (`Context::dry_run`), e.g. for tests. Help is shown in the TUI with `?`.
+- `regroup receive-install-key ...` and `regroup receive-remove-key ...`
+  remain as **internal** subcommands: they are executed on the target device
+  via `ssh user@device regroup receive-...` by the TUI key actions, and are
+  not meant for direct use.
+- Exit codes: `0` normal exit, `2` configuration or environment error
+  (internal subcommands: `0` success, `1` handler error).
+
 ## Big Picture
 
 A **regroup** process does three things simultaneously:

@@ -172,23 +172,29 @@ Devices announce themselves via signed UDP beacons; regroup listens for them
 continuously and prompts for each new device.
 
 Usage:
-  ./regroup                continuous interactive mode, update ~/.ssh/config
-  ./regroup test           dry run: nothing is modified
-  ./regroup remove <name>  remove a device (device dir, ~/.ssh/config block, git remote)
-  ./regroup wipe [--yes]   delete the entire regroup configuration
-  ./regroup selftest       built-in checks (external tools, ssh-keygen fingerprint)
-  ./regroup setup-cd       install 'regroup-cd' shell function to change to config directory
-  ./regroup -h             this help
+  ./regroup    continuous interactive mode (full-screen TUI; plain line-based
+               fallback when output is piped)
 
-Interactive commands (full-screen mode):
-  Up/Dn           - select a device in the Detected panel
-  Enter/y         - add the selected device (it moves to the Added panel)
-  n               - ignore the selected device (its beacons are ignored this run)
+Internal subcommands (run on a target device via SSH by regroup itself when
+installing/removing an SSH key — not for direct use):
+  ./regroup receive-install-key --source-user ... --source-device ... --public-key ... --connection-id ...
+  ./regroup receive-remove-key  --connection-id ...
+
+Interactive commands (full-screen mode; see docs/navigation.md):
+  Up/Down/Left/Right - walk the panels: overview → panel selected → fullscreen
+                       → Users sub-panel (Right), back (Left); in a list,
+                       Up/Down move the selection (wrapping)
+  Enter/Esc       - one level deeper / back (always available)
+  a / n           - (Detected) add / ignore the selected device
+  i / r           - (Users, confirmed user) install / remove an SSH key to user@device
+  a / x           - (Users) add / remove a temporary user (in memory only)
+  Enter/y         - confirm (add device, delete, wipe, rename)
+  d               - delete the selected device (Enter confirms, Esc cancels)
   s               - sync git (pull from remotes, push to remotes)
-  d               - delete a known device (select in the Added panel, Enter confirms, Esc cancels)
   w               - wipe the whole configuration and quit (Enter confirms, Esc cancels)
   c               - install the 'regroup-cd' shell function (Enter confirms, Esc cancels)
-  PgUp/PgDn       - scroll the Logs panel
+  PgUp/PgDn       - scroll the activity log
+  ?               - show/hide the help panel
   q               - quit the program
 
 Config repository structure (~/.regroup-config/git/):
@@ -201,9 +207,32 @@ Config repository structure (~/.regroup-config/git/):
 
 Exit codes:
   0  normal exit
-  1  selftest failure
   2  configuration or environment error
+  (internal receive-* subcommands: 0 success, 1 error)
 ```
+
+> Target interface of the upcoming refactor (see
+> [docs/architecture.md](docs/architecture.md)): the former subcommands
+> (`test`, `remove <name>`, `wipe`, `setup-cd`, `selftest`) and the `-h` /
+> `--cli` flags are dropped from the binary — their features live in the
+> `regroup` library (`regroup::ops`). Until the refactor lands, the current
+> binary still accepts them.
+
+## Library
+
+regroup is also a Rust library crate (`regroup`, `src/lib.rs`). All features
+live in the UI-agnostic `ops` layer and can be driven from the TUI, a CLI, or
+any Rust program:
+
+```rust
+use regroup::ops;
+
+let report = ops::selftest::run();                              // environment checks
+ops::sync::sync_git(&home, &std::collections::HashMap::new());  // sync all git remotes
+```
+
+See [docs/architecture.md](docs/architecture.md) and
+[docs/modules/ops.md](docs/modules/ops.md).
 
 ## Configuration Structure
 
@@ -322,15 +351,16 @@ Fields:
 ### Removing devices
 
 ```bash
-# Interactive mode: press d, select a device with arrow keys, Enter confirms, Esc cancels
+# Interactive mode: press d, select a device, Enter confirms, Esc cancels
 ./regroup
 
-# From the command line
-./regroup remove <name>
-
-# Delete the whole configuration (device dirs, git repo, ~/.ssh/config blocks)
-./regroup wipe --yes
+# Wipe the whole configuration (device dirs, git repo, ~/.ssh/config blocks):
+# press w, then Enter to confirm
+./regroup
 ```
+
+(In the target interface there are no `remove` / `wipe` subcommands; the logic
+is available to programs via `regroup::ops::devices::{remove_device, wipe}`.)
 
 Removing a device deletes its device directory (committed, so the removal
 propagates to other devices on the next git sync), its `~/.ssh/config`
@@ -340,7 +370,7 @@ local cleanup automatically when they sync. A removed device that is
 still online will be proposed again as a new device: removing means
 forgetting, not banning.
 
-`regroup wipe` does not touch `~/.ssh/known_hosts` (past IPs are not
+Wiping does not touch `~/.ssh/known_hosts` (past IPs are not
 recorded) and is handy for testing a fresh setup.
 
 ### Adding a device manually

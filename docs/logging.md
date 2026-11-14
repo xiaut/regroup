@@ -1,14 +1,17 @@
 # Logging Policy
 
 This page defines what regroup logs and when. It applies to every code path:
-interactive TUI, plain fallback, and CLI subcommands.
+the interactive TUI, its plain fallback, the internal `receive-*`
+subcommands, and any future front-end (CLI or library consumer), which all
+report through the same `regroup::logging` sink.
 
 ## Principles
 
 - **There is no verbose mode.** No `-v` flag, no `v` key toggle. Information the
   user needs is always logged; nothing important is hidden behind a flag.
 - Logs go to the **Logs pane** in the full-screen TUI (kept up to `LOG_CAP`
-  entries) and to **stdout** in plain mode, CLI mode, or before the UI starts.
+  entries) and to **stdout** in plain mode, before the UI starts, or from a
+  front-end that installs no sink of its own (library use).
   Device-specific messages go through `log_device()` with a `Level`
   (`Info` / `Success` / `Warning` / `Security`); security messages additionally
   appear in the Logs pane and flash longer so they cannot be missed.
@@ -36,8 +39,9 @@ includes at least:
   standard files, falling back to `ssh-keyscan` on localhost; no local network
   interfaces; cannot bind the announce socket; device has no SSH server and
   will not announce.
-- **Dry-run skips** — every action not executed because of `regroup test` is
-  logged as `  - (dry run - ... skipped)` or `[DRY RUN] ...`.
+- **Dry-run skips** — every action not executed because the front-end runs
+  with `dry_run` enabled is logged as `  - (dry run - ... skipped)` or
+  `[DRY RUN] ...`.
 - **Skipped or rejected work** — e.g. `  - Skipped <name>.` when the user
   ignores a device; beacons ignored for the rest of the run.
 - **Warnings** — config validation problems, beacon signing failures — prefixed
