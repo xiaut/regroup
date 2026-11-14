@@ -26,6 +26,10 @@
 //! read snapshots both layers and the lazy purge runs under the same lock
 //! as the read that triggers it (regroup is multi-threaded: UI + beacon
 //! listener).
+//!
+//! The overlay is mandatory: tmp writes re-create `tmp/` when it vanished
+//! mid-run (and restore mode 0700) and otherwise fail loudly — the caller
+//! crashes with the reason.
 
 use std::collections::HashSet;
 use std::fs;
@@ -65,6 +69,28 @@ pub fn ensure_tmp_dir(root: &Path) -> io::Result<PathBuf> {
         let _ = fs::set_permissions(&dir, fs::Permissions::from_mode(0o700));
     }
     Ok(dir)
+}
+
+/// Write `path` inside the `tmp/` overlay, making sure the overlay exists
+/// first. Re-creating `tmp/` fixes transient `NotFound` errors (the
+/// overlay was removed while the process was running), so the write is
+/// retried once after re-creating it; any other error is returned to the
+/// caller — the overlay is mandatory, the caller crashes with the reason.
+fn write_tmp_file(root: &Path, path: &Path, write: impl Fn(&Path) -> io::Result<()>) -> io::Result<()> {
+    ensure_tmp_dir(root)?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    match write(path) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            ensure_tmp_dir(root)?;
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            write(path)
+        }
+        result => result,
+    }
 }
 
 /// Path of `rel` inside the git layer.
@@ -283,10 +309,7 @@ pub fn tmp_device_file(root: &Path, name: &str) -> PathBuf {
 /// the path written.
 pub fn write_tmp_device_file(root: &Path, name: &str, device: &Device) -> io::Result<PathBuf> {
     let path = tmp_device_file(root, name);
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    save_device_file(&path, device)?;
+    write_tmp_file(root, &path, |p| save_device_file(p, device))?;
     Ok(path)
 }
 
@@ -320,15 +343,13 @@ pub fn tmp_user_file(root: &Path, device: &str, user: &str) -> PathBuf {
 /// the device declares the same user in `git/`. Returns the path written.
 pub fn write_tmp_user_file(root: &Path, device: &str, user: &str) -> io::Result<PathBuf> {
     let path = tmp_user_file(root, device, user);
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
     let entry = DeviceUser::new(user, &chrono::Utc::now().to_rfc3339());
     let value = serde_json::json!({
         "name": entry.name,
         "first_seen": entry.first_seen,
     });
-    fs::write(&path, serde_json::to_string_pretty(&value)?)?;
+    let text = serde_json::to_string_pretty(&value)?;
+    write_tmp_file(root, &path, |p| fs::write(p, &text))?;
     Ok(path)
 }
 
@@ -499,6 +520,40 @@ mod tests {
         let effective = device_file(&root, "laptop").unwrap();
         assert_eq!(effective, git_device, "git/ wins once present");
         assert!(!path.exists(), "stale tmp/ placeholder purged on read");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn tmp_write_recreates_a_removed_overlay() {
+        let root = temp_root("recreate");
+        ensure_tmp_dir(&root).unwrap();
+        write_tmp_user_file(&root, "laptop", "alice").unwrap();
+
+        // The overlay vanished mid-run (e.g. another instance wiped the
+        // config): the write must re-create it, with mode 0700, and succeed.
+        fs::remove_dir_all(root.join(TMP_DIR)).unwrap();
+        write_tmp_user_file(&root, "laptop", "bob").unwrap();
+        let dir = root.join(TMP_DIR);
+        assert!(dir.is_dir(), "overlay re-created");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&dir).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o700, "re-created overlay must be 0700");
+        }
+        assert!(root.join("tmp/devices/laptop/users/bob.json").exists());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn tmp_write_error_propagates_when_the_overlay_cannot_exist() {
+        let root = temp_root("blocked");
+        // `tmp` exists as a regular file: the overlay can neither be created
+        // nor written — the error must reach the caller (which crashes with
+        // the reason) instead of being swallowed.
+        fs::write(root.join(TMP_DIR), "not a directory").unwrap();
+        assert!(write_tmp_user_file(&root, "laptop", "alice").is_err());
+        assert!(write_tmp_device_file(&root, "laptop", &sample_device("laptop")).is_err());
         let _ = fs::remove_dir_all(&root);
     }
 }

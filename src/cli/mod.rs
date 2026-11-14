@@ -455,8 +455,10 @@ pub fn add_device_to_config(
     // of git/ and is purged automatically once the device's authoritative
     // device.json arrives in git/ through a sync.
     if let Err(e) = crate::config::proxy::write_tmp_device_file(&root, name, &placeholder_device) {
-        warn(&format!("could not save placeholder device config for {}: {}", name, e));
-        return None;
+        die(&format!(
+            "cannot save the placeholder device config for {name} in {}: {e}",
+            root.join(crate::config::TMP_DIR).display()
+        ));
     }
 
     if update_ssh_config(ssh_config, name, &device.ip, &placeholder_device) {

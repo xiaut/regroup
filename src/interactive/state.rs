@@ -17,7 +17,7 @@ use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::Duration;
 
 use crate::cli::{NameConflict,
-    add_device_to_config, device_name_taken, find_name_conflicts, remove_device, remove_local_traces, setup_cd,
+    add_device_to_config, device_name_taken, die, find_name_conflicts, remove_device, remove_local_traces, setup_cd,
     shell_rc_file, sync_git, trust_new_signing_key, unique_device_name, usage,
     wipe as wipe_config,
 };
@@ -1132,16 +1132,6 @@ impl InteractiveState {
                 });
             }
         }
-        // Fallback: a temporary user added this run whose tmp/ write failed
-        // (kept in memory only).
-        if let Some(temp) = self.temp_users.get(name)
-            && !users.iter().any(|u| u.name == *temp)
-        {
-            users.push(UiUser {
-                name: temp.clone(),
-                status: UserStatus::Temporary,
-            });
-        }
         users
     }
 
@@ -1190,17 +1180,19 @@ impl InteractiveState {
             return;
         }
         // Persist in the tmp/ overlay: never committed, never synced, purged
-        // once the device declares the same user in git/. If the write
-        // fails, keep it in memory for this run only.
+        // once the device declares the same user in git/. The overlay is
+        // mandatory — if the write fails (even after re-creating it), crash
+        // with the reason.
         let root = root_config_dir(ctx.home);
-        match crate::config::proxy::write_tmp_user_file(&root, &device, &name) {
-            Ok(_) => ui::log(&format!(
-                "  - Temporary user {name} on {device} (kept in tmp/ until the device declares it) — press 's' to sync and get the device's declared users"
-            )),
-            Err(e) => ui::log(&format!(
-                "  - Temporary user {name} on {device} kept in memory only (could not persist to tmp/: {e}) — press 's' to sync"
-            )),
+        if let Err(e) = crate::config::proxy::write_tmp_user_file(&root, &device, &name) {
+            die(&format!(
+                "cannot persist temporary user {name} on {device} in {}: {e}",
+                root.join(crate::config::TMP_DIR).display()
+            ));
         }
+        ui::log(&format!(
+            "  - Temporary user {name} on {device} (kept in tmp/ until the device declares it) — press 's' to sync and get the device's declared users"
+        ));
         self.temp_users.insert(device.clone(), name.clone());
         self.users_selected = Some(name);
     }
@@ -1216,7 +1208,10 @@ impl InteractiveState {
             // git/ copy would mean the device declared the same user).
             let root = root_config_dir(ctx.home);
             if let Err(e) = crate::config::proxy::delete_user(&root, &device, &user) {
-                ui::log(&format!("  - could not remove the temporary user file: {e}"));
+                die(&format!(
+                    "cannot remove the temporary user file for {user} on {device} in {}: {e}",
+                    root.join(crate::config::TMP_DIR).display()
+                ));
             }
             self.temp_users.remove(&device);
             self.users_selected = None;
