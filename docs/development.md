@@ -209,6 +209,10 @@ foo.rs → foo/mod.rs + foo/one.rs + foo/two.rs
 - Use `ui::log()` for general messages
 - Use `ui::log_device()` for device-specific messages
 - Include context in log messages
+- There is no verbose mode. Follow the [Logging policy](logging.md): log a
+  line just before any operation that may prompt for a password, and log
+  every non-standard path (fallbacks, dry-run skips, warnings, errors,
+  security events, no-ops)
 
 ### Git Commits
 
@@ -272,21 +276,13 @@ src/
 
 ## Debugging
 
-### Verbose Mode
-
-Run with `-v` or `--verbose` flag:
-```bash
-cargo run -- -v
-```
-
-Or toggle at runtime with `v` key in interactive mode.
-
 ### Logging
 
 All UI messages appear in the Logs pane. For debugging:
 - Check the Logs pane for warning and error messages
 - Security messages are highlighted in red
-- Use verbose mode for additional details
+- There is no verbose mode; see the [Logging policy](logging.md) for what
+  must be logged and when
 
 ### Dry Run
 

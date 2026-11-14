@@ -15,6 +15,7 @@ Configuration is stored in `~/.regroup-config/git/` (a git repository) where eac
 | [Architecture](architecture.md) | Big picture, data flow, how regroup works |
 | [Navigation](navigation.md) | TUI navigation model: Esc/arrows/Enter context hierarchy |
 | [Storage Rules](storage.md) | Configuration structure, write ownership, conflict resolution |
+| [Logging Policy](logging.md) | What is logged and when: no verbose mode, password-prompt and non-standard-path rules |
 | [Modules](modules/) | Module-specific documentation |
 | [Development](development.md) | Coding rules, conventions, build & test |
 
@@ -38,7 +39,3 @@ Configuration is stored in `~/.regroup-config/git/` (a git repository) where eac
 1. Read the [user guide](../README.md) for usage information
 2. See [Architecture](architecture.md) to understand how regroup works
 3. Check [Development](development.md) for coding standards and build instructions
-
----
-
-*This documentation is a work in progress. Contributions welcome!*

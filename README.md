@@ -176,7 +176,6 @@ Usage:
   ./regroup test           dry run: nothing is modified
   ./regroup remove <name>  remove a device (device dir, ~/.ssh/config block, git remote)
   ./regroup wipe [--yes]   delete the entire regroup configuration
-  ./regroup -v             verbose
   ./regroup selftest       built-in checks (external tools, ssh-keygen fingerprint)
   ./regroup setup-cd       install 'regroup-cd' shell function to change to config directory
   ./regroup -h             this help

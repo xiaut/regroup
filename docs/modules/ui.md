@@ -140,7 +140,6 @@ pub enum Action {
     TempUserName(String),
     CancelTempUser,
     RemoveTempUser,
-    ToggleVerbose,
     Help,
 }
 ```
@@ -268,10 +267,10 @@ On screens narrower than 80 characters, panels stack vertically:
 For non-terminal output (piped), the plain UI provides a line-based interface:
 
 ```
-[q=quit, s=sync git, d=delete, w=wipe, c=setup-cd, v=verbose, h=help]: 
+[q=quit, s=sync git, d=delete, w=wipe, c=setup-cd, h=help]: 
 Add device1 (192.168.1.100) to config? [y/N/q/s]: y
 Add device2 (192.168.1.101) to config? [y/N/q/s]: n
-[q=quit, s=sync git, d=delete, w=wipe, c=setup-cd, v=verbose, h=help]: q
+[q=quit, s=sync git, d=delete, w=wipe, c=setup-cd, h=help]: q
 ```
 
 ## Key Bindings
@@ -288,7 +287,6 @@ Add device2 (192.168.1.101) to config? [y/N/q/s]: n
 | `k` | Connections management |
 | `i` | Install SSH key |
 | `r` | Remove SSH key |
-| `v` | Toggle verbose mode |
 | `?` | Toggle help panel |
 | `Enter` | Go one level deeper in the context hierarchy (always offered, listed first) |
 | `Esc` | Go one level back (always offered, listed first; only exit from the fullscreen Logs panel) |
@@ -355,9 +353,10 @@ The UI uses color and styling to convey information:
 
 Press `?` to show the help panel, which displays the CLI usage text with section headers in bold. Use `Up/Down/PgUp/PgDn` to scroll, `?` or `Esc` to close.
 
-## Verbose Mode
+## Logging
 
-When verbose mode is enabled (toggle with `v`):
-- Shows identity information in the Logs pane
-- Displays git sync details
-- Logs pane title shows "Logs — verbose"
+There is no verbose mode: everything the user needs is always logged. All
+messages go through `log()` / `log_device()` and land in the Logs pane
+(full-screen) or on stdout (plain mode). See the [Logging policy](../logging.md)
+for the two hard rules: a log line must precede any operation that may prompt
+for a password, and every non-standard path must be logged.

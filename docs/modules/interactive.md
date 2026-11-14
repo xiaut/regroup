@@ -29,7 +29,6 @@ pub struct Context<'a> {
     pub ssh_config: &'a Path,           // Path to ~/.ssh/config
     pub dry_run: bool,                  // If true, no modifications
     pub local_public_key: &'a SshPublicKey, // This device's SSH key
-    pub verbose: bool,                  // Verbose mode
     pub local_name: &'a str,            // This device's hostname
     pub local_ip: Option<&'a str>,       // This device's IP
 }
@@ -117,7 +116,6 @@ pub struct InteractiveState {
     pub temp_user_pending: Option<String>,
     
     // Settings
-    pub verbose: bool,
     pub new_count: usize,
 }
 ```
@@ -127,7 +125,6 @@ pub struct InteractiveState {
 `InteractiveState::new(ctx: &Context)`:
 - Creates empty collections
 - Calls `reload()` to load existing configuration from disk
-- Initializes verbose mode from context
 
 ### Reloading
 
@@ -219,12 +216,6 @@ Returns devices to show in the Added panel:
 | `SetupCdConfirm` | Install regroup-cd shell function |
 | `SetupCdCancel` | Cancel setup-cd |
 
-### Verbose Actions
-
-| Action | Behavior |
-|--------|----------|
-| `ToggleVerbose` | Toggle verbose mode on/off |
-
 ### Help Actions
 
 | Action | Behavior |
@@ -283,7 +274,7 @@ Returns devices to show in the Added panel:
 `sync_git()`:
 - Pulls from all configured remotes
 - Pushes to all configured remotes
-- Logs progress if verbose mode is on
+- Logs the result of each pull/push (see [Logging policy](../logging.md))
 - Reloads state after pull to include new devices
 
 ## Dry Run Mode

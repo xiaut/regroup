@@ -82,7 +82,7 @@ The `sync.rs` module provides synchronization functions:
 Pulls from all configured remotes:
 
 ```rust
-pub fn pull_all(home: &str, verbose: bool) -> Result<usize, GitError>
+pub fn pull_all(home: &str) -> Result<usize, GitError>
 ```
 
 Returns the number of successful pulls.
@@ -92,7 +92,7 @@ Returns the number of successful pulls.
 Pushes to all configured remotes:
 
 ```rust
-pub fn push_all(home: &str, verbose: bool) -> Result<usize, GitError>
+pub fn push_all(home: &str) -> Result<usize, GitError>
 ```
 
 Returns the number of successful pushes.
@@ -102,7 +102,7 @@ Returns the number of successful pushes.
 Performs a full sync (pull then push):
 
 ```rust
-pub fn sync_git(home: &str, verbose: bool)
+pub fn sync_git(home: &str, temp_users: &HashMap<String, String>)
 ```
 
 This is the main function called when the user presses 's' in interactive mode.
@@ -156,19 +156,20 @@ Git-related errors:
 use crate::git::{sync_git, list_remotes};
 
 // Sync with all peers
-sync_git("/home/user", true, &temp_users);
+sync_git("/home/user", &temp_users);
 
 // List configured remotes
 let remotes = list_remotes().unwrap();
 println!("Remotes: {:?}", remotes);
 ```
 
-## Verbose Mode
+## Logging
 
-When `verbose` is true, sync operations log their progress:
+There is no verbose mode: sync operations always log their progress (see the
+[Logging policy](../logging.md)):
 - "Syncing git..."
-- "  . pulled from <remote>"
-- "  . pushed to <remote>"
+- A line before each pull/push explaining that a password prompt may appear
+- "  - pulled from <remote>" / "  - pushed to <remote>" for every remote
 - "Git sync complete."
 
 ## Testing
