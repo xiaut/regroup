@@ -22,7 +22,7 @@ config/
 ├── device.rs       # device file (device.json) load/save + validation tests
 ├── connection.rs   # connection files: naming rule, ownership enforcement, loader
 ├── users.rs        # users/<user>.json: one file per known user
-├── settings.rs     # settings.json (udp_port, wait_secs)
+├── settings.rs     # local settings.json at ~/.regroup-config/ (udp_port, wait_secs; not synced)
 ├── validation.rs   # Device sanity checks (localhost, empty keys, ...)
 └── json_helpers.rs # Internal JSON parsing helpers
 ```
@@ -59,6 +59,7 @@ pub struct Conf {
 - `CONFIG_DIR`: `".regroup-config"`
 - `GIT_DIR`: `"git"` — source-of-truth repository: `$HOME/.regroup-config/git/`
 - `TMP_DIR`: `"tmp"` — temporary overlay: `$HOME/.regroup-config/tmp/` (never synced)
+- `settings.json`: local-only, at `$HOME/.regroup-config/settings.json` (outside `git/`, never synced)
 
 ## Loading Process
 
@@ -69,7 +70,7 @@ pub struct Conf {
 3. Auto-creates a local device entry if not present
 4. Records the current user in the local device's own `users/` (in `git/`);
    a temporary user of another device is recorded under `tmp/` instead
-5. Loads settings from `settings.json` (in `git/`)
+5. Loads local settings from `~/.regroup-config/settings.json` (outside the repo; defaults if absent)
 6. Purges `tmp/` entries that are now present in `git/` (lazy purge) (in `git/`)
 
 ## Validation

@@ -284,7 +284,7 @@ src/
 
 ## Performance Considerations
 
-- Beacons are sent every 2 seconds (configurable via `wait_secs`)
+- Beacons are sent every 2 seconds; the announce window is `wait_secs` and the UDP channel port is `udp_port` (default 4242), both from local `settings.json`
 - Beacon verification includes signature checking and IP validation
 - Git sync operations can be slow with many remotes
 - UI rendering is optimized to minimize redraws

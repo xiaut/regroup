@@ -22,15 +22,22 @@ The `repo.rs` module handles:
 
 - Creating the initial git repository with `git init -b main` (falling back
   to `symbolic-ref HEAD refs/heads/main` on git < 2.28)
-- Configuring git settings (repo-local):
-  - `user.name` / `user.email` (commits are created automatically)
-  - `commit.gpgsign = false` (no GPG signing)
-  - `core.editor = true` / `sequence.editor = true` (never open an interactive editor)
-  - `receive.denyCurrentBranch = updateInstead` (decentralized push to the checked-out branch)
-  - `pull.rebase = true` (linear history, last-writer-wins ordering)
-  - `merge.ff = only` (fast-forward only)
-  - `push.default = current`
-  - `fetch.prune = true` (drop remote-tracking refs of removed devices)
+- Configuring git settings (repo-local). The set is deliberately **minimal**: the
+  `tmp/` overlay keeps unconfirmed data out of the repository and `settings.json`
+  is local-only (outside the repo), so `git/` contains only self-authored files and
+  no extra conflict-avoidance settings are needed. What remains is only what
+  unattended, decentralized sync requires:
+  - `user.name` / `user.email` — commits are created automatically
+  - `commit.gpgsign = false` — never block on a signing prompt
+  - `core.editor = true` / `sequence.editor = true` — never open an interactive editor
+  - `receive.denyCurrentBranch = updateInstead` — peers push to this checked-out branch
+  - `pull.rebase = true` — the first sync between two independently bootstrapped
+    repos has unrelated histories; rebase is what makes that pull succeed at all,
+    and it gives a linear history
+  - `fetch.prune = true` — drop remote-tracking refs of removed devices
+- Redundant settings are intentionally **not** set: `merge.ff` (shadowed by
+  `pull.rebase = true`) and `push.default` (every push passes an explicit
+  `<remote> main` refspec)
 
 ## Repository Checks
 

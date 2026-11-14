@@ -62,7 +62,7 @@ main.rs (binary)
 
 A **regroup** process does three things simultaneously:
 
-1. **Announce** itself every `wait_secs` on all interfaces (signed UDP beacon: name, SSH host public key, signing key, port — no user data)
+1. **Announce** itself every 2 s on all interfaces, for a window of `wait_secs` (signed UDP beacon: name, SSH host public key, signing key, SSH port — no user data)
 2. **Listen** for other devices' beacons; unknown devices appear in the interactive UI's "Detected" panel and are added on acceptance
 3. **Sync** its configuration with peers through the git repository in `~/.regroup-config/git/` (remotes are auto-configured per known device)
 
@@ -89,16 +89,23 @@ A **regroup** process does three things simultaneously:
 - Signing keys are pinned at first acceptance; different keys trigger a rotation prompt
 
 #### Beacon Protocol
-- UDP-based discovery on a configurable port (default: 9876)
+- UDP broadcast discovery on a single configurable port (`udp_port`, default:
+  4242) used for **both** listening and announcing — like a channel: the listener
+  binds `0.0.0.0:udp_port`, the announcer sends to `<interface-broadcast>:udp_port`.
+  All devices on the LAN must use the same port to hear each other; it is agreed
+  out-of-band (default or local `settings.json`), never carried in the beacon —
+  the beacon's `port` field is the device's **SSH** port
 - Beacons are signed to prevent spoofing
-- Contains: device name, SSH public key, signing public key, port, IP
+- Contains: device name, SSH public key, signing public key, SSH port, IP
 - Beacon age is checked to filter out stale announcements
 
 #### Configuration Storage
 - Central git repository at `~/.regroup-config/git/`
 - Each device has its own directory: `devices/<name>/`
 - Decentralized: every device can push/pull from every other device
-- Last-writer-wins for conflict resolution
+- Every file in the repo has a single writer (its device), so conflicts cannot
+  occur; first sync between bootstrapped repos uses rebase (unrelated histories)
+- Local settings (`udp_port`, `wait_secs`) live in `~/.regroup-config/settings.json`, outside the repo
 - **Write isolation**: Each device only writes its own files into `git/`; accepting a device adds a git remote and pulls its authoritative data. Beacon-derived placeholders and temporary users go to the `tmp/` overlay and are never synced; they are purged once the authoritative files arrive in `git/` (see [Storage Rules](storage.md#configuration-proxy-the-tmp-overlay))
 
 ## Thread Model
@@ -127,9 +134,9 @@ Threads communicate via channels (MPSC for beacon notifications, UI events).
 ~/.regroup-config/
 ├── signing/
 │   └── private_key          # This device's Ed25519 signing key
-├── git/                     # Source of truth, synced with peers via git
+├── settings.json            # Local-only settings (udp_port, wait_secs) — never synced
+├── git/                     # Source of truth, synced with peers via git: devices/ only
 │   ├── .git/                # Git repository
-│   ├── settings.json        # Global settings (udp_port, wait_secs)
 │   └── devices/
 │       └── <device-name>/
 │           ├── device.json          # Device metadata (name, keys, port)

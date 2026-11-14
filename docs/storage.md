@@ -5,16 +5,34 @@ The configuration repository `~/.regroup-config/git/` is shared decentralized st
 ## Repository Structure
 
 ```
-~/.regroup-config/git/
-├── settings.json              # Global settings
-└── devices/
-    └── <name>/
-        ├── device.json         # Latest known state
-        ├── users/
-        │   └── <user>.json    # One file per known user
-        └── connections/
-            └── <id>.json      # Connection files
+~/.regroup-config/
+├── settings.json              # Local-only settings (udp_port, wait_secs) — never synced
+├── git/                       # Shared repo: ONLY per-device directories
+│   └── devices/
+│       └── <name>/
+│           ├── device.json         # Latest known state
+│           ├── users/
+│           │   └── <user>.json    # One file per known user
+│           └── connections/
+│               └── <id>.json      # Connection files
+└── tmp/                       # Temporary overlay (see below)
 ```
+
+## Local Settings (settings.json)
+
+`~/.regroup-config/settings.json` holds exactly two **local runtime** values:
+
+- `udp_port` (default 4242): UDP port the beacon listener and announcer use
+- `wait_secs` (default 10): announce window for discovery runs
+
+It is read once at startup and consumed only by discovery (`main.rs`); there are
+no CLI/env overrides. It deliberately lives **outside `git/`**: these are
+per-device parameters, not shared state. Syncing `udp_port` would be incoherent —
+devices only discover each other when they listen on the same UDP port, so a
+git-synced "global" port that diverges would silently break discovery while still
+syncing over SSH. Keeping the file (rather than hardcoding constants) preserves
+tunability; keeping it out of the repo means **every file in `git/` has exactly
+one writer**.
 
 ## Device State (device.json)
 
@@ -53,8 +71,9 @@ cache of the merged proxy view, never a separate source of truth.
 
 ### Write Rule
 
-- Authoritative data — this device's own `devices/<self>/` and `settings.json` —
-  is written to `git/` and synced, as before.
+- Authoritative data — this device's own `devices/<self>/` — is written to
+  `git/` and synced, as before. Local settings (`udp_port`, `wait_secs`) live in
+  `~/.regroup-config/settings.json`, outside the repo, and are never synced.
 - Temporary data about **other** devices is written to `tmp/` instead of `git/`:
   - the placeholder `device.json` written from beacon data when a device is
     accepted, before its authoritative file can be pulled
@@ -107,13 +126,25 @@ hold not-yet-verified data).
 
 Placeholder `device.json` files already committed in `git/` by older versions
 remain in place (source of truth) until the device's own file arrives via sync and
-wins last-writer-wins.
+replaces them.
+
+### Why the git Configuration Can Stay Minimal
+
+Because unconfirmed data never enters `git/` and `settings.json` is local-only,
+the repository only ever contains self-authored per-device directories — every
+file has exactly one writer. No extra conflict-avoidance or working-tree-protection
+settings are needed; the repo-local git configuration is limited to what
+unattended decentralized sync requires (see [git module](modules/git.md#repository-initialization)).
 
 ## Conflict Resolution
 
-- **Last-writer-wins**: The most recent commit wins
-- Per-device directories keep concurrent writers apart; conflicts are rare
-- Users should commit frequently to minimize conflicts
+- Every file in `git/` has exactly one writer — the device that owns the
+  `devices/<name>/` directory — so merge conflicts **cannot occur** inside the repo
+- The first sync between two independently bootstrapped repositories still has
+  unrelated histories; `pull.rebase = true` (see the git module) replays the
+  local root commit on top of the remote's, which is what makes first contact
+  succeed
+- Last-writer-wins therefore no longer applies to any file in the repository
 
 ## Lists as Directories
 

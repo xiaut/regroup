@@ -51,13 +51,18 @@ pub struct BeaconIdentity {
 ### Announcing
 
 1. The local device constructs a `BeaconIdentity` with its information
-2. Every `wait_secs` (configurable, default 2 seconds), it signs and broadcasts the beacon
-3. Beacons are sent on all available network interfaces
-4. The broadcast uses UDP on the configured port (default: 9876)
+2. Every 2 s (hardcoded interval), it signs and broadcasts the beacon; the whole
+   announce window lasts `wait_secs` (configurable, default 10 s)
+3. Beacons are sent on all available network interfaces, each to that interface's
+   broadcast address
+4. Announcing and listening use the **same** UDP port (`udp_port`, default 4242):
+   one channel — sender targets `<broadcast>:udp_port`, listener binds
+   `0.0.0.0:udp_port`. All devices must share the port; it is never negotiated in
+   the beacon (the beacon's `port` field is the SSH port)
 
 ### Listening
 
-1. regroup binds to UDP port for incoming beacons
+1. regroup binds `0.0.0.0:udp_port` for incoming beacons
 2. For each received beacon:
    - Verify the signature using the embedded signing public key
    - Check the beacon age (filter out stale beacons)
