@@ -15,7 +15,7 @@ use super::{
     CONFIG_DIR, Conf, DeviceName, DEVICES_DIR, GLOBAL_CONFIG_FILE, GlobalSettings,
     Device, device_dir, device_file_path,
 };
-use crate::discovery::local::host_name;
+use crate::discovery::local::{host_name, local_user};
 use crate::git::{check_repo, git_init};
 use crate::ssh::keys::SigningPublicKeyB64;
 use crate::ssh::public_key::get_ssh_server_public_key;
@@ -245,9 +245,8 @@ pub fn load_config() -> Conf {
     // `devices/<self>/users/<user>.json` is written once and committed,
     // so other devices learn who this device's users are through git.
     if devices.iter().any(|d| d.name.as_str() == local_hostname) {
-        let current_user =
-            env::var("USER").unwrap_or_else(|_| env::var("LOGNAME").unwrap_or_default());
-        if !current_user.is_empty() {
+        let current_user = local_user();
+        if !current_user.is_empty() && current_user != "unknown" {
             match ensure_local_user_file(&config_dir, &local_hostname, &current_user) {
                 Ok(true) => {
                     let user_path = super::users::user_file_path(

@@ -1094,9 +1094,7 @@ impl InteractiveState {
         };
         let root = root_config_dir(ctx.home);
         let config_dir = root.join(GIT_DIR);
-        let current_user = std::env::var("USER")
-            .or_else(|_| std::env::var("LOGNAME"))
-            .unwrap_or_default();
+        let current_user = crate::discovery::local_user();
         let connections_dir = config_dir
             .join("devices")
             .join(ctx.local_name)
@@ -1259,9 +1257,7 @@ impl InteractiveState {
         };
 
         let config_dir = root_config_dir(ctx.home).join(GIT_DIR);
-        let current_user = std::env::var("USER")
-            .or_else(|_| std::env::var("LOGNAME"))
-            .unwrap_or_else(|_| "unknown".to_string());
+        let current_user = crate::discovery::local_user();
         let target_port = target_device.port;
         // Transport address = the IP the device advertised in its beacon
         // (known_ip). The device name is never resolved: no DNS, no
@@ -1325,9 +1321,7 @@ impl InteractiveState {
             return;
         }
         let config_dir = root_config_dir(ctx.home).join(GIT_DIR);
-        let current_user = std::env::var("USER")
-            .or_else(|_| std::env::var("LOGNAME"))
-            .unwrap_or_else(|_| "unknown".to_string());
+        let current_user = crate::discovery::local_user();
 
         let Some(target_device) = self
             .key_to_device

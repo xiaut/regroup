@@ -12,4 +12,4 @@ pub mod net;
 pub use net::NetworkInterface;
 
 // Re-export commonly used functions
-pub use local::{get_local_interfaces, host_name, my_ip};
+pub use local::{get_local_interfaces, host_name, local_user, my_ip};
