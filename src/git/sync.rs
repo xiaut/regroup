@@ -164,23 +164,6 @@ pub fn sync_with_remotes(repo_path: &Path) -> Vec<String> {
     errors
 }
 
-/// Check whether a path is tracked by git in the repository at `repo_path`.
-pub fn git_is_tracked(repo_path: &Path, path: &Path) -> bool {
-    if !super::repo::is_git_repo(repo_path) {
-        return false;
-    }
-    std::process::Command::new("git")
-        .current_dir(repo_path)
-        .arg("ls-files")
-        .arg("--error-unmatch")
-        .arg("--")
-        .arg(path)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok_and(|s| s.success())
-}
-
 /// Add and commit a file
 pub fn git_add_and_commit_file(
     repo_path: &Path,

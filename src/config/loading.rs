@@ -16,7 +16,7 @@ use super::{
     Device, device_dir, device_file_path,
 };
 use crate::discovery::local::host_name;
-use crate::git::{check_repo, git_init, git_is_tracked};
+use crate::git::{check_repo, git_init};
 use crate::ssh::keys::SigningPublicKeyB64;
 use crate::ssh::public_key::get_ssh_server_public_key;
 
@@ -114,52 +114,6 @@ pub fn create_device_config(config_dir: &Path) -> Result<Device, String> {
 // Main configuration loading
 // ============================================================
 
-/// Move a legacy `settings.json` out of the git repository: local settings
-/// live at `~/.regroup-config/settings.json`, outside the repo, so every
-/// file in `git/` has exactly one writer and the working tree stays clean.
-/// The configured values are preserved at the new location.
-fn migrate_settings_out_of_repo(root: &Path, config_dir: &Path) {
-    let legacy = config_dir.join(GLOBAL_CONFIG_FILE);
-    if !legacy.exists() {
-        return;
-    }
-    let new = root.join(GLOBAL_CONFIG_FILE);
-    if !new.exists() {
-        let settings = load_global_settings(config_dir);
-        let value = serde_json::json!({
-            "udp_port": settings.udp_port,
-            "wait_secs": settings.wait_secs,
-        });
-        match serde_json::to_string_pretty(&value) {
-            Ok(text) => {
-                if let Err(e) = fs::write(&new, text) {
-                    warn(&format!(
-                        "could not write local settings to {}: {}",
-                        new.display(),
-                        e
-                    ));
-                }
-            }
-            Err(e) => warn(&format!("could not serialize local settings: {}", e)),
-        }
-    }
-    // Remove the legacy file from the working tree; if it was tracked,
-    // commit the removal so the repo stays clean.
-    if git_is_tracked(config_dir, &legacy) {
-        if fs::remove_file(&legacy).is_ok()
-            && let Err(e) = crate::git::sync::git_add_and_commit_file(
-                config_dir,
-                &legacy,
-                "Move settings.json out of the repository (local-only)",
-            )
-        {
-            warn(&format!("could not commit removal of legacy settings.json: {}", e));
-        }
-    } else {
-        let _ = fs::remove_file(&legacy);
-    }
-}
-
 /// Load the complete configuration
 ///
 /// Configuration structure:
@@ -226,10 +180,6 @@ pub fn load_config() -> Conf {
             e
         ));
     }
-
-    // Local settings live outside the repository: move a legacy in-repo
-    // settings.json out (preserving its values) before checking the tree.
-    migrate_settings_out_of_repo(&root_config_dir, &config_dir);
 
     // Repository checks: exists, required settings configured, clean tree.
     // A failing check must not prevent reading the configuration, so it

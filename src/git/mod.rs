@@ -13,4 +13,4 @@ pub mod sync;
 // Re-export commonly used functions for backward compatibility
 pub use remote::sync_git_remotes;
 pub use repo::{check_repo, git_init, is_git_repo};
-pub use sync::{git_is_tracked, sync_with_remotes};
+pub use sync::sync_with_remotes;
