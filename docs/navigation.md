@@ -34,8 +34,10 @@ A panel has exactly **three states**:
 1. **Overview** — the dashboard is displayed, no panel engaged (user at the
    virtual center).
 2. **Selected** — the panel is highlighted (focus), nothing more.
-3. **Fullscreen** — the panel fills the screen and its content becomes
-   navigable (list selection, scrolling).
+3. **Fullscreen** — the panel fills the main area and its content becomes
+   navigable (list selection, scrolling). The Logs pane stays visible as a
+   strip above the action block, except for the Logs pane itself, which
+   fills the main area, and while the help panel is open.
 
 The same arrow key walks through these states in order; the opposite arrow
 walks back.
@@ -98,6 +100,12 @@ Once the Logs panel is fullscreen, `Up`/`Down` (and `PgUp`/`PgDn`)
 scroll the content — the arrow cannot be used to zoom out anymore. This is
 where the fallback keys apply: **`Esc` is the only way to leave the
 fullscreen Logs panel** (collapse back to the dashboard).
+
+Every view of the Logs pane (overview, strip under a fullscreen device
+pane, fullscreen) shows the **tail** of the log — the newest lines on the
+pane's last row. Scrolling up exists only in the fullscreen Logs panel;
+leaving it does not carry the scroll over, so the other views always
+follow the tail.
 
 ### List selection
 

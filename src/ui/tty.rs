@@ -15,7 +15,8 @@ use ratatui::DefaultTerminal;
 use super::keys::{resolve, Context, KeyResolution};
 use super::render::{
     count_wrapped_lines, help_hint_text, idle_hint_text, key_label, modal_hint_text,
-    render_all_panes, render_help, render_question, KeyFlash, QuestionCtx, RowFlash,
+    render_all_panes, render_help, render_log, render_question, split_log_strip, KeyFlash,
+    QuestionCtx, RowFlash,
 };
 use super::types::{
     bindings_hint_text, ActivePane, Action, NavFocus, Navigation, Question, UiDevice, UiEvent,
@@ -478,6 +479,13 @@ impl TtyUi {
             key_flash,
             ..
         } = self;
+        // The log pane always shows the tail (newest lines at the bottom);
+        // only an explicitly scrolled fullscreen Logs pane shifts the view.
+        let log_scroll = if matches!(*active_pane, ActivePane::Logs(_)) {
+            *log_scroll
+        } else {
+            0
+        };
         let mut cursor = None;
         terminal.draw(|frame| {
             // Calculate the height needed for the question block
@@ -510,11 +518,25 @@ impl TtyUi {
                 let help_scroll_bounded = (*help_scroll).min(max_scroll);
                 render_help(frame, main_area, help_scroll_bounded);
             } else {
-                // Always show all three panes (Detected, Added, Logs)
-                // The active pane has a bold border
+                // In MainMenu all three panes share the main area. A
+                // fullscreen device pane keeps the Logs pane visible as a
+                // strip at the bottom of the main area, like the action
+                // pane below the main area; the Logs pane itself fills it.
+                let device_fullscreen = matches!(
+                    *active_pane,
+                    ActivePane::Detected(_) | ActivePane::Added(_) | ActivePane::Users(_)
+                );
+                let (pane_area, logs_strip) = if device_fullscreen {
+                    split_log_strip(main_area)
+                } else {
+                    (main_area, None)
+                };
+                if let Some(logs_area) = logs_strip {
+                    render_log(frame, logs_area, log, log_scroll);
+                }
                 render_all_panes(
                     frame,
-                    main_area,
+                    pane_area,
                     *active_pane,
                     navigation.focus,
                     detected,
@@ -522,7 +544,7 @@ impl TtyUi {
                     added,
                     *added_selected,
                     log,
-                    *log_scroll,
+                    log_scroll,
                     flashes,
                     pulses,
                     users,
