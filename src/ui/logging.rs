@@ -17,8 +17,9 @@ pub const LOG_CAP: usize = 1000;
 
 /// Global atomic flag to indicate whether logs should go directly to stdout.
 /// This is used when temporarily switching from TUI to CLI mode.
-/// When true, log() and log_device() print directly to stdout instead of
-/// sending to the channel.
+/// When true, log() and log_device() print directly to stdout (so the line
+/// appears in the CLI during the pass) in addition to being sent to the
+/// channel (so it still lands in the activity pane when the TUI resumes).
 static DIRECT_OUTPUT_MODE: AtomicBool = AtomicBool::new(false);
 
 /// Check if we're in direct output mode.
@@ -29,11 +30,12 @@ pub fn is_direct_output_mode() -> bool {
 /// RAII guard that enables direct output mode for its lifetime and restores
 /// the previous value on drop (even on panic).
 ///
-/// While held, [`log`] and [`log_device`] print to stdout instead of the UI
-/// channel: everything logged during a temporary CLI pass from the TUI
-/// appears in the CLI. [`crate::ui::Ui::with_clean_terminal`] holds this
-/// guard for the whole CLI-visible window — the operation itself and the
-/// "press Enter to return" pause — until the TUI is re-initialized.
+/// While held, [`log`] and [`log_device`] also print to stdout (in addition
+/// to the UI channel): everything logged during a temporary CLI pass from
+/// the TUI appears in the CLI immediately, and in the activity pane when the
+/// TUI resumes. [`crate::ui::Ui::with_clean_terminal`] holds this guard for
+/// the whole CLI-visible window — the operation itself and the "press Enter
+/// to return" pause — until the TUI is re-initialized.
 pub struct DirectOutputGuard {
     previous: bool,
 }
@@ -66,23 +68,25 @@ pub const PULSE_MS: u64 = 900;
 pub static LOG_TX: OnceLock<Sender<UiEvent>> = OnceLock::new();
 
 /// Display a general message: in the activity pane once the full-screen ui
-/// runs, on stdout otherwise.
+/// runs, on stdout otherwise. During a temporary CLI pass (direct output
+/// mode) the message is printed to stdout — it appears in the CLI — and
+/// still sent to the channel, so it also appears in the activity pane when
+/// the TUI resumes.
 pub fn log(msg: &str) {
-    if is_direct_output_mode() {
+    if let Some(tx) = LOG_TX.get() {
+        let _ = tx.send(UiEvent::Global(msg.to_string()));
+    }
+    if is_direct_output_mode() || LOG_TX.get().is_none() {
         println!("{msg}");
-    } else {
-        match LOG_TX.get() {
-            Some(tx) => {
-                let _ = tx.send(UiEvent::Global(msg.to_string()));
-            }
-            None => println!("{msg}"),
-        }
     }
 }
 
 /// Display a device-specific message: animated status on the device's
 /// row in the full-screen ui, `detail` (or `name: msg`) on stdout otherwise.
 /// Security messages are additionally kept in the activity pane.
+/// During a temporary CLI pass (direct output mode) the message is printed
+/// to stdout — it appears in the CLI — and still sent to the channel, so
+/// the row still flashes when the TUI resumes.
 pub fn log_device(
     key: &SshPublicKey,
     name: &str,
@@ -90,26 +94,19 @@ pub fn log_device(
     msg: &str,
     detail: Option<&str>,
 ) {
-    if is_direct_output_mode() {
+    if let Some(tx) = LOG_TX.get() {
+        let _ = tx.send(UiEvent::UiDevice {
+            key: key.as_str().to_string(),
+            name: name.to_string(),
+            level,
+            msg: msg.to_string(),
+            detail: detail.map(str::to_string),
+        });
+    }
+    if is_direct_output_mode() || LOG_TX.get().is_none() {
         match detail {
             Some(detail) => println!("{detail}"),
             None => println!("{name}: {msg}"),
-        }
-    } else {
-        match LOG_TX.get() {
-            Some(tx) => {
-                let _ = tx.send(UiEvent::UiDevice {
-                    key: key.as_str().to_string(),
-                    name: name.to_string(),
-                    level,
-                    msg: msg.to_string(),
-                    detail: detail.map(str::to_string),
-                });
-            }
-            None => match detail {
-                Some(detail) => println!("{detail}"),
-                None => println!("{name}: {msg}"),
-            },
         }
     }
 }
@@ -149,7 +146,7 @@ mod tests {
     // could race each other. Other tests only read the flag via log(),
     // which behaves the same either way while LOG_TX is unset.
     #[test]
-    fn direct_output_mode_routes_logs_to_stdout_not_the_ui_channel() {
+    fn direct_output_mode_tees_logs_to_stdout_and_the_ui_channel() {
         // Install a channel as the UI sink, like Ui::start does for the Tty backend.
         let (tx, rx) = mpsc::channel();
         let _ = LOG_TX.set(tx);
@@ -161,9 +158,9 @@ mod tests {
             let _guard = DirectOutputGuard::new();
             assert!(is_direct_output_mode());
 
-            // During a temporary CLI pass, logs must NOT go to the UI
-            // channel (they are printed to stdout instead, i.e. they
-            // appear in the CLI).
+            // During a temporary CLI pass the line is printed to stdout
+            // (it appears in the CLI) AND forwarded to the UI channel, so
+            // it still lands in the activity pane when the TUI resumes.
             log("to-cli");
             log_device(
                 &SshPublicKey::from("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFake"),
@@ -175,7 +172,7 @@ mod tests {
         }
         assert_eq!(is_direct_output_mode(), before);
 
-        // Outside the pass, logs go to the UI channel (TUI pane) as before.
+        // Outside the pass, logs go to the UI channel (TUI pane) only.
         log("to-pane");
 
         let received: Vec<UiEvent> = rx.try_iter().collect();
@@ -184,12 +181,12 @@ mod tests {
             "outside direct mode, log() must reach the UI channel"
         );
         assert!(
-            !received.iter().any(|e| matches!(e, UiEvent::Global(m) if m == "to-cli")),
-            "in direct mode, log() must not be queued in the UI channel"
+            received.iter().any(|e| matches!(e, UiEvent::Global(m) if m == "to-cli")),
+            "in direct mode, log() must still be queued for the UI channel (tee)"
         );
         assert!(
-            !received.iter().any(|e| matches!(e, UiEvent::UiDevice { detail, .. } if detail.as_deref() == Some("detail"))),
-            "in direct mode, log_device() must not be queued in the UI channel"
+            received.iter().any(|e| matches!(e, UiEvent::UiDevice { detail, .. } if detail.as_deref() == Some("detail"))),
+            "in direct mode, log_device() must still be queued for the UI channel (tee)"
         );
     }
 }

@@ -70,14 +70,16 @@ mode** for the whole CLI-visible window — the operation itself and the
 "press Enter to return" pause, until the TUI is re-initialized. In this
 mode `log()` and `log_device()` print to stdout, so **everything logged
 during the pass appears in the CLI**, including lines logged by background
-threads (beacon listener/announcer). The mode is held by a RAII guard, so it
+threads (beacon listener/announcer). The line is still sent to the UI
+channel, so it also lands in the Logs pane when the TUI resumes — a pass
+log is visible in both places. The mode is held by a RAII guard, so it
 ends even if the pass panics.
 
 Consequences for new code:
 
 - Always log through `log()` / `log_device()` — never send `UiEvent`s to
-  the channel directly outside `logging.rs`, or the line would be queued
-  for the TUI pane and lost from the CLI during a pass. (`pulse_device` is
+  the channel directly outside `logging.rs`, or the line would skip the
+  stdout print and not appear in the CLI during a pass. (`pulse_device` is
   the only channel-only event and is a row animation, not a log line.)
 - External commands run during a pass must not swallow their output:
   inherit stderr (and stdin/stdout for interactive prompts) in direct

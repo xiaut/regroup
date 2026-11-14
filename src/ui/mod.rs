@@ -15,7 +15,10 @@
 //! the activity pane) or [`log_device`] (device-specific messages, shown
 //! as a temporary animated status on the device's row). Before the
 //! full-screen ui runs (startup, plain mode) both go to stdout; afterwards
-//! they are buffered in a channel.
+//! they are buffered in a channel. During a temporary CLI pass from the TUI
+//! (direct output mode, see [`DirectOutputGuard`]) they do both: printed to
+//! stdout so they appear in the CLI, and still buffered for the activity
+//! pane.
 
 pub mod interface;
 pub mod keys;
