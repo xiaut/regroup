@@ -114,21 +114,18 @@ pub fn install_key_action(
         .arg(&public_key)
         .arg("--connection-id")
         .arg(connection_id);
-    // Inherit the terminal so ssh can prompt for a password interactively: in
-    // the TUI's temporary CLI mode this process's stdio IS the user's
-    // terminal. Capturing the streams (Command::output) nulls the child's
-    // stdin and only shows stderr after exit, which makes password auth
-    // impossible — ssh fails with "Permission denied (publickey,password)"
-    // without ever prompting.
-    let status = ssh_cmd
-        .stdin(std::process::Stdio::inherit())
-        .stdout(std::process::Stdio::inherit())
-        .stderr(std::process::Stdio::inherit())
-        .status();
-    
-    match status {
-        Ok(status) => {
-            if status.success() {
+    // Run ssh through the logged runner: during the TUI's temporary CLI
+    // pass this process's stdio IS the user's terminal, so run_logged
+    // forwards the child's streams live — password prompts work, where
+    // capturing them (Command::output) would null stdin and make password
+    // auth impossible ("Permission denied (publickey,password)" with no
+    // prompt) — and records the output into the TUI log stream, so the full
+    // pass reappears in the Logs pane when the TUI resumes.
+    let output = crate::ui::run_logged(ssh_cmd);
+
+    match output {
+        Ok(output) => {
+            if output.status.success() {
                 // Save connection file on source device
                 let connection = Connection::new(
                     current_user,
@@ -226,17 +223,14 @@ pub fn remove_key_action(
         .arg("receive-remove-key")
         .arg("--connection-id")
         .arg(connection_id);
-    // Inherit the terminal so ssh can prompt for a password interactively
-    // (see install_key_action for why the streams must not be captured).
-    let status = ssh_cmd
-        .stdin(std::process::Stdio::inherit())
-        .stdout(std::process::Stdio::inherit())
-        .stderr(std::process::Stdio::inherit())
-        .status();
-    
-    match status {
-        Ok(status) => {
-            if status.success() {
+    // Run ssh through the logged runner, like install_key_action: live
+    // forwarding during the temporary CLI pass (password prompts work) plus
+    // recording into the TUI log stream.
+    let output = crate::ui::run_logged(ssh_cmd);
+
+    match output {
+        Ok(output) => {
+            if output.status.success() {
                 // Delete connection file on source device
                 let connections_dir = config_dir.join("devices").join(local_device).join("connections");
                 let connection_file_name = format!("{}->{}@{}.json", current_user, to_user, to_device);

@@ -13,19 +13,26 @@
 //!
 //! All modules display messages through [`log`] (general messages, shown in
 //! the activity pane) or [`log_device`] (device-specific messages, shown
-//! as a temporary animated status on the device's row). Before the
-//! full-screen ui runs (startup, plain mode) both go to stdout; afterwards
-//! they are buffered in a channel.
+//! as a temporary animated status on the device's row). There is a single
+//! log stream: the UI channel, which the full-screen ui shows in full in its
+//! Logs pane. Without a UI channel (startup, plain mode) the stream is
+//! stdout. During a temporary CLI pass from the TUI (direct output mode,
+//! see [`DirectOutputGuard`]) the stream is shown in both places: every
+//! message is printed to the CLI and recorded for the Logs pane, and
+//! external-command output is forwarded live to the CLI by
+//! [`run_logged`] while being recorded the same way.
 
 pub mod interface;
 pub mod keys;
 pub mod logging;
 pub mod plain;
 pub mod render;
+pub mod subprocess;
 pub mod tty;
 pub mod types;
 
 // Re-export the main UI types and functions for convenience
 pub use interface::Ui;
-pub use logging::{log, log_device, pulse_device, restore, set_direct_output_mode};
+pub use logging::{log, log_device, pulse_device, restore, DirectOutputGuard};
+pub use subprocess::run_logged;
 pub use types::{Action, Level, Question};

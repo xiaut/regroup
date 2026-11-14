@@ -61,6 +61,42 @@ includes at least:
 When adding a branch that is not the normal path, add a log line in that
 branch.
 
+## Rule 3 — One log stream; the CLI shows only the CLI passes
+
+There is a **single log stream**. The **Logs pane of the full-screen TUI
+always shows it in full**. A temporary CLI pass from the TUI
+(`Ui::with_clean_terminal`: git sync, device add/remove, wipe, SSH key
+install/remove, signing-key trust) is the only time the stream is also
+printed to the CLI — so **the CLI shows exactly the lines emitted during
+passes**, and **everything shown in the CLI during a pass appears in the
+Logs pane** when the TUI resumes. Each pass is delimited in the stream by
+two markers: `TUI -> CLI (<action>)` when the pass starts and
+`CLI -> TUI (<action>)` when the TUI resumes.
+
+Mechanics:
+
+- The pass window (the operation itself and the "press Enter to return"
+  pause, until the TUI is re-initialized) is bracketed by a RAII guard
+  (`DirectOutputGuard`) that switches the sink to direct output mode and
+  restores it even on panic. In this mode `log()` / `log_device()` print
+  to stdout in addition to being recorded in the UI channel.
+- External commands whose output belongs to the stream run through
+  `ui::run_logged` (git, ssh, ...): in direct output mode their stdin is
+  inherited and their stdout/stderr are forwarded live to the CLI —
+  interactive prompts work, the output appears in the CLI — and recorded
+  into the UI channel; outside a pass their output is captured and logged
+  line by line.
+
+Consequences for new code:
+
+- Always log through `log()` / `log_device()` — never send `UiEvent`s to
+  the channel directly outside `logging.rs` (`record()` is for output
+  already shown live in the CLI during a pass). `pulse_device` is the only
+  channel-only event and is a row animation, not a log line.
+- Run external commands through `ui::run_logged`, never a bare `Command`
+  with inherited or captured streams, so their output lands in the stream
+  in both modes.
+
 ## Message style
 
 **Sub-lines use a single symbol: `  - `** — every detail line under an

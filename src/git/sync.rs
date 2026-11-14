@@ -4,54 +4,14 @@
 
 use std::io;
 use std::path::Path;
-use std::process::Stdio;
 
 use crate::git::remote;
 
-/// Run a git command and log its output.
-/// When in direct output mode (temporary CLI mode), stderr is passed through
-/// directly to allow interactive prompts (e.g., password) to work.
-fn quiet(mut cmd: std::process::Command) -> io::Result<std::process::Output> {
-    // Check if we're in direct output mode (temporary CLI mode from TUI)
-    let direct_mode = crate::ui::logging::is_direct_output_mode();
-    
-    // In direct mode, pass stderr through to terminal for interactive prompts
-    // In normal mode, capture stderr to log it
-    let stderr_config = if direct_mode {
-        Stdio::inherit()  // Pass through to terminal
-    } else {
-        Stdio::piped()    // Capture for logging
-    };
-    
-    // Always capture stdout
-    let output = cmd
-        .stdout(Stdio::piped())
-        .stderr(stderr_config)
-        .output()?;
-    
-    // Log stdout
-    if !output.stdout.is_empty() {
-        let stdout_str = String::from_utf8_lossy(&output.stdout);
-        for line in stdout_str.lines() {
-            if !line.is_empty() {
-                crate::ui::log(line);
-            }
-        }
-    }
-    
-    // In normal mode, stderr was captured - log it
-    // In direct mode, stderr was passed through - don't try to log it
-    if !direct_mode && !output.stderr.is_empty() {
-        let stderr_str = String::from_utf8_lossy(&output.stderr);
-        for line in stderr_str.lines() {
-            if !line.is_empty() {
-                crate::ui::log(line);
-            }
-        }
-    }
-    
-    Ok(output)
-}
+// Git commands run through crate::ui::run_logged, which puts their output
+// into the one log stream: during a temporary CLI pass (direct output
+// mode) the output is forwarded live to the CLI — interactive prompts
+// work — and recorded for the TUI Logs pane; otherwise it is captured and
+// logged line by line.
 
 /// Pull from a specific remote
 pub fn git_pull_remote(repo_path: &Path, remote_name: &str) -> io::Result<()> {
@@ -68,7 +28,7 @@ pub fn git_pull_remote(repo_path: &Path, remote_name: &str) -> io::Result<()> {
         .arg("pull")
         .arg(remote_name)
         .arg("main");
-    let output = quiet(cmd)?;
+    let output = crate::ui::run_logged(cmd)?;
 
     if !output.status.success() {
         return Err(io::Error::other(format!(
@@ -95,7 +55,7 @@ pub fn git_push_remote(repo_path: &Path, remote_name: &str) -> io::Result<()> {
         .arg("push")
         .arg(remote_name)
         .arg("main");
-    let output = quiet(cmd)?;
+    let output = crate::ui::run_logged(cmd)?;
 
     if !output.status.success() {
         return Err(io::Error::other(format!(
@@ -179,7 +139,7 @@ pub fn git_add_and_commit_file(
     add_cmd.current_dir(repo_path)
         .arg("add")
         .arg(file_path);
-    let add_output = quiet(add_cmd)?;
+    let add_output = crate::ui::run_logged(add_cmd)?;
 
     if !add_output.status.success() {
         return Err(io::Error::other("failed to add file"));
@@ -191,7 +151,7 @@ pub fn git_add_and_commit_file(
         .arg("commit")
         .arg("-m")
         .arg(commit_message);
-    let commit_output = quiet(commit_cmd)?;
+    let commit_output = crate::ui::run_logged(commit_cmd)?;
 
     if !commit_output.status.success() {
         // If commit fails because there's nothing to commit, that's okay
