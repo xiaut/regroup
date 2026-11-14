@@ -260,6 +260,12 @@ question block. The strip is dropped when the main area is shorter than
 12 rows, and hidden while the help panel is open. Scrolling the log still
 requires the Logs pane to be fullscreen.
 
+The Logs pane always shows the **tail** of the log: the newest lines sit
+on the pane's last content row (the log is bottom-anchored, with blank
+rows above when it is shorter than the pane). Scrolling up is only
+possible inside the fullscreen Logs pane and never affects the overview
+or the strip — they always follow the tail.
+
 ### Narrow Screen Layout
 
 On screens narrower than 80 characters, panels stack vertically:

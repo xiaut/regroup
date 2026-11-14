@@ -479,6 +479,13 @@ impl TtyUi {
             key_flash,
             ..
         } = self;
+        // The log pane always shows the tail (newest lines at the bottom);
+        // only an explicitly scrolled fullscreen Logs pane shifts the view.
+        let log_scroll = if matches!(*active_pane, ActivePane::Logs(_)) {
+            *log_scroll
+        } else {
+            0
+        };
         let mut cursor = None;
         terminal.draw(|frame| {
             // Calculate the height needed for the question block
@@ -525,7 +532,7 @@ impl TtyUi {
                     (main_area, None)
                 };
                 if let Some(logs_area) = logs_strip {
-                    render_log(frame, logs_area, log, *log_scroll);
+                    render_log(frame, logs_area, log, log_scroll);
                 }
                 render_all_panes(
                     frame,
@@ -537,7 +544,7 @@ impl TtyUi {
                     added,
                     *added_selected,
                     log,
-                    *log_scroll,
+                    log_scroll,
                     flashes,
                     pulses,
                     users,
