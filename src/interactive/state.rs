@@ -1135,11 +1135,17 @@ impl InteractiveState {
         users
     }
 
-    /// Whether `user` is the temporary user of `device`.
-    fn is_temporary_user(&self, device: &str, user: &str) -> bool {
-        self.temp_users
-            .get(device)
-            .is_some_and(|temp| temp == user)
+    /// Whether `user` is a temporary user of `device`: its file exists only
+    /// in the tmp/ overlay, not yet declared by the device in git/. Resolved
+    /// from disk through the proxy — the same merged view the Users panel
+    /// shows — so a temporary user left over from a previous run (or a
+    /// second one added this run) is recognized too, not just the single
+    /// name recorded in `temp_users`.
+    fn is_temporary_user(&self, ctx: &Context, device: &str, user: &str) -> bool {
+        let root = root_config_dir(ctx.home);
+        load_device_users_merged(&root, device)
+            .map(|users| users.iter().any(|u| u.temporary && u.user.name == user))
+            .unwrap_or(false)
     }
 
     /// Move the Users panel selection to the next (or previous when
@@ -1203,20 +1209,27 @@ impl InteractiveState {
         else {
             return;
         };
-        if self.is_temporary_user(&device, &user) {
-            // Delete from both proxy layers (the tmp/ file is ours, but a
-            // git/ copy would mean the device declared the same user).
-            let root = root_config_dir(ctx.home);
-            if let Err(e) = crate::config::proxy::delete_user(&root, &device, &user) {
-                die(&format!(
-                    "cannot remove the temporary user file for {user} on {device} in {}: {e}",
-                    root.join(crate::config::TMP_DIR).display()
-                ));
-            }
-            self.temp_users.remove(&device);
-            self.users_selected = None;
-            ui::log(&format!("  - Temporary user {user} on {device} removed"));
+        if !self.is_temporary_user(ctx, &device, &user) {
+            ui::log(&format!(
+                "  - {user} on {device} is not a temporary user — only tmp/ users can be removed here"
+            ));
+            return;
         }
+        // Delete from both proxy layers (the tmp/ file is ours; a git/ copy
+        // would mean the device declared the same user, but then the user is
+        // not temporary and we returned above).
+        let root = root_config_dir(ctx.home);
+        if let Err(e) = crate::config::proxy::delete_user(&root, &device, &user) {
+            die(&format!(
+                "cannot remove the temporary user file for {user} on {device} in {}: {e}",
+                root.join(crate::config::TMP_DIR).display()
+            ));
+        }
+        if self.temp_users.get(&device).is_some_and(|temp| temp == &user) {
+            self.temp_users.remove(&device);
+        }
+        self.users_selected = None;
+        ui::log(&format!("  - Temporary user {user} on {device} removed"));
     }
 
     /// Install the local user's SSH key towards the user selected in the
@@ -1229,7 +1242,7 @@ impl InteractiveState {
             ui::log("Select a device, then one of its users (Right) first");
             return;
         };
-        if self.is_temporary_user(&target_name, &target_user) {
+        if self.is_temporary_user(ctx, &target_name, &target_user) {
             ui::log(&format!(
                 "  - {target_user} on {target_name} is temporary — sync git ('s') to get the device's declared users first"
             ));
@@ -1290,7 +1303,7 @@ impl InteractiveState {
             ui::log("Select a device, then one of its users (Right) first");
             return;
         };
-        if self.is_temporary_user(&target_name, &target_user) {
+        if self.is_temporary_user(ctx, &target_name, &target_user) {
             ui::log(&format!(
                 "  - {target_user} on {target_name} is temporary — no SSH key connection exists"
             ));
@@ -1371,6 +1384,134 @@ impl InteractiveState {
         self.temp_users.remove(name.as_str());
         self.added_selected = None;
         self.users_selected = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::proxy;
+    use crate::config::users::ensure_local_user_file;
+
+    fn test_home(tag: &str) -> (std::path::PathBuf, String) {
+        let dir = std::env::temp_dir().join(format!("regroup-state-test-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create temp home");
+        let home = dir.to_str().unwrap().to_string();
+        (dir, home)
+    }
+
+    fn test_ctx<'a>(home: &'a str, key: &'a SshPublicKey, ssh_config: &'a Path) -> Context<'a> {
+        Context {
+            home,
+            ssh_config,
+            dry_run: true,
+            local_public_key: key,
+            cli_mode: true,
+            local_name: "testhost",
+            local_ip: None,
+        }
+    }
+
+    fn test_state(device: &str, user: &str) -> InteractiveState {
+        InteractiveState {
+            known_keys: HashSet::new(),
+            key_to_device: HashMap::new(),
+            pinned_signing_keys: HashMap::new(),
+            rejected_signing_keys: HashSet::new(),
+            rotation_pending: None,
+            pending_devices: VecDeque::new(),
+            pending_keys: HashSet::new(),
+            active_pane: ActivePane::main_menu(),
+            navigation: Navigation::overview(),
+            pending_selected: None,
+            added_selected: Some(device.to_string()),
+            known_ip: HashMap::new(),
+            rejected_keys: HashSet::new(),
+            rename_state: None,
+            delete_selection: None,
+            wipe_pending: false,
+            setup_cd_pending: false,
+            temp_users: HashMap::new(),
+            users_selected: Some(user.to_string()),
+            temp_user_pending: None,
+            new_count: 0,
+        }
+    }
+
+    #[test]
+    fn temp_user_left_over_from_a_previous_run_is_removable() {
+        let (dir, home) = test_home("leftover");
+        let root = root_config_dir(&home);
+        // A temporary user persisted in a previous run: the file exists only
+        // in the tmp/ overlay and the in-memory temp_users map is empty.
+        proxy::write_tmp_user_file(&root, "laptop", "alice").unwrap();
+
+        let key = SshPublicKey::from("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFake");
+        let ssh_config = dir.join("ssh_config");
+        let ctx = test_ctx(&home, &key, &ssh_config);
+        let mut state = test_state("laptop", "alice");
+
+        assert!(
+            state.is_temporary_user(&ctx, "laptop", "alice"),
+            "a tmp/-only user must be recognized as temporary even when temp_users is empty"
+        );
+        state.remove_temp_user(&ctx);
+        assert!(proxy::user_file(&root, "laptop", "alice").is_none(), "tmp/ user file must be deleted");
+        assert!(!state.is_temporary_user(&ctx, "laptop", "alice"));
+        assert_eq!(state.users_selected, None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn confirmed_user_is_not_temporary_and_survives_removal() {
+        let (dir, home) = test_home("confirmed");
+        let root = root_config_dir(&home);
+        // Declared by the device in the git/ layer ...
+        ensure_local_user_file(&root.join(GIT_DIR), "laptop", "carol").unwrap();
+        // ... plus a tmp/-only user, to make sure only the latter is removed.
+        proxy::write_tmp_user_file(&root, "laptop", "alice").unwrap();
+
+        let key = SshPublicKey::from("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFake");
+        let ssh_config = dir.join("ssh_config");
+        let ctx = test_ctx(&home, &key, &ssh_config);
+        let mut state = test_state("laptop", "carol");
+
+        assert!(!state.is_temporary_user(&ctx, "laptop", "carol"));
+        state.remove_temp_user(&ctx);
+        assert!(proxy::user_file(&root, "laptop", "carol").is_some(), "git/ user file must survive");
+        assert!(state.users_selected.is_some(), "selection kept when nothing was removed");
+
+        state.users_selected = Some("alice".to_string());
+        assert!(state.is_temporary_user(&ctx, "laptop", "alice"));
+        state.remove_temp_user(&ctx);
+        assert!(proxy::user_file(&root, "laptop", "alice").is_none());
+        assert!(proxy::user_file(&root, "laptop", "carol").is_some());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn remove_temp_user_clears_only_the_matching_in_memory_entry() {
+        let (dir, home) = test_home("map");
+        let root = root_config_dir(&home);
+        // One temp user added this run (in-memory entry) and one left over
+        // from a previous run: both live in tmp/, the map holds only one.
+        proxy::write_tmp_user_file(&root, "laptop", "alice").unwrap();
+        proxy::write_tmp_user_file(&root, "laptop", "bob").unwrap();
+
+        let key = SshPublicKey::from("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFake");
+        let ssh_config = dir.join("ssh_config");
+        let ctx = test_ctx(&home, &key, &ssh_config);
+        let mut state = test_state("laptop", "bob");
+        state.temp_users.insert("laptop".to_string(), "alice".to_string());
+
+        state.remove_temp_user(&ctx);
+        assert!(proxy::user_file(&root, "laptop", "bob").is_none());
+        assert!(
+            state.temp_users.get("laptop").is_some_and(|u| u == "alice"),
+            "the in-memory entry for another temp user must be kept"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 
