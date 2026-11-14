@@ -21,8 +21,8 @@ use crate::cli::{NameConflict,
     shell_rc_file, sync_git, trust_new_signing_key, unique_device_name, usage,
     wipe as wipe_config,
 };
-use crate::config::{CONFIG_DIR, GIT_DIR, Device, load_config};
-use crate::config::users::load_device_users;
+use crate::config::{root_config_dir, GIT_DIR, Device, load_config};
+use crate::config::users::load_device_users_merged;
 use crate::discovery::beacon::BeaconDevice;
 use crate::ssh::config::update_block;
 use crate::ssh::keys::{SigningPublicKeyB64, SshPublicKey};
@@ -265,8 +265,10 @@ pub struct InteractiveState {
     /// confirm before the 'regroup-cd' shell function is installed.
     setup_cd_pending: bool,
     /// Temporary user per device (device name → user name), added this
-    /// run from the Users panel. In memory only: a device's users/ directory
-    /// is written by the device itself. Its only purpose is to build the
+    /// run from the Users panel. Persisted at
+    /// `tmp/devices/<name>/users/<user>.json` (never committed or synced,
+    /// purged once the device declares the same user in git/); this
+    /// in-memory map is the session cache. Its purpose is to build the
     /// git remote URL (and thus allow a sync) until the device's declared
     /// users arrive through that sync.
     temp_users: HashMap<String, String>,
@@ -755,13 +757,13 @@ impl InteractiveState {
                 }
             }
             Action::TempUserName(name) => {
-                self.add_temp_user(name);
+                self.add_temp_user(ctx, name);
             }
             Action::CancelTempUser => {
                 self.temp_user_pending = None;
             }
             Action::RemoveTempUser => {
-                self.remove_temp_user();
+                self.remove_temp_user(ctx);
             }
             Action::DeleteConfirm => self.delete_selected(ctx, tui),
             Action::DeleteCancel => self.delete_selection = None,
@@ -1090,7 +1092,8 @@ impl InteractiveState {
         let Some(name) = self.added_selected.as_ref() else {
             return Vec::new();
         };
-        let config_dir = Path::new(ctx.home).join(CONFIG_DIR).join(GIT_DIR);
+        let root = root_config_dir(ctx.home);
+        let config_dir = root.join(GIT_DIR);
         let current_user = std::env::var("USER")
             .or_else(|_| std::env::var("LOGNAME"))
             .unwrap_or_default();
@@ -1099,8 +1102,13 @@ impl InteractiveState {
             .join(ctx.local_name)
             .join("connections");
         let mut users = Vec::new();
-        if let Ok(known) = load_device_users(&config_dir, name) {
-            for user in known {
+        // Users through the config proxy: declared by the device in git/
+        // (Confirmed) or only present in the tmp/ overlay (Temporary). On
+        // overlap git/ wins and the stale tmp/ copy is purged, so a
+        // temporary user is superseded by a declared user of the same name.
+        if let Ok(known) = load_device_users_merged(&root, name) {
+            for entry in known {
+                let user = entry.user;
                 // Connection file names sanitize their members (see
                 // config::connection), so mirror that here.
                 let sanitize = |s: &str| s.replace('@', "_").replace('/', "_").replace(' ', "_");
@@ -1111,18 +1119,21 @@ impl InteractiveState {
                     sanitize(name)
                 );
                 let installed = connections_dir.join(connection_file).exists();
+                let status = if installed {
+                    UserStatus::KeyInstalled
+                } else if entry.temporary {
+                    UserStatus::Temporary
+                } else {
+                    UserStatus::Confirmed
+                };
                 users.push(UiUser {
                     name: user.name,
-                    status: if installed {
-                        UserStatus::KeyInstalled
-                    } else {
-                        UserStatus::Confirmed
-                    },
+                    status,
                 });
             }
         }
-        // A temporary user is superseded by a declared user of the same
-        // name: the sync brought the device's own data.
+        // Fallback: a temporary user added this run whose tmp/ write failed
+        // (kept in memory only).
         if let Some(temp) = self.temp_users.get(name)
             && !users.iter().any(|u| u.name == *temp)
         {
@@ -1166,9 +1177,10 @@ impl InteractiveState {
     }
 
     /// The user typed a temporary user name for the pending device:
-    /// remember it (in memory only) and select it, so a git sync can reach
-    /// the device. The sync replaces it with the device's declared users.
-    fn add_temp_user(&mut self, name: String) {
+    /// persist it in the tmp/ overlay and select it, so a git sync can
+    /// reach the device. The sync replaces it with the device's declared
+    /// users (the tmp/ copy is then purged).
+    fn add_temp_user(&mut self, ctx: &Context, name: String) {
         let Some(device) = self.temp_user_pending.take() else {
             return;
         };
@@ -1177,20 +1189,35 @@ impl InteractiveState {
             ui::log("  - A user name must be non-empty and contain no '@', '/' or space");
             return;
         }
-        ui::log(&format!(
-            "  - Temporary user {name} on {device} (in memory only) — press 's' to sync and get the device's declared users"
-        ));
+        // Persist in the tmp/ overlay: never committed, never synced, purged
+        // once the device declares the same user in git/. If the write
+        // fails, keep it in memory for this run only.
+        let root = root_config_dir(ctx.home);
+        match crate::config::proxy::write_tmp_user_file(&root, &device, &name) {
+            Ok(_) => ui::log(&format!(
+                "  - Temporary user {name} on {device} (kept in tmp/ until the device declares it) — press 's' to sync and get the device's declared users"
+            )),
+            Err(e) => ui::log(&format!(
+                "  - Temporary user {name} on {device} kept in memory only (could not persist to tmp/: {e}) — press 's' to sync"
+            )),
+        }
         self.temp_users.insert(device.clone(), name.clone());
         self.users_selected = Some(name);
     }
 
     /// Remove the selected temporary user of the selected device.
-    fn remove_temp_user(&mut self) {
+    fn remove_temp_user(&mut self, ctx: &Context) {
         let (Some(device), Some(user)) = (self.added_selected.clone(), self.users_selected.clone())
         else {
             return;
         };
         if self.is_temporary_user(&device, &user) {
+            // Delete from both proxy layers (the tmp/ file is ours, but a
+            // git/ copy would mean the device declared the same user).
+            let root = root_config_dir(ctx.home);
+            if let Err(e) = crate::config::proxy::delete_user(&root, &device, &user) {
+                ui::log(&format!("  - could not remove the temporary user file: {e}"));
+            }
             self.temp_users.remove(&device);
             self.users_selected = None;
             ui::log(&format!("  - Temporary user {user} on {device} removed"));
@@ -1223,7 +1250,7 @@ impl InteractiveState {
             return;
         };
 
-        let config_dir = Path::new(ctx.home).join(CONFIG_DIR).join(GIT_DIR);
+        let config_dir = root_config_dir(ctx.home).join(GIT_DIR);
         let current_user = std::env::var("USER")
             .or_else(|_| std::env::var("LOGNAME"))
             .unwrap_or_else(|_| "unknown".to_string());
@@ -1274,7 +1301,7 @@ impl InteractiveState {
             ));
             return;
         }
-        let config_dir = Path::new(ctx.home).join(CONFIG_DIR).join(GIT_DIR);
+        let config_dir = root_config_dir(ctx.home).join(GIT_DIR);
         let current_user = std::env::var("USER")
             .or_else(|_| std::env::var("LOGNAME"))
             .unwrap_or_else(|_| "unknown".to_string());

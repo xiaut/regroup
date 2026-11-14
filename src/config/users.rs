@@ -11,7 +11,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use super::{device_dir, USERS_DIR};
+use super::{device_dir, DEVICES_DIR, USERS_DIR};
 
 /// A user known to run on a device
 #[derive(Clone, Debug, PartialEq)]
@@ -31,16 +31,17 @@ impl DeviceUser {
     }
 }
 
-/// Path of a user file: `devices/<device>/users/<sanitized user>.json`.
+/// Path of a user file in the git layer:
+/// `devices/<device>/users/<sanitized user>.json`.
 pub fn user_file_path(config_dir: &Path, device: &str, user: &str) -> PathBuf {
     device_dir(config_dir, device)
         .join(USERS_DIR)
-        .join(format!("{}.json", sanitize(user)))
+        .join(format!("{}.json", sanitize_user(user)))
 }
 
 /// Characters that would break the file-name conventions ('@' qualifies a
 /// remote member in connection names, '/' separates paths).
-fn sanitize(name: &str) -> String {
+pub(crate) fn sanitize_user(name: &str) -> String {
     name.replace('@', "_").replace('/', "_").replace(' ', "_")
 }
 
@@ -104,6 +105,48 @@ pub fn load_device_users(config_dir: &Path, device: &str) -> io::Result<Vec<Devi
     Ok(users)
 }
 
+/// A user visible through the configuration proxy, with the layer it comes
+/// from: `temporary` is true when the file exists only in the `tmp/` overlay
+/// (not yet declared by the device itself in `git/`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct MergedUser {
+    pub user: DeviceUser,
+    pub temporary: bool,
+}
+
+/// Load all users of a device through the proxy (`git/ ∪ (tmp/ − git/)`,
+/// `git/` wins on overlap, stale `tmp/` copies purged), sorted by name.
+/// Unparseable files are skipped, like in [`load_device_users`].
+pub fn load_device_users_merged(root: &Path, device: &str) -> io::Result<Vec<MergedUser>> {
+    let rel_dir = format!("{DEVICES_DIR}/{device}/{USERS_DIR}");
+    let mut users = Vec::new();
+    for file in super::proxy::merged_files(root, &rel_dir) {
+        if file.path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let Ok(content) = fs::read_to_string(&file.path) else {
+            continue;
+        };
+        let Ok(root_json) = serde_json::from_str::<serde_json::Value>(&content) else {
+            continue;
+        };
+        let Some(name) = root_json.get("name").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let first_seen = root_json
+            .get("first_seen")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        users.push(MergedUser {
+            user: DeviceUser::new(name, &first_seen),
+            temporary: file.tmp_only,
+        });
+    }
+    users.sort_by(|a, b| a.user.name.cmp(&b.user.name));
+    Ok(users)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -147,5 +190,30 @@ mod tests {
         assert_eq!(users.iter().map(|u| u.name.as_str()).collect::<Vec<_>>(), ["alice", "bob"]);
         assert!(load_device_users(&dir, "laptop").unwrap().is_empty());
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn merged_users_union_layers_with_git_winning() {
+        use super::super::proxy;
+        // root layout: root/git/... (declared) and root/tmp/... (temporary)
+        let root = temp_dir("merged");
+        let git = root.join("git");
+        // Declared in git/.
+        assert!(ensure_local_user_file(&git, "ordi", "alice").unwrap());
+        // Temporary in tmp/ only.
+        proxy::write_tmp_user_file(&root, "ordi", "bob").unwrap();
+        // Overlap: same user in both layers — git/ wins, tmp/ copy purged.
+        proxy::write_tmp_user_file(&root, "ordi", "alice").unwrap();
+
+        let users = load_device_users_merged(&root, "ordi").unwrap();
+        let names: Vec<(&str, bool)> = users.iter().map(|u| (u.user.name.as_str(), u.temporary)).collect();
+        assert_eq!(names, [("alice", false), ("bob", true)]);
+        assert!(!proxy::tmp_user_file(&root, "ordi", "alice").exists(), "stale tmp/ copy purged");
+
+        // Once the device declares bob in git/, the tmp/ copy is stale.
+        assert!(ensure_local_user_file(&git, "ordi", "bob").unwrap());
+        let users = load_device_users_merged(&root, "ordi").unwrap();
+        assert!(users.iter().all(|u| !u.temporary));
+        let _ = fs::remove_dir_all(&root);
     }
 }
