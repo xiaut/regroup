@@ -20,13 +20,17 @@ git/
 
 The `repo.rs` module handles:
 
-- Creating the initial git repository
-- Configuring git settings:
-  - `init.defaultBranch = main`
-  - `pull.rebase = true` (prevents merge commits)
-  - `push.default = current`
-  - `merge.ff = only` (fast-forward only)
+- Creating the initial git repository with `git init -b main` (falling back
+  to `symbolic-ref HEAD refs/heads/main` on git < 2.28)
+- Configuring git settings (repo-local):
+  - `user.name` / `user.email` (commits are created automatically)
   - `commit.gpgsign = false` (no GPG signing)
+  - `core.editor = true` / `sequence.editor = true` (never open an interactive editor)
+  - `receive.denyCurrentBranch = updateInstead` (decentralized push to the checked-out branch)
+  - `pull.rebase = true` (linear history, last-writer-wins ordering)
+  - `merge.ff = only` (fast-forward only)
+  - `push.default = current`
+  - `fetch.prune = true` (drop remote-tracking refs of removed devices)
 
 ## Repository Checks
 
