@@ -29,12 +29,18 @@ pub enum KeyActionResult {
 }
 
 /// Install a key on a remote device
+///
+/// `to_device` is the logical device name (used in the connection ID and
+/// file names); `to_ip` is the address the device advertised in its beacon,
+/// used as the actual SSH transport target — the name is never resolved
+/// (no DNS, no ~/.ssh/config alias, which regroup writes itself).
 pub fn install_key_action(
     _home: &str,
     config_dir: &Path,
     local_device: &str,
     current_user: &str,
     to_device: &str,
+    to_ip: &str,
     to_user: &str,
     to_port: u16,
 ) -> Result<KeyActionResult, String> {
@@ -52,9 +58,12 @@ pub fn install_key_action(
         )));
     }
     
-    // Check if device is reachable
-    if !is_reachable(to_device, to_port, to_user) {
-        return Ok(KeyActionResult::Error(format!("Device {} unreachable", to_device)));
+    // Check if device is reachable at its advertised IP
+    if !is_reachable(to_ip, to_port) {
+        return Ok(KeyActionResult::Error(format!(
+            "Device {} unreachable at {}:{}",
+            to_device, to_ip, to_port
+        )));
     }
     
     // Check if key already exists
@@ -77,21 +86,24 @@ pub fn install_key_action(
     
     // Log SSH connection details
     crate::ui::log(&format!(
-        "Connecting via SSH to {}@{} on port {} to install key...",
-        to_user, to_device, to_port
+        "Connecting via SSH to {}@{} ({}) on port {} to install key...",
+        to_user, to_ip, to_device, to_port
     ));
     crate::ui::log(
         "Note: If the remote device requires password authentication, you will be prompted for a password."
     );
     
-    // Build the command for the remote device
-    // Use separate arguments to avoid shell quoting issues
+    // Build the command for the remote device.
+    // Options must come BEFORE the destination: everything after `user@host`
+    // is sent to the remote as the command.
     let mut ssh_cmd = Command::new("ssh");
-    ssh_cmd.arg(format!("{}@{}", to_user, to_device));
     if to_port != 22 {
         ssh_cmd.arg("-p").arg(to_port.to_string());
     }
-    let output = ssh_cmd
+    // Dial the beacon-advertised IP directly, not the device-name alias
+    // (the alias lives in ~/.ssh/config, which regroup writes itself).
+    ssh_cmd.arg(format!("{}@{}", to_user, to_ip));
+    ssh_cmd
         .arg("regroup")
         .arg("receive-install-key")
         .arg("--source-user")
@@ -101,24 +113,22 @@ pub fn install_key_action(
         .arg("--public-key")
         .arg(&public_key)
         .arg("--connection-id")
-        .arg(connection_id)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .output();
+        .arg(connection_id);
+    // Inherit the terminal so ssh can prompt for a password interactively: in
+    // the TUI's temporary CLI mode this process's stdio IS the user's
+    // terminal. Capturing the streams (Command::output) nulls the child's
+    // stdin and only shows stderr after exit, which makes password auth
+    // impossible — ssh fails with "Permission denied (publickey,password)"
+    // without ever prompting.
+    let status = ssh_cmd
+        .stdin(std::process::Stdio::inherit())
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
+        .status();
     
-    match output {
-        Ok(output) => {
-            // Log stderr to help user understand what's happening (e.g., password prompts)
-            if !output.stderr.is_empty() {
-                let stderr_str = String::from_utf8_lossy(&output.stderr);
-                for line in stderr_str.lines() {
-                    if !line.is_empty() {
-                        crate::ui::log(&format!("ssh {}@{}: {}", to_user, to_device, line));
-                    }
-                }
-            }
-            
-            if output.status.success() {
+    match status {
+        Ok(status) => {
+            if status.success() {
                 // Save connection file on source device
                 let connection = Connection::new(
                     current_user,
@@ -157,6 +167,9 @@ pub fn install_key_action(
 }
 
 /// Remove a key from a remote device
+///
+/// `to_device` is the logical device name; `to_ip` is the beacon-advertised
+/// address used as the actual SSH transport target (see install_key_action).
 pub fn remove_key_action(
     _home: &str,
     config_dir: &Path,
@@ -164,13 +177,17 @@ pub fn remove_key_action(
     current_user: &str,
     _from_user: &str,
     to_device: &str,
+    to_ip: &str,
     to_user: &str,
     to_port: u16,
     connection_id: &str,
 ) -> Result<KeyActionResult, String> {
-    // Check if device is reachable
-    if !is_reachable(to_device, to_port, to_user) {
-        return Ok(KeyActionResult::Error(format!("Device {} unreachable", to_device)));
+    // Check if device is reachable at its advertised IP
+    if !is_reachable(to_ip, to_port) {
+        return Ok(KeyActionResult::Error(format!(
+            "Device {} unreachable at {}:{}",
+            to_device, to_ip, to_port
+        )));
     }
     
     // Check if connection file exists locally
@@ -187,42 +204,39 @@ pub fn remove_key_action(
     
     // Log SSH connection details
     crate::ui::log(&format!(
-        "Connecting via SSH to {}@{} on port {} to remove key...",
-        to_user, to_device, to_port
+        "Connecting via SSH to {}@{} ({}) on port {} to remove key...",
+        to_user, to_ip, to_device, to_port
     ));
     crate::ui::log(
         "Note: If the remote device requires password authentication, you will be prompted for a password."
     );
     
-    // Build the command for the remote device
-    // Use separate arguments to avoid shell quoting issues
+    // Build the command for the remote device.
+    // Options must come BEFORE the destination: everything after `user@host`
+    // is sent to the remote as the command.
     let mut ssh_cmd = Command::new("ssh");
-    ssh_cmd.arg(format!("{}@{}", to_user, to_device));
     if to_port != 22 {
         ssh_cmd.arg("-p").arg(to_port.to_string());
     }
-    let output = ssh_cmd
+    // Dial the beacon-advertised IP directly, not the device-name alias
+    // (the alias lives in ~/.ssh/config, which regroup writes itself).
+    ssh_cmd.arg(format!("{}@{}", to_user, to_ip));
+    ssh_cmd
         .arg("regroup")
         .arg("receive-remove-key")
         .arg("--connection-id")
-        .arg(connection_id)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .output();
+        .arg(connection_id);
+    // Inherit the terminal so ssh can prompt for a password interactively
+    // (see install_key_action for why the streams must not be captured).
+    let status = ssh_cmd
+        .stdin(std::process::Stdio::inherit())
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
+        .status();
     
-    match output {
-        Ok(output) => {
-            // Log stderr to help user understand what's happening (e.g., password prompts)
-            if !output.stderr.is_empty() {
-                let stderr_str = String::from_utf8_lossy(&output.stderr);
-                for line in stderr_str.lines() {
-                    if !line.is_empty() {
-                        crate::ui::log(&format!("ssh {}@{}: {}", to_user, to_device, line));
-                    }
-                }
-            }
-            
-            if output.status.success() {
+    match status {
+        Ok(status) => {
+            if status.success() {
                 // Delete connection file on source device
                 let connections_dir = config_dir.join("devices").join(local_device).join("connections");
                 let connection_file_name = format!("{}->{}@{}.json", current_user, to_user, to_device);

@@ -62,6 +62,23 @@ subcommands on the target device (see [internal.md](internal.md)), and by the
 TUI key actions on the source device, which then run
 `ssh user@device regroup receive-install-key ...` / `receive-remove-key ...`.
 
+Two details matter for the key actions to work from the TUI's temporary
+CLI mode on any network:
+
+- The transport address is the **IP the device advertised in its beacon**
+  (`known_ip` in the interactive state), never the device name: no DNS, no
+  `~/.ssh/config` alias — regroup writes that alias itself, so resolving
+  through it would be circular and would break wherever the name does not
+  resolve. `is_reachable` is therefore a plain TCP connect to `ip:port`; it
+  must not run an authenticated `ssh ... true` probe either, because
+  installing a key is exactly the case where only password auth is
+  available yet. The key actions dial `ssh -p <port> <user>@<ip>` directly
+  (options before the destination).
+- The key actions spawn `ssh` with **inherited** stdin/stdout/stderr, so the
+  password prompt is shown and can be answered. Capturing the streams with
+  `Command::output()` nulls the child's stdin and makes password auth
+  impossible (`Permission denied (publickey,password)` with no prompt).
+
 ## shell.rs
 
 `shell_rc_file(home)` and `setup_cd(home) -> Result<PathBuf, String>` —

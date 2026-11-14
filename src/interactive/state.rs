@@ -1263,8 +1263,22 @@ impl InteractiveState {
             .or_else(|_| std::env::var("LOGNAME"))
             .unwrap_or_else(|_| "unknown".to_string());
         let target_port = target_device.port;
+        // Transport address = the IP the device advertised in its beacon
+        // (known_ip). The device name is never resolved: no DNS, no
+        // ~/.ssh/config alias — regroup writes that alias itself.
+        let Some(target_ip) = self.known_ip.get(&target_device.ssh_public_key).cloned() else {
+            ui::log(&format!(
+                "  - No beacon received from {} this run, so its current IP is unknown — \
+                 wait for its next announcement (devices announce on every network)",
+                target_name
+            ));
+            return;
+        };
 
-        ui::log(&format!("Installing key to {}@{}", target_user, target_name));
+        ui::log(&format!(
+            "Installing key to {}@{} ({})",
+            target_user, target_name, target_ip
+        ));
 
         let result = ui.with_clean_terminal(|| {
             crate::tui::key_actions::install_key_action(
@@ -1273,6 +1287,7 @@ impl InteractiveState {
                 ctx.local_name,
                 &current_user,
                 &target_name,
+                &target_ip,
                 &target_user,
                 target_port,
             )
@@ -1314,15 +1329,31 @@ impl InteractiveState {
             .or_else(|_| std::env::var("LOGNAME"))
             .unwrap_or_else(|_| "unknown".to_string());
 
-        let connection_id = format!("{}->{}@{}", current_user, target_user, target_name);
-        let target_port = self
+        let Some(target_device) = self
             .key_to_device
             .values()
             .find(|m| m.name.as_str() == target_name)
-            .map(|m| m.port)
-            .unwrap_or(22);
+            .cloned()
+        else {
+            ui::log(&format!("Device '{}' not found", target_name));
+            return;
+        };
+        let connection_id = format!("{}->{}@{}", current_user, target_user, target_name);
+        let target_port = target_device.port;
+        // Transport address = the beacon-advertised IP, never the name alias.
+        let Some(target_ip) = self.known_ip.get(&target_device.ssh_public_key).cloned() else {
+            ui::log(&format!(
+                "  - No beacon received from {} this run, so its current IP is unknown — \
+                 wait for its next announcement (devices announce on every network)",
+                target_name
+            ));
+            return;
+        };
 
-        ui::log(&format!("Removing connection: {}", connection_id));
+        ui::log(&format!(
+            "Removing connection: {} ({})",
+            connection_id, target_ip
+        ));
 
         let result = ui.with_clean_terminal(|| {
             crate::tui::key_actions::remove_key_action(
@@ -1332,6 +1363,7 @@ impl InteractiveState {
                 &current_user,
                 &current_user,
                 &target_name,
+                &target_ip,
                 &target_user,
                 target_port,
                 &connection_id,

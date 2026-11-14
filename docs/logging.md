@@ -21,9 +21,10 @@ report through the same `regroup::logging` sink.
 ## Rule 1 — Announce password prompts before they happen
 
 Whenever regroup runs an operation that may ask the user for a password or
-credentials (`ssh`, `ssh-keyscan`, `git pull`/`push` against an authenticated
-remote), a log line must explain what is about to happen **just before** the
-operation starts. In full-screen mode the external command's prompt is visible
+credentials (`ssh`, `git pull`/`push` against an authenticated remote — note
+that `ssh-keyscan` never prompts: it only fetches host keys without
+authenticating), a log line must explain what is about to happen **just
+before** the operation starts. In full-screen mode the external command's prompt is visible
 (stderr is passed through in direct output mode), but without the log line the
 user cannot tell *why* a prompt appeared.
 

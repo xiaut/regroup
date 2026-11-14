@@ -5,9 +5,11 @@
 
 #[allow(dead_code)]
 use std::fs;
+use std::net::{TcpStream, ToSocketAddrs};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 
 use crate::config::{CONFIG_DIR, GIT_DIR};
 use crate::git::sync::git_add_and_commit_file;
@@ -159,42 +161,36 @@ pub fn remove_authorized_key(public_key: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Check if a device is reachable via SSH
+/// Check that a device is reachable at the TCP level, at the IP it advertised
+/// in its beacon.
+///
+/// Two deliberate choices:
+/// - The device NAME is never resolved here — no DNS, no ~/.ssh/config alias.
+///   regroup writes that alias itself, so resolving through it would be
+///   circular and would break on any network where the name does not resolve.
+///   The beacon IP is the authoritative transport address (it is checked
+///   against the UDP packet's source address when the beacon is received).
+/// - Authentication is NOT tested: installing or removing a key may
+///   legitimately rely on password auth (the key is not authorized yet), and
+///   an `ssh -o BatchMode=yes ... true` probe would refuse exactly that case
+///   and report the device as unreachable.
 #[allow(dead_code)]
-pub fn is_reachable(host: &str, port: u16, user: &str) -> bool {
-    crate::ui::log(&format!(
-        "Checking if {}@{} on port {} is reachable via SSH...",
-        user, host, port
-    ));
-    let output = Command::new("ssh")
-        .arg("-o")
-        .arg("ConnectTimeout=5")
-        .arg("-o")
-        .arg("BatchMode=yes")
-        .arg(format!("{}@{}", user, host))
-        .arg("-p")
-        .arg(port.to_string())
-        .arg("true")
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .output();
-    
-    match output {
-        Ok(o) => {
-            // Log stderr if present (but don't fail on connection errors)
-            if !o.stderr.is_empty() {
-                let stderr_str = String::from_utf8_lossy(&o.stderr);
-                // Only log the last line to avoid spam
-                if let Some(last_line) = stderr_str.lines().last() {
-                    if !last_line.is_empty() {
-                        crate::ui::log(&format!("ssh: {}", last_line));
-                    }
-                }
-            }
-            o.status.success()
+pub fn is_reachable(ip: &str, port: u16) -> bool {
+    crate::ui::log(&format!("Checking if {}:{} is reachable...", ip, port));
+    let addrs: Vec<_> = match (ip, port).to_socket_addrs() {
+        Ok(a) => a.collect(),
+        Err(e) => {
+            crate::ui::log(&format!("cannot resolve {}: {}", ip, e));
+            return false;
         }
-        Err(_) => false,
+    };
+    for addr in &addrs {
+        if TcpStream::connect_timeout(addr, Duration::from_secs(5)).is_ok() {
+            return true;
+        }
     }
+    crate::ui::log(&format!("connect to {}:{} failed", ip, port));
+    false
 }
 
 /// Get the config directory path
@@ -261,3 +257,4 @@ pub fn get_current_user() -> String {
         std::env::var("LOGNAME").unwrap_or_else(|_| "unknown".to_string())
     })
 }
+

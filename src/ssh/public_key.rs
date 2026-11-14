@@ -108,7 +108,8 @@ fn get_server_public_key_from_files() -> Option<SshPublicKey> {
 /// Use ssh-keyscan to get the server host public key from localhost
 fn get_server_public_key_via_keyscan() -> Option<SshPublicKey> {
     // Try to scan localhost for SSH host keys
-    crate::ui::log("Scanning localhost for SSH host keys (may prompt for password)...");
+    // ssh-keyscan only fetches host keys, it never authenticates: no password prompt.
+    crate::ui::log("Scanning localhost for SSH host keys...");
     // Show stderr for visibility
     let scan = Command::new("ssh-keyscan")
         .arg("-T")
@@ -328,10 +329,8 @@ pub enum HostKeyVerification {
 /// if the host is unreachable.
 fn keyscan(ip: &str, port: u16) -> std::io::Result<String> {
     // Fetch host keys via ssh-keyscan
-    crate::ui::log(&format!(
-        "Fetching SSH host keys from {}:{} (may prompt for password)...",
-        ip, port
-    ));
+    // ssh-keyscan only fetches host keys, it never authenticates: no password prompt.
+    crate::ui::log(&format!("Fetching SSH host keys from {}:{}...", ip, port));
     // Show stderr for visibility
     let output = Command::new("ssh-keyscan")
         .arg("-T")
