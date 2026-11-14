@@ -229,14 +229,14 @@ The TUI interface uses **ratatui** (formerly tui-rs) with **crossterm** for term
 
 - **Detected panel** (left, yellow): Devices that have announced but not been accepted
 - **Added panel** (right, green): Devices already in the configuration.
-  A **Users sub-panel** is nested inside this panel for the selected machine;
-  it lists the machine's users with their status (temporary — to confirm /
-  confirmed / SSH key installed). It is a sub-context of the machine, not a
-  machine, not a sibling panel: continuing with `Right` past the Added panel
+  A **Users sub-panel** is nested inside this panel for the selected device;
+  it lists the device's users with their status (temporary — to confirm /
+  confirmed / SSH key installed). It is a sub-context of the device, not a
+  device, not a sibling panel: continuing with `Right` past the Added panel
   (selected, then fullscreen) enters the sub-panel (first user selected),
-  and `Left` returns to the machine level. Machine+user actions
+  and `Left` returns to the device level. Device+user actions
   (install/remove SSH key) live there and only appear for a confirmed user;
-  a temporary user only allows the git sync that brings the machine's
+  a temporary user only allows the git sync that brings the device's
   declared users. See [navigation.md](../navigation.md).
 - **Logs pane** (middle): General messages and logs
 - **Question block** (bottom): Current question and available actions

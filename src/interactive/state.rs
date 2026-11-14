@@ -147,7 +147,7 @@ pub fn run(ctx: &Context, udp_port: u16, beacons: &Receiver<BeaconDevice>) -> us
             state.added_selected = Some(added[0].name.clone());
         }
         
-        // The Users panel follows the machine selected in the Added panel.
+        // The Users panel follows the device selected in the Added panel.
         // It only exists while the Added (or Users) pane is on screen.
         let users = if matches!(state.active_pane, ActivePane::Added(_) | ActivePane::Users(_)) {
             state.users_view(ctx)
@@ -157,8 +157,8 @@ pub fn run(ctx: &Context, udp_port: u16, beacons: &Receiver<BeaconDevice>) -> us
         // A user is selected only while the Users pane is active (the
         // selection is refined by navigating into the sub-panel); leaving
         // the sub-panel drops it. Entering it selects the first user
-        // automatically — same behavior as the machine panels. A selection
-        // that no longer exists (machine changed or deleted, temporary user
+        // automatically — same behavior as the device panels. A selection
+        // that no longer exists (device changed or deleted, temporary user
         // removed) is dropped the same way.
         if !matches!(state.active_pane, ActivePane::Users(_)) {
             state.users_selected = None;
@@ -198,7 +198,7 @@ pub fn run(ctx: &Context, udp_port: u16, beacons: &Receiver<BeaconDevice>) -> us
             ActivePane::Detected(_) => selected,
             _ => None,
         };
-        // Multi-level selection: the parent (the machine) stays selected
+        // Multi-level selection: the parent (the device) stays selected
         // while the selection is refined on one of its users in the Users
         // pane.
         let added_selected = match state.active_pane {
@@ -267,12 +267,12 @@ pub struct InteractiveState {
     /// Temporary user per device (device name → user name), added this
     /// run from the Users panel. In memory only: a device's users/ directory
     /// is written by the device itself. Its only purpose is to build the
-    /// git remote URL (and thus allow a sync) until the machine's declared
+    /// git remote URL (and thus allow a sync) until the device's declared
     /// users arrive through that sync.
     temp_users: HashMap<String, String>,
     /// User selected in the Users panel, by name.
     users_selected: Option<String>,
-    /// Machine waiting for the user to type a temporary user name.
+    /// Device waiting for the user to type a temporary user name.
     temp_user_pending: Option<String>,
     /// Devices accepted this run.
     new_count: usize,
@@ -647,7 +647,7 @@ impl InteractiveState {
                     tui.with_clean_terminal(|| {
                         sync_git(ctx.home, &self.temp_users);
                         // A pull may have brought new device configs and
-                        // the machine-declared users: reload
+                        // the device-declared users: reload
                         self.reload(ctx);
                     });
                 }
@@ -1082,8 +1082,8 @@ impl InteractiveState {
         }
     }
     
-    /// The users of the machine selected in the Added panel, for the Users
-    /// panel: the users the machine declared in its configuration (users/,
+    /// The users of the device selected in the Added panel, for the Users
+    /// panel: the users the device declared in its configuration (users/,
     /// arrived through git sync), plus the temporary user if one was added
     /// this run and the sync has not brought a user of the same name yet.
     /// A confirmed user the local user has an outgoing connection to shows
@@ -1124,7 +1124,7 @@ impl InteractiveState {
             }
         }
         // A temporary user is superseded by a declared user of the same
-        // name: the sync brought the machine's own data.
+        // name: the sync brought the device's own data.
         if let Some(temp) = self.temp_users.get(name)
             && !users.iter().any(|u| u.name == *temp)
         {
@@ -1144,7 +1144,7 @@ impl InteractiveState {
     }
 
     /// Move the Users panel selection to the next (or previous when
-    /// `forward` is false) user of the selected machine, in the same order
+    /// `forward` is false) user of the selected device, in the same order
     /// as the Users panel. With no selection, selects the first one.
     fn move_users_selection(&mut self, ctx: &Context, forward: bool) {
         let names: Vec<String> = self
@@ -1167,9 +1167,9 @@ impl InteractiveState {
         self.users_selected = Some(names[new_pos].clone());
     }
 
-    /// The user typed a temporary user name for the pending machine:
+    /// The user typed a temporary user name for the pending device:
     /// remember it (in memory only) and select it, so a git sync can reach
-    /// the machine. The sync replaces it with the machine's declared users.
+    /// the device. The sync replaces it with the device's declared users.
     fn add_temp_user(&mut self, name: String) {
         let Some(device) = self.temp_user_pending.take() else {
             return;
@@ -1180,13 +1180,13 @@ impl InteractiveState {
             return;
         }
         ui::log(&format!(
-            "  - Temporary user {name} on {device} (in memory only) — press 's' to sync and get the machine's declared users"
+            "  - Temporary user {name} on {device} (in memory only) — press 's' to sync and get the device's declared users"
         ));
         self.temp_users.insert(device.clone(), name.clone());
         self.users_selected = Some(name);
     }
 
-    /// Remove the selected temporary user of the selected machine.
+    /// Remove the selected temporary user of the selected device.
     fn remove_temp_user(&mut self) {
         let (Some(device), Some(user)) = (self.added_selected.clone(), self.users_selected.clone())
         else {
@@ -1200,18 +1200,18 @@ impl InteractiveState {
     }
 
     /// Install the local user's SSH key towards the user selected in the
-    /// Users panel, on the machine selected in the Added panel. A machine
-    /// action alone is not enough: this is a machine+user action.
+    /// Users panel, on the device selected in the Added panel. A device
+    /// action alone is not enough: this is a device+user action.
     fn install_key_to_selected(&mut self, ctx: &Context, ui: &mut ui::Ui) {
         let (Some(target_name), Some(target_user)) =
             (self.added_selected.clone(), self.users_selected.clone())
         else {
-            ui::log("Select a machine, then one of its users (Right) first");
+            ui::log("Select a device, then one of its users (Right) first");
             return;
         };
         if self.is_temporary_user(&target_name, &target_user) {
             ui::log(&format!(
-                "  - {target_user} on {target_name} is temporary — sync git ('s') to get the machine's declared users first"
+                "  - {target_user} on {target_name} is temporary — sync git ('s') to get the device's declared users first"
             ));
             return;
         }
@@ -1221,7 +1221,7 @@ impl InteractiveState {
             .find(|m| m.name.as_str() == target_name)
             .cloned()
         else {
-            ui::log(&format!("Machine '{}' not found", target_name));
+            ui::log(&format!("Device '{}' not found", target_name));
             return;
         };
 
@@ -1262,12 +1262,12 @@ impl InteractiveState {
     }
 
     /// Remove the SSH key connection towards the user selected in the
-    /// Users panel, on the machine selected in the Added panel.
+    /// Users panel, on the device selected in the Added panel.
     fn remove_key_from_selected(&mut self, ctx: &Context, ui: &mut ui::Ui) {
         let (Some(target_name), Some(target_user)) =
             (self.added_selected.clone(), self.users_selected.clone())
         else {
-            ui::log("Select a machine, then one of its users (Right) first");
+            ui::log("Select a device, then one of its users (Right) first");
             return;
         };
         if self.is_temporary_user(&target_name, &target_user) {

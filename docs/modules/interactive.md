@@ -82,7 +82,7 @@ All mutable state of the interactive loop:
 pub struct InteractiveState {
     // Known devices
     pub known_keys: HashSet<SshPublicKey>,
-    pub key_to_machine: HashMap<SshPublicKey, Device>,
+    pub key_to_device: HashMap<SshPublicKey, Device>,
     pub pinned_signing_keys: HashMap<SshPublicKey, SigningPublicKeyB64>,
     
     // Signing key rotation
@@ -232,7 +232,7 @@ Returns devices to show in the Added panel:
    - If no: proceed to add
 3. Add device to configuration via `add_device_to_config()`
 4. Pin the signing key
-5. Add to known_keys and key_to_machine maps
+5. Add to known_keys and key_to_device maps
 6. Record IP in known_ip
 
 ### Ignoring Devices
@@ -243,7 +243,7 @@ Returns devices to show in the Added panel:
 
 ### Deleting Devices
 
-1. User selects device from Added panel (machine action), or machine+user
+1. User selects device from Added panel (device action), or device+user
    actions go through the Users sub-panel (directional `Right` past the
    fullscreen Added panel) with a user selected
 2. Confirm deletion

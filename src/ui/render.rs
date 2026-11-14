@@ -386,7 +386,7 @@ pub fn log_style(msg: &str) -> Style {
     }
 }
 
-/// Users sub-panel of the Added pane: the users of the selected machine,
+/// Users sub-panel of the Added pane: the users of the selected device,
 /// one row per user with the status column (temporary / confirmed / SSH key
 /// installed). Highlighted border when the panel is the active one.
 pub fn render_users_panel(
@@ -510,11 +510,11 @@ pub fn render_all_panes(
             frame.render_widget(detected_table, area);
         }
         ActivePane::Added(_) | ActivePane::Users(_) => {
-            // Full-screen machines pane with the Users sub-panel on the
-            // right: the users of the machine selected in the Added panel.
-            let machines_width = (width * 3) / 5;
-            let [machines_area, users_area] = Layout::horizontal([
-                Constraint::Length(machines_width),
+            // Full-screen devices pane with the Users sub-panel on the
+            // right: the users of the device selected in the Added panel.
+            let devices_width = (width * 3) / 5;
+            let [devices_area, users_area] = Layout::horizontal([
+                Constraint::Length(devices_width),
                 Constraint::Fill(1),
             ])
             .areas(area);
@@ -581,7 +581,7 @@ pub fn render_all_panes(
                     })
                     .border_style(added_border_style),
             );
-            frame.render_widget(added_table, machines_area);
+            frame.render_widget(added_table, devices_area);
 
             render_users_panel(
                 frame,

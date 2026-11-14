@@ -365,8 +365,8 @@ static ADDED_FULLSCREEN_KEYS: &[KeyBinding] = &[
 ];
 
 static USERS_FULLSCREEN_CONFIRMED_KEYS: &[KeyBinding] = &[
-    KeyBinding::internal(Esc, "Esc", "machines"),
-    KeyBinding::internal(Left, "Left", "machines"),
+    KeyBinding::internal(Esc, "Esc", "devices"),
+    KeyBinding::internal(Left, "Left", "devices"),
     KeyBinding::internal(Up, "Up", "select"),
     KeyBinding::internal(Down, "Down", "select"),
     KeyBinding::new(Char('s'), "s", "sync", Effect::Action(Action::Sync)),
@@ -376,8 +376,8 @@ static USERS_FULLSCREEN_CONFIRMED_KEYS: &[KeyBinding] = &[
 ];
 
 static USERS_FULLSCREEN_TEMP_KEYS: &[KeyBinding] = &[
-    KeyBinding::internal(Esc, "Esc", "machines"),
-    KeyBinding::internal(Left, "Left", "machines"),
+    KeyBinding::internal(Esc, "Esc", "devices"),
+    KeyBinding::internal(Left, "Left", "devices"),
     KeyBinding::internal(Up, "Up", "select"),
     KeyBinding::internal(Down, "Down", "select"),
     KeyBinding::new(Char('s'), "s", "sync", Effect::Action(Action::Sync)),
@@ -413,7 +413,7 @@ pub enum ActivePane {
     /// Added devices panel
     Added(Pane),
     /// Users sub-panel of the Added panel: the users of the selected
-    /// machine. Machine+user actions live here, not in the machine panel.
+    /// device. Device+user actions live here, not in the device panel.
     Users(Pane),
     /// Logs pane (formerly Activity)
     Logs(Pane),
@@ -455,20 +455,20 @@ pub struct UiDevice {
     pub port: u16,
 }
 
-/// Status of a user on the selected machine, shown in the Users panel.
+/// Status of a user on the selected device, shown in the Users panel.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum UserStatus {
     /// Added manually this run, in memory only: enough to build the git
-    /// remote URL and sync, until the machine's declared users arrive.
+    /// remote URL and sync, until the device's declared users arrive.
     Temporary,
-    /// Declared by the machine itself in its configuration (users/).
+    /// Declared by the device itself in its configuration (users/).
     Confirmed,
     /// Confirmed, and the local user has an SSH key installed towards
     /// this user (connection file in the local device's connections/).
     KeyInstalled,
 }
 
-/// One user of the selected machine, for the Users panel.
+/// One user of the selected device, for the Users panel.
 #[derive(Clone)]
 pub struct UiUser {
     pub name: String,
@@ -579,7 +579,7 @@ pub enum Action {
     UsersSelectPrev,
     /// Select next user in the Users panel.
     UsersSelectNext,
-    /// Start typing a temporary user name for the selected machine (key 'a').
+    /// Start typing a temporary user name for the selected device (key 'a').
     AddTempUser,
     /// The typed temporary user name was submitted.
     TempUserName(String),

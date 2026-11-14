@@ -76,7 +76,7 @@ The `validation` module enforces the following rules:
 
 ### Naming
 
-Connection files use a directional naming scheme: `<local_user>-><remote_user>@<remote_machine>.json`
+Connection files use a directional naming scheme: `<local_user>-><remote_user>@<remote_device>.json`
 
 The arrow indicates the direction of the connection from the perspective of the local device.
 

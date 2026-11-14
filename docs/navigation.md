@@ -47,7 +47,7 @@ Main screen (dashboard overview)
 ├── Detected panel (left)
 │   └── (device rows; Up/Down select, wrapping)
 ├── Added panel (right)
-│   └── machine rows (Up/Down select, wrapping)
+│   └── device rows (Up/Down select, wrapping)
 │       └── Users sub-panel   ← nested INSIDE the Added panel
 │           └── (user rows; Up/Down select, wrapping)
 └── Logs panel (bottom)
@@ -55,11 +55,11 @@ Main screen (dashboard overview)
 ```
 
 The **Users sub-panel is part of the Added panel**, not a sibling panel. It
-is a sub-context of the selected machine, reached by continuing in the same
-direction (`Right` from the Added panel); `Left` returns to the machine
+is a sub-context of the selected device, reached by continuing in the same
+direction (`Right` from the Added panel); `Left` returns to the device
 level. There is no lateral panel switch to reach it.
 
-`Right` always enters the Users selection mode, whatever the machine's user
+`Right` always enters the Users selection mode, whatever the device's user
 list looks like — even a single user, or none. Entering the mode is what
 unlocks the associated user actions; it is never skipped because the list
 is short or empty.
@@ -74,9 +74,9 @@ right panel, one step per press:
 | Press | State |
 |-------|-------|
 | `Right` | Added panel **selected** (highlighted only) |
-| `Right` | Added panel **fullscreen**, machine list active (first machine selected) |
-| `Right` | **Users sub-panel** of the selected machine (first user selected) |
-| `Left` | Back to the machine list (Users left) |
+| `Right` | Added panel **fullscreen**, device list active (first device selected) |
+| `Right` | **Users sub-panel** of the selected device (first user selected) |
+| `Left` | Back to the device list (Users left) |
 | `Left` | Back to Added selected |
 | `Left` | Back to the center, overview |
 
@@ -101,7 +101,7 @@ fullscreen Logs panel** (collapse back to the dashboard).
 
 ### List selection
 
-Inside a fullscreen panel (machines, users, detected devices), `Up`/`Down`
+Inside a fullscreen panel (devices, users, detected devices), `Up`/`Down`
 move the selection and **wrap around**: past the last item the selection
 loops back to the first, and vice versa. The selection never leaves its
 list; changing panels or zooming is done with the directional presses

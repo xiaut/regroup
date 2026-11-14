@@ -56,7 +56,7 @@ Connection files use a directional naming convention:
 devices/<name>/connections/<connection_id>.json
 ```
 
-Where `<connection_id>` follows the pattern: `<local_user>-><remote_user>@<remote_machine>`
+Where `<connection_id>` follows the pattern: `<local_user>-><remote_user>@<remote_device>`
 
 ### Direction
 

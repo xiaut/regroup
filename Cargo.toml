@@ -3,7 +3,7 @@ name = "regroup"
 version = "0.2.0"
 edition = "2024"
 license = "MIT"
-description = "Find machines by SSH host key fingerprint and update ~/.ssh/config"
+description = "Find devices by SSH host key fingerprint and update ~/.ssh/config"
 homepage = "https://github.com/xiaut/regroup"
 
 [dependencies]
