@@ -69,7 +69,9 @@ always shows it in full**. A temporary CLI pass from the TUI
 install/remove, signing-key trust) is the only time the stream is also
 printed to the CLI — so **the CLI shows exactly the lines emitted during
 passes**, and **everything shown in the CLI during a pass appears in the
-Logs pane** when the TUI resumes.
+Logs pane** when the TUI resumes. Each pass is delimited in the stream by
+two markers: `TUI -> CLI (<action>)` when the pass starts and
+`CLI -> TUI (<action>)` when the TUI resumes.
 
 Mechanics:
 

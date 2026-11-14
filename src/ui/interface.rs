@@ -150,14 +150,16 @@ impl Ui {
 
     /// Execute a function with a clean terminal (restored to normal mode),
     /// then reinitialize the TUI terminal afterwards. This is a temporary
-    /// CLI pass from the TUI: for the whole CLI-visible window — the
-    /// function itself and the "press Enter to return" pause — direct
-    /// output mode is on, so everything logged during the pass (by this
-    /// function or by background threads) is printed to stdout and appears
-    /// in the CLI, while still being recorded in the one log stream, so the
-    /// full pass reappears in the Logs pane when the TUI resumes. The guard
-    /// restores the previous mode when the pass ends, even on panic.
-    pub fn with_clean_terminal<F, R>(&mut self, f: F) -> R
+    /// CLI pass from the TUI, labelled `action`: the pass is delimited in
+    /// the one log stream by `TUI -> CLI (<action>)` and `CLI -> TUI
+    /// (<action>)` markers. For the whole CLI-visible window — the function
+    /// itself and the "press Enter to return" pause — direct output mode is
+    /// on, so everything logged during the pass (by this function or by
+    /// background threads) is printed to stdout and appears in the CLI,
+    /// while still being recorded in the stream, so the full pass reappears
+    /// in the Logs pane when the TUI resumes. The guard restores the
+    /// previous mode when the pass ends, even on panic.
+    pub fn with_clean_terminal<F, R>(&mut self, action: &str, f: F) -> R
     where
         F: FnOnce() -> R,
     {
@@ -172,6 +174,10 @@ impl Ui {
                 // are still recorded in the channel for the Logs pane)
                 let _direct = crate::ui::DirectOutputGuard::new();
 
+                // Mark the TUI -> CLI transition in the stream (printed in
+                // the CLI now, shown in the Logs pane when the TUI resumes)
+                crate::ui::log(&format!("TUI -> CLI ({action})"));
+
                 // Execute the function
                 let result = f();
 
@@ -181,6 +187,10 @@ impl Ui {
                 let mut input = String::new();
                 let _ = io::stdin().read_line(&mut input);
 
+                // Mark the CLI -> TUI transition before re-entering the
+                // alternate screen (still printed in the CLI, still recorded)
+                crate::ui::log(&format!("CLI -> TUI ({action})"));
+
                 // Reinitialize the terminal
                 // Note: ratatui::init() panics on failure, which is acceptable here
                 // as it indicates a terminal initialization error
@@ -189,8 +199,9 @@ impl Ui {
                 result
             }
             Ui::Plain(_) => {
-                // In plain mode, just execute the function, under the same
-                // contract: the log sink prints to stdout during the pass
+                // In plain mode there is no TUI to switch away from: just
+                // execute the function, under the same contract — the log
+                // sink prints to stdout during the pass
                 let _direct = crate::ui::DirectOutputGuard::new();
                 f()
             }
