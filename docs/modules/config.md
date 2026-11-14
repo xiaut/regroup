@@ -18,10 +18,12 @@ Reads merge the layers as `git/ ∪ (tmp/ − git/)`: on overlap `git/` wins and
 ```
 config/
 ├── mod.rs          # Device/Conf types, storage constants, path helpers
+├── proxy.rs        # git/ + tmp/ merged reads, lazy purge, deletes in both layers
 ├── loading.rs      # load_config(): ensure repo, scan devices/, auto-create local device
 ├── device.rs       # device file (device.json) load/save + validation tests
 ├── connection.rs   # connection files: naming rule, ownership enforcement, loader
 ├── users.rs        # users/<user>.json: one file per known user
+├── name.rs         # validated device-name newtype
 ├── settings.rs     # local settings.json at ~/.regroup-config/ (udp_port, wait_secs; not synced)
 ├── validation.rs   # Device sanity checks (localhost, empty keys, ...)
 └── json_helpers.rs # Internal JSON parsing helpers

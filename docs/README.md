@@ -15,6 +15,15 @@ Configuration is stored in `~/.regroup-config/git/` (a git repository) where eac
 > code differs, the docs win; the code is being migrated to them (same
 > convention as [Navigation](navigation.md)).
 
+The target layout separates the **feature layer** (`ops`) from the **data &
+protocol layers** (`config`, `discovery`, `git`, `ssh`, `signing`), and
+splits every module into small files — one file per responsibility,
+~500-800 lines max — so the repository can be understood file by file,
+without reading huge files. See
+[Architecture](architecture.md#crate-layout-and-layering-target) for the
+layering and file-splitting rules, and
+[File Structure](development.md#file-structure) for the full file tree.
+
 ## Documentation Structure
 
 | Document | Description |

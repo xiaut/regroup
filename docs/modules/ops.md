@@ -23,6 +23,11 @@ ops/
 └── help.rs      # help text shared with the TUI '?' panel
 ```
 
+One file per capability: adding a feature means adding a file here (and a
+section below), not growing an existing one. The same one-file-per-topic
+rule applies to the data layers (`config/`, `discovery/`, `git/`, `ssh/`) —
+see [Architecture](../architecture.md#file-layout-one-file-per-responsibility).
+
 ## Rules
 
 - **No front-end dependencies.** `ops` may use `logging`, `config`,
