@@ -28,7 +28,7 @@
 //   y/N             - add or skip current device
 //   s               - sync git (pull from remotes, push to remotes)
 //   d               - delete a known device (panel selection, Enter confirms)
-//   w               - wipe the whole configuration (Enter confirms)
+//   w               - wipe the whole configuration and quit (Enter confirms)
 //   i               - install SSH key to a device (first known device)
 //   r               - remove SSH key from a device (first outgoing connection)
 //   ?               - show/hide the help panel (full-screen mode)

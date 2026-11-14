@@ -186,7 +186,7 @@ Interactive commands (full-screen mode):
   n               - ignore the selected device (its beacons are ignored this run)
   s               - sync git (pull from remotes, push to remotes)
   d               - delete a known device (select in the Added panel, Enter confirms, Esc cancels)
-  w               - wipe the whole configuration (Enter confirms, Esc cancels)
+  w               - wipe the whole configuration and quit (Enter confirms, Esc cancels)
   c               - install the 'regroup-cd' shell function (Enter confirms, Esc cancels)
   PgUp/PgDn       - scroll the Logs panel
   q               - quit the program

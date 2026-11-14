@@ -779,20 +779,18 @@ impl InteractiveState {
                 tui.with_clean_terminal(|| {
                     wipe_config(ctx.home, ctx.ssh_config, &devices);
                 });
-                // Drop the wiped devices from memory, removing their
-                // known_hosts entries (last known IP) on the way — wipe
-                // itself leaves known_hosts alone (see its doc comment).
-                for (key, _) in std::mem::take(&mut self.key_to_device) {
-                    if let Some(ip) = self.known_ip.remove(&key) {
-                        public_key::remove_known_host(&ip);
-                    }
-                    self.known_keys.remove(&key);
-                    self.pinned_signing_keys.remove(&key);
+                // wipe itself leaves known_hosts alone (see its doc
+                // comment); the last known IP of each device is recorded
+                // only in memory, so clean those entries here, before
+                // the process exits.
+                for ip in self.known_ip.values() {
+                    public_key::remove_known_host(ip);
                 }
-                // Recreate the empty configuration skeleton (config dir,
-                // git repository) so devices can be added again right away.
-                load_config();
-                ui::log("  - Configuration wiped — continuing with an empty configuration.");
+                ui::log("  - Configuration wiped — quitting.");
+                // Wipe then quit: the process exits, so the in-memory
+                // state derived from the wiped configuration (device
+                // maps, selections, temporary users) needs no cleanup.
+                return true;
             }
             Action::SetupCdMode => {
                 if ctx.dry_run {

@@ -205,7 +205,7 @@ Returns devices to show in the Added panel:
 | Action | Behavior |
 |--------|----------|
 | `WipeMode` | Show wipe confirmation |
-| `WipeConfirm` | Wipe entire configuration |
+| `WipeConfirm` | Wipe entire configuration, then quit |
 | `WipeCancel` | Cancel wipe |
 
 ### Setup-cd Actions
@@ -265,9 +265,11 @@ Returns devices to show in the Added panel:
 `wipe_config()`:
 - Removes entire `.regroup-config` directory
 - Removes all regroup-managed Host blocks from `~/.ssh/config`
-- Cleans up known_hosts entries for all known IPs
-- Drops all in-memory state
-- Recreates empty configuration skeleton
+- Cleans up the known_hosts entries of the last known IPs (recorded in
+  memory only, cleaned before quitting)
+- Quits the program: the in-memory state derived from the wiped
+  configuration dies with the process, so it needs no cleanup; the next
+  run recreates the empty configuration skeleton via `load_config()`
 
 ## Git Sync
 
