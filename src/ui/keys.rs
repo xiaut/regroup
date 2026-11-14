@@ -272,21 +272,21 @@ mod tests {
     fn unadvertised_key_is_not_handled() {
         use crate::ui::types::DeviceSection;
         let keys_ctx = |selected_section| PaneKeyCtx { confirmed_user: false, selected_section };
-        // 's' syncs in the Devices fullscreen pane only when an added
+        // 's' syncs in the focused Devices pane only when an added
         // device row is selected — not on a detected or local row.
         for section in [Some(DeviceSection::Detected), Some(DeviceSection::Local), None] {
-            let ctx = Context::Pane { focus: NavFocus::Devices, depth: Some(NavDepth::Fullscreen), keys_ctx: keys_ctx(section) };
+            let ctx = Context::Pane { focus: NavFocus::Devices, depth: Some(NavDepth::Selected), keys_ctx: keys_ctx(section) };
             assert!(!bindings(ctx).iter().any(|b| b.key == KeyCode::Char('s')), "s advertised for section {section:?}");
             assert_eq!(resolve(ctx, KeyCode::Char('s')), None);
         }
 
-        let added_fs = Context::Pane {
+        let added = Context::Pane {
             focus: NavFocus::Devices,
-            depth: Some(NavDepth::Fullscreen),
+            depth: Some(NavDepth::Selected),
             keys_ctx: keys_ctx(Some(DeviceSection::Added)),
         };
         assert_eq!(
-            resolve(added_fs, KeyCode::Char('s')),
+            resolve(added, KeyCode::Char('s')),
             Some(KeyResolution::Action(Action::Sync))
         );
     }

@@ -15,8 +15,9 @@ goes one step deeper. The opposite arrow rewinds one step at a time.
   the context hierarchy, `Esc` goes one level back. They are the
   guaranteed, always-available keys; the arrows are the ergonomic path.
 - **Arrows** — primary navigation: direction toward a panel, then deeper
-  into it (selection, fullscreen, sub-panel). Inside a list, `Up`/`Down`
-  move the selection and **wrap around** (loop) at the ends.
+  into it (selection, sub-panel; the Logs pane also has a fullscreen zoom).
+  Inside a list, `Up`/`Down` move the selection and **wrap around** (loop)
+  at the ends.
 
 Navigation is the deliberate exception to the project rule "one action,
 one key": every navigation step is reachable both via the arrows and via
@@ -29,43 +30,48 @@ visible effect.
 
 ## Panel States
 
-A panel has exactly **three states**:
+A panel has exactly **two states**:
 
 1. **Overview** — the dashboard is displayed, no panel engaged (user at the
    virtual center).
-2. **Selected** — the panel is highlighted (focus), nothing more.
-3. **Fullscreen** — the panel fills the main area and its content becomes
-   navigable (list selection, scrolling). The Logs pane stays visible as a
-   strip above the action block, except for the Logs pane itself, which
-   fills the main area, and while the help panel is open.
+2. **Focused** — the panel is highlighted and its content becomes
+   navigable (list selection, scrolling).
 
-The same arrow key walks through these states in order; the opposite arrow
-walks back.
+The Devices and Users panes have only these two states: the Logs pane is a
+small strip always visible above the action block, so the Devices pane is
+always big and needs no fullscreen mode. The **Logs pane alone keeps a
+third state**, fullscreen, used only to scroll the log comfortably; it
+fills the main area while active.
+
+The arrow pointing toward a panel walks into it; the opposite arrow (or
+`Esc`) walks back.
 
 ## Context Hierarchy
 
 ```
-Main screen (dashboard overview)
-├── Devices panel (top, full width)
+Main screen (overview: Devices pane big, Logs strip at the bottom)
+├── Devices panel (always big, full width)
 │   └── one list, each section under its divider:
 │       ── localhost ── → local device row → ── added ── → added devices
 │       → ── detected ── → detected devices (Up/Down select, wrapping)
 │       └── Users sub-panel   ← nested INSIDE the Devices panel
 │           └── (user rows; Up/Down select, wrapping)
-└── Logs panel (bottom)
-    └── fullscreen view (scrolling)
+└── Logs strip (bottom, always visible)
+    └── fullscreen view (scrolling) — the only fullscreen left
 ```
 
 The **Devices panel is a single list**, each section under its divider
 row, in the same style: `── localhost ──` with the local device row (the
 one regroup runs on), then `── added ──` with the added (known) devices,
 then `── detected ──` with the detected (pending) ones. The panel sits
-**above** the virtual center, so `Up` opens it from the overview.
+**above** the virtual center, so `Up` or `Right` focuses it from the overview. Because
+the Logs pane is only a small strip, the Devices pane is always big — it
+has no fullscreen mode.
 
 The **Users sub-panel is part of the Devices panel**, not a sibling panel.
 It is a sub-context of the selected *added* device, reached with `Right`
-or `Enter` from the Devices panel fullscreen; `Left` or `Esc` returns to
-the device level. There is no lateral panel switch to reach it.
+or `Enter` from the focused Devices panel; `Left` or `Esc` returns to the
+device level. There is no lateral panel switch to reach it.
 
 `Right`/`Enter` enter the Users selection mode only when the selected row
 is an added device (a detected row has no users yet). Whatever the device's user
@@ -75,28 +81,26 @@ user actions; it is never skipped because the list is short or empty.
 
 ## Scenarios
 
-### Devices panel (top)
+### Devices panel (top, always big)
 
-The Devices panel is above the center, so the vertical axis walks into
-it, one step per press:
+The Devices panel is above the center: `Up` or `Right` focuses it, and
+the row list is active immediately (`Up`/`Down` select, wrapping):
 
 | Press | State |
 |-------|-------|
-| `Up` | Devices panel **selected** (highlighted only) |
-| `Up`, `Right` or `Enter` | Devices panel **fullscreen**, the row list active (first row = the local device selected) |
+| `Up` or `Right` | Devices panel **focused**, row list active (first row = the local device selected) |
 | `Right` or `Enter` | **Users sub-panel** of the selected added device (first user selected) — only when an added device row is selected |
-| `Left` (or `Esc`) | Back to Devices selected (from fullscreen, "unbig") |
-| `Down` (or `Esc`) | Back to the center, overview (from selected) |
-| `Left`/`Esc` | From the Users sub-panel: back to the Devices panel fullscreen |
+| `Left` or `Esc` | Back to the center, overview |
+| `Left`/`Esc` | From the Users sub-panel: back to the Devices panel |
 
 ### Bottom panel (Logs) and fullscreen zoom
 
 | Press | State |
 |-------|-------|
-| `Down` | Logs panel **selected** |
-| `Down` | Logs **fullscreen** |
-| `Up` | Back to Logs selected (fullscreen left) |
-| `Up` | Back to the center, overview |
+| `Down` | Logs strip **focused** |
+| `Down` or `Enter` | Logs **fullscreen** |
+| `Esc` | Back to the Logs strip (`Up`/`Down` scroll while fullscreen) |
+| `Up` or `Esc` | Back to the center, overview |
 
 ### Exception: fullscreen logs
 
@@ -105,19 +109,18 @@ scroll the content — the arrow cannot be used to zoom out anymore. This is
 where the fallback keys apply: **`Esc` is the only way to leave the
 fullscreen Logs panel** (collapse back to the dashboard).
 
-Every view of the Logs pane (overview, strip under a fullscreen device
-pane, fullscreen) shows the **tail** of the log — the newest lines on the
-pane's last row. Scrolling up exists only in the fullscreen Logs panel;
-leaving it does not carry the scroll over, so the other views always
-follow the tail.
+Every view of the Logs pane (the always-visible strip, fullscreen) shows
+the **tail** of the log — the newest lines on the pane's last row.
+Scrolling up exists only in the fullscreen Logs panel; leaving it does not
+carry the scroll over, so the strip always follows the tail.
 
 ### List selection
 
-Inside a fullscreen panel (devices, users, detected devices), `Up`/`Down`
-move the selection and **wrap around**: past the last item the selection
-loops back to the first, and vice versa. The selection never leaves its
-list; changing panels or zooming is done with the directional presses
-described above.
+Inside a focused list pane (Devices, Users), `Up`/`Down` move the
+selection and **wrap around**: past the last item the selection loops back
+to the first, and vice versa. The selection never leaves its list; the
+arrows are consumed by the list, so leaving the pane is done with
+`Left`/`Esc` (the same exception as the fullscreen Logs).
 
 ## Summary Table
 
@@ -125,7 +128,7 @@ described above.
 |-----|---------|
 | `Enter` | Go one level deeper in the context hierarchy (always available; listed first) |
 | `Esc` | Go one level back (always available; listed first; only exit from the fullscreen Logs panel) |
-| `Up`/`Down`/`Left`/`Right` | Walk directionally: overview → panel selected → fullscreen → sub-panel; opposite key rewinds |
+| `Up`/`Down`/`Right` | Walk directionally: overview → Devices (Up/Right) / Logs (Down) → Users (Right/Enter); `Left`/`Esc` walk back |
 | `Up`/`Down` (in a list) | Move selection, wrapping around at the ends |
 | `PgUp`/`PgDn` | Scroll scrollable content (Logs pane, help) |
 

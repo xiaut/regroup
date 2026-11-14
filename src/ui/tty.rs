@@ -10,6 +10,8 @@ use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 use ratatui::layout::{Constraint, Layout};
+use ratatui::style::{Color, Style, Stylize};
+use ratatui::widgets::BorderType;
 use ratatui::DefaultTerminal;
 
 use super::keys::{resolve, Context, KeyResolution};
@@ -527,22 +529,24 @@ impl TtyUi {
                 let help_scroll_bounded = (*help_scroll).min(max_scroll);
                 render_help(frame, main_area, help_scroll_bounded);
             } else {
-                // In MainMenu the Devices and Logs panes share the main
-                // area. A fullscreen Devices pane keeps the Logs pane
-                // visible as a strip at the bottom of the main area, like
-                // the action pane below the main area; the Logs pane
-                // itself fills it.
-                let device_fullscreen = matches!(
-                    *active_pane,
-                    ActivePane::Devices(_) | ActivePane::Users(_)
-                );
-                let (pane_area, logs_strip) = if device_fullscreen {
-                    split_log_strip(main_area)
-                } else {
+                // The Logs pane is a small strip at the bottom of the main
+                // area, always visible (like the question block below the
+                // main area) — so the Devices pane is always big and needs
+                // no fullscreen mode. Only the fullscreen Logs pane fills
+                // the whole main area.
+                let (pane_area, logs_strip) = if matches!(*active_pane, ActivePane::Logs(_)) {
                     (main_area, None)
+                } else {
+                    split_log_strip(main_area)
                 };
                 if let Some(logs_area) = logs_strip {
-                    render_log(frame, logs_area, log, log_scroll);
+                    let logs_focus = matches!(navigation.focus, NavFocus::Logs);
+                    let (border_style, border_type) = if logs_focus {
+                        (Style::new().fg(Color::Cyan).bold(), BorderType::Double)
+                    } else {
+                        (Style::new().fg(Color::Cyan), BorderType::Plain)
+                    };
+                    render_log(frame, logs_area, log, log_scroll, border_style, border_type);
                 }
                 render_all_panes(
                     frame,

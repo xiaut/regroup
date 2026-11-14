@@ -254,7 +254,8 @@ renders a divider row between sections.
 
 1. User selects an added row in the Devices panel (device action, key `d`),
    or device+user actions go through the Users sub-panel (directional
-   `Right` past the fullscreen Devices panel) with a user selected
+   `Right`/`Enter` from the focused Devices panel with an added row
+   selected) with a user selected
 2. Confirm deletion (plain mode)
 3. Remove the device's files through the proxy (both the `git/` and `tmp/` layers)
 4. Remove SSH config Host block

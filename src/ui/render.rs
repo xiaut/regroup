@@ -408,10 +408,21 @@ pub(crate) fn log_lines(log: &[String], visible: usize, scroll: u16) -> Vec<Line
 
 /// Logs pane: the tail of the log, bottom-anchored, shifted up by
 /// `scroll` lines; see [`log_lines`].
-pub fn render_log(frame: &mut Frame, area: Rect, log: &[String], scroll: u16) {
+pub fn render_log(
+    frame: &mut Frame,
+    area: Rect,
+    log: &[String],
+    scroll: u16,
+    border_style: Style,
+    border_type: BorderType,
+) {
     let visible = area.height.saturating_sub(2) as usize;
-    let paragraph = Paragraph::new(Text::from(log_lines(log, visible, scroll)))
-        .block(Block::bordered().title("Logs"));
+    let paragraph = Paragraph::new(Text::from(log_lines(log, visible, scroll))).block(
+        Block::bordered()
+            .title("Logs")
+            .border_style(border_style)
+            .border_type(border_type),
+    );
     frame.render_widget(paragraph, area);
 }
 
@@ -583,19 +594,10 @@ pub fn render_all_panes(
             frame.render_widget(logs_paragraph, area);
         }
         ActivePane::MainMenu(_) => {
-            // Dashboard: the Devices pane on top (full width), the Logs
-            // pane below. The focused panel gets a double, bold border.
+            // Overview: the Devices pane fills the whole area (the Logs
+            // strip below it is drawn by the caller). The focused panel
+            // gets a double, bold border.
             let devices_focus = matches!(navigation_focus, super::types::NavFocus::Devices);
-            let logs_focus = matches!(navigation_focus, super::types::NavFocus::Logs);
-
-            let top_height = height / 2;
-            let logs_height = height - top_height;
-            let [devices_area, logs_area] = Layout::vertical([
-                Constraint::Length(top_height),
-                Constraint::Length(logs_height),
-            ])
-            .areas(area);
-
             let devices_border_style = if devices_focus {
                 Style::new().fg(Color::Green).bold()
             } else {
@@ -608,7 +610,7 @@ pub fn render_all_panes(
             };
             render_devices_pane(
                 frame,
-                devices_area,
+                area,
                 devices,
                 devices_selected,
                 flashes,
@@ -616,34 +618,6 @@ pub fn render_all_panes(
                 devices_border_style,
                 devices_border_type,
             );
-
-            let logs_border_style = if logs_focus {
-                Style::new().fg(Color::Cyan).bold()
-            } else {
-                Style::new().fg(Color::Cyan)
-            };
-            let logs_border_type = if logs_focus {
-                BorderType::Double
-            } else {
-                BorderType::Plain
-            };
-            let logs_block = Block::bordered()
-                .title("Logs")
-                .border_type(logs_border_type)
-                .border_style(logs_border_style);
-            let visible = logs_area.height.saturating_sub(2) as usize;
-            let skip = log
-                .len()
-                .saturating_sub(visible + log_scroll as usize)
-                .min(log.len());
-            let lines: Vec<Line> = log
-                .iter()
-                .map(|msg| Line::styled(msg.clone(), log_style(msg)))
-                .collect();
-            let logs_paragraph = Paragraph::new(Text::from(lines))
-                .block(logs_block)
-                .scroll((skip as u16, 0));
-            frame.render_widget(logs_paragraph, logs_area);
         }
     }
 }
@@ -895,7 +869,7 @@ mod tests {
                     &[],
                     None,
                 );
-                render_log(frame, logs_area, &log, 0);
+                render_log(frame, logs_area, &log, 0, Style::new().fg(Color::Cyan), BorderType::Plain);
             })
             .unwrap();
         let buf = terminal.backend().buffer();
@@ -947,7 +921,7 @@ mod tests {
         let backend = TestBackend::new(40, 6);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
-            .draw(|f| render_log(f, f.area(), &log_of(10), 0))
+            .draw(|f| render_log(f, f.area(), &log_of(10), 0, Style::new().fg(Color::Cyan), BorderType::Plain))
             .unwrap();
         let buf = terminal.backend().buffer();
         let row_text = |y: u16| -> String {
@@ -965,7 +939,7 @@ mod tests {
         let backend = TestBackend::new(40, 6);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
-            .draw(|f| render_log(f, f.area(), &log_of(1), 0))
+            .draw(|f| render_log(f, f.area(), &log_of(1), 0, Style::new().fg(Color::Cyan), BorderType::Plain))
             .unwrap();
         let buf = terminal.backend().buffer();
         let row_text = |y: u16| -> String {

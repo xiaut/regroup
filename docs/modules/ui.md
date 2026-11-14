@@ -227,14 +227,15 @@ The TUI interface uses **ratatui** (formerly tui-rs) with **crossterm** for term
 │  │ ── detected ──                          │  │
 │  │ dev1               │ 9.8.7.6 │ 22 │detected│  │
 │  └────────────────────────────────────────┘  │
-├──────────────────────────────────────────────┤
-│  [Logs]                                     │
+├───────────────[ Logs ]──────────────────────┤
 │  Device dev1 detected                       │
 │  Device dev2 IP updated                     │
+│  (tail of the log — fixed 6-row strip)      │
+│                                             │
 ├─────────────────────────────────────────────┤
 │  [Status]                                   │
 │  1 device(s) detected — add it?            │
-│  [Up] devices   [Down] logs                │
+│  [Up/Right] devices   [Down] logs          │
 │  [q] quit   [?] help                        │
 └─────────────────────────────────────────────┘
 ```
@@ -250,23 +251,23 @@ The TUI interface uses **ratatui** (formerly tui-rs) with **crossterm** for term
   A **Users sub-panel** is nested inside this panel for the selected added
   device; it lists the device's users with their status (temporary — to
   confirm / confirmed / SSH key installed). It is a sub-context of the
-  device, not a device, not a sibling panel: continuing with `Right` past
-  the Devices panel (selected, then fullscreen, added row selected) enters
-  the sub-panel (first user selected), and `Left` returns to the device
-  level. Device+user actions (install/remove SSH key) live there and only
+  device, not a device, not a sibling panel: `Right`/`Enter` from the
+  Devices pane with an added row selected enters the sub-panel (first
+  user selected), and `Left`/`Esc` returns to the Devices pane. Device+user actions (install/remove SSH key) live there and only
   appear for a confirmed user; a temporary user only allows the git sync
   that brings the device's declared users (the temporary user is stored
   under `tmp/`, never synced). See [navigation.md](../navigation.md).
-- **Logs pane** (bottom): General messages and logs
+- **Logs strip** (bottom of the main area, always visible): tail of the
+  general log
 - **Question block** (bottom): Current question and available actions
 
-The **Logs pane is always visible**, like the question block: in the
-overview it takes the bottom half of the main area, and in a fullscreen
-Devices pane it is kept as a fixed-height strip
-(6 rows, borders included) at the bottom of the main area, above the
-question block. The strip is dropped when the main area is shorter than
-12 rows, and hidden while the help panel is open. Scrolling the log still
-requires the Logs pane to be fullscreen.
+The **Logs pane is always visible** as a fixed-height strip (6 rows,
+borders included) at the bottom of the main area, above the question
+block; the Devices pane takes the rest of the main area. The strip is
+dropped when the main area is shorter than 12 rows, and hidden while the
+help panel is open or while the Logs pane is fullscreen. `Down` from the
+overview focuses the strip, then `Down`/`Enter` opens the fullscreen Logs
+panel; scrolling the log still requires that fullscreen panel.
 
 The Logs pane always shows the **tail** of the log: the newest lines sit
 on the pane's last content row (the log is bottom-anchored, with blank
@@ -301,8 +302,8 @@ Add device2 (192.168.1.101) to config? [y/N/q/s]: n
 | `r` | Remove SSH key |
 | `?` | Toggle help panel |
 | `Enter` | Go one level deeper in the context hierarchy (always offered, listed first) |
-| `Esc` | Go one level back (always offered, listed first; only exit from the fullscreen Logs panel) |
-| `Up/Down/Left/Right` | Walk directionally from the virtual center: overview → panel selected → fullscreen → sub-panel; opposite key rewinds (see [navigation.md](../navigation.md)) |
+| `Esc` | Go one level back (always offered, listed first) |
+| `Up/Down/Left/Right` | Walk directionally from the virtual center: overview → Devices (Up/Right) or Logs strip (Down) focused → Users sub-panel (Right) or fullscreen Logs (Down); the opposite key rewinds (see [navigation.md](../navigation.md)) |
 | `PgUp/PgDn` | Scroll Logs pane |
 
 ### In Devices Panel (detected row selected)
@@ -377,7 +378,7 @@ section headers in bold. Use `Up/Down/PgUp/PgDn` to scroll, `?` or `Esc` to clos
 ## Logging
 
 There is no verbose mode: everything the user needs is always logged. All
-messages go through `log()` / `log_device()` and land in the Logs pane
-(full-screen) or on stdout (plain mode). See the [Logging policy](../logging.md)
+messages go through `log()` / `log_device()` and land in the Logs strip
+(or the fullscreen Logs pane) or on stdout (plain mode). See the [Logging policy](../logging.md)
 for the two hard rules: a log line must precede any operation that may prompt
 for a password, and every non-standard path must be logged.
