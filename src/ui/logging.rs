@@ -26,9 +26,29 @@ pub fn is_direct_output_mode() -> bool {
     DIRECT_OUTPUT_MODE.load(Ordering::Relaxed)
 }
 
-/// Set direct output mode on or off.
-pub fn set_direct_output_mode(enabled: bool) {
-    DIRECT_OUTPUT_MODE.store(enabled, Ordering::Relaxed);
+/// RAII guard that enables direct output mode for its lifetime and restores
+/// the previous value on drop (even on panic).
+///
+/// While held, [`log`] and [`log_device`] print to stdout instead of the UI
+/// channel: everything logged during a temporary CLI pass from the TUI
+/// appears in the CLI. [`crate::ui::Ui::with_clean_terminal`] holds this
+/// guard for the whole CLI-visible window — the operation itself and the
+/// "press Enter to return" pause — until the TUI is re-initialized.
+pub struct DirectOutputGuard {
+    previous: bool,
+}
+
+impl DirectOutputGuard {
+    pub fn new() -> Self {
+        let previous = DIRECT_OUTPUT_MODE.swap(true, Ordering::Relaxed);
+        Self { previous }
+    }
+}
+
+impl Drop for DirectOutputGuard {
+    fn drop(&mut self) {
+        DIRECT_OUTPUT_MODE.store(self.previous, Ordering::Relaxed);
+    }
 }
 
 /// How long a device's row keeps its animated status.
@@ -117,4 +137,59 @@ pub fn flash_duration(level: Level) -> Duration {
         Level::Security => SECURITY_FLASH_MS,
         _ => FLASH_MS,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc;
+
+    // Single test touching the global flag: cargo runs tests in parallel
+    // threads within one process, so two tests toggling DIRECT_OUTPUT_MODE
+    // could race each other. Other tests only read the flag via log(),
+    // which behaves the same either way while LOG_TX is unset.
+    #[test]
+    fn direct_output_mode_routes_logs_to_stdout_not_the_ui_channel() {
+        // Install a channel as the UI sink, like Ui::start does for the Tty backend.
+        let (tx, rx) = mpsc::channel();
+        let _ = LOG_TX.set(tx);
+
+        // Guard on: direct output mode is active until drop, even if the
+        // guarded scope panics (Drop restores the previous value).
+        let before = is_direct_output_mode();
+        {
+            let _guard = DirectOutputGuard::new();
+            assert!(is_direct_output_mode());
+
+            // During a temporary CLI pass, logs must NOT go to the UI
+            // channel (they are printed to stdout instead, i.e. they
+            // appear in the CLI).
+            log("to-cli");
+            log_device(
+                &SshPublicKey::from("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFake"),
+                "dev",
+                Level::Info,
+                "msg",
+                Some("detail"),
+            );
+        }
+        assert_eq!(is_direct_output_mode(), before);
+
+        // Outside the pass, logs go to the UI channel (TUI pane) as before.
+        log("to-pane");
+
+        let received: Vec<UiEvent> = rx.try_iter().collect();
+        assert!(
+            received.iter().any(|e| matches!(e, UiEvent::Global(m) if m == "to-pane")),
+            "outside direct mode, log() must reach the UI channel"
+        );
+        assert!(
+            !received.iter().any(|e| matches!(e, UiEvent::Global(m) if m == "to-cli")),
+            "in direct mode, log() must not be queued in the UI channel"
+        );
+        assert!(
+            !received.iter().any(|e| matches!(e, UiEvent::UiDevice { detail, .. } if detail.as_deref() == Some("detail"))),
+            "in direct mode, log_device() must not be queued in the UI channel"
+        );
+    }
 }

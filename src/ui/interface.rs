@@ -149,8 +149,13 @@ impl Ui {
     }
 
     /// Execute a function with a clean terminal (restored to normal mode),
-    /// then reinitialize the TUI terminal afterwards. This is useful when
-    /// running CLI commands from within the TUI that need a clean terminal.
+    /// then reinitialize the TUI terminal afterwards. This is a temporary
+    /// CLI pass from the TUI: for the whole CLI-visible window — the
+    /// function itself and the "press Enter to return" pause — direct
+    /// output mode is on, so everything logged during the pass (by this
+    /// function or by background threads) is printed to stdout and appears
+    /// in the CLI instead of being queued for the TUI pane. The guard
+    /// restores the previous mode when the pass ends, even on panic.
     pub fn with_clean_terminal<F, R>(&mut self, f: F) -> R
     where
         F: FnOnce() -> R,
@@ -161,15 +166,13 @@ impl Ui {
                 // Restore the terminal (leave alternate screen, disable raw mode)
                 ratatui::restore();
 
-                // Enable direct output mode so logs are printed to stdout immediately
+                // Direct output mode for the whole pass, until the TUI is
+                // re-initialized below: logs print to stdout immediately
                 // instead of being queued in the channel
-                crate::ui::set_direct_output_mode(true);
-                
+                let _direct = crate::ui::DirectOutputGuard::new();
+
                 // Execute the function
                 let result = f();
-
-                // Disable direct output mode
-                crate::ui::set_direct_output_mode(false);
 
                 // Pause to let the user read the output
                 println!("\nPress Enter to return to the TUI...");
@@ -185,8 +188,9 @@ impl Ui {
                 result
             }
             Ui::Plain(_) => {
-                // In plain mode, just execute the function
-                // Direct output mode is already false in plain mode
+                // In plain mode, just execute the function, under the same
+                // contract: the log sink prints to stdout during the pass
+                let _direct = crate::ui::DirectOutputGuard::new();
                 f()
             }
         }

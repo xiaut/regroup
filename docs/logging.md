@@ -61,6 +61,29 @@ includes at least:
 When adding a branch that is not the normal path, add a log line in that
 branch.
 
+## Rule 3 — Temporary CLI passes from the TUI log to the CLI
+
+While the full-screen TUI runs a temporary CLI pass
+(`Ui::with_clean_terminal`: git sync, device add/remove, wipe, SSH key
+install/remove, signing-key trust), the log sink is in **direct output
+mode** for the whole CLI-visible window — the operation itself and the
+"press Enter to return" pause, until the TUI is re-initialized. In this
+mode `log()` and `log_device()` print to stdout, so **everything logged
+during the pass appears in the CLI**, including lines logged by background
+threads (beacon listener/announcer). The mode is held by a RAII guard, so it
+ends even if the pass panics.
+
+Consequences for new code:
+
+- Always log through `log()` / `log_device()` — never send `UiEvent`s to
+  the channel directly outside `logging.rs`, or the line would be queued
+  for the TUI pane and lost from the CLI during a pass. (`pulse_device` is
+  the only channel-only event and is a row animation, not a log line.)
+- External commands run during a pass must not swallow their output:
+  inherit stderr (and stdin/stdout for interactive prompts) in direct
+  output mode — see the `quiet()` helpers in `src/git/` — so their output
+  also appears in the CLI.
+
 ## Message style
 
 **Sub-lines use a single symbol: `  - `** — every detail line under an
