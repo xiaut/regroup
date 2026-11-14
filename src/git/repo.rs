@@ -82,11 +82,6 @@ pub const REQUIRED_CONFIG: &[(&str, &str)] = &[
     ("fetch.prune", "true"),
 ];
 
-/// Redundant settings written by older versions, removed on init:
-/// `merge.ff` is shadowed by `pull.rebase = true`, and every push passes an
-/// explicit `<remote> main` refspec, so `push.default` is never consulted.
-const LEGACY_CONFIG: &[&str] = &["merge.ff", "push.default"];
-
 /// Set a repo-local git config key. Best effort: a key that cannot be set
 /// never prevents the repository from being usable.
 fn set_config(repo_path: &Path, key: &str, value: &str) {
@@ -95,16 +90,6 @@ fn set_config(repo_path: &Path, key: &str, value: &str) {
         .arg("config")
         .arg(key)
         .arg(value);
-    let _ = quiet(cmd);
-}
-
-/// Unset a repo-local git config key. Best effort.
-fn unset_config(repo_path: &Path, key: &str) {
-    let mut cmd = Command::new("git");
-    cmd.current_dir(repo_path)
-        .arg("config")
-        .arg("--unset")
-        .arg(key);
     let _ = quiet(cmd);
 }
 
@@ -138,13 +123,10 @@ pub fn git_init(repo_path: &Path) -> io::Result<()> {
     }
 
     // Apply the minimal required configuration on every run, not only on
-    // first init: a repository created by an older regroup version (or
-    // touched by hand) must still converge to the required set.
+    // first init, so the repository always satisfies check_repo(). Redundant
+    // settings (merge.ff, push.default) are simply never set.
     for (key, value) in REQUIRED_CONFIG {
         set_config(repo_path, key, value);
-    }
-    for key in LEGACY_CONFIG {
-        unset_config(repo_path, key);
     }
 
     Ok(())
@@ -254,20 +236,16 @@ mod tests {
     }
 
     #[test]
-    fn git_init_converges_an_existing_repo_and_removes_legacy_keys() {
+    fn git_init_reapplies_the_required_config_on_an_existing_repo() {
         if !git_available() {
             return;
         }
-        let repo = temp_repo("legacy");
+        let repo = temp_repo("reapply");
         git_init(&repo).expect("git init");
-        // Simulate an older version's extra settings.
-        set_config(&repo, "merge.ff", "only");
-        set_config(&repo, "push.default", "current");
+        // A required key drifted (hand-edited config): re-init restores it.
         set_config(&repo, "pull.rebase", "false");
 
         git_init(&repo).expect("re-init");
-        assert!(config_get(&repo, "merge.ff").is_none());
-        assert!(config_get(&repo, "push.default").is_none());
         assert_eq!(config_get(&repo, "pull.rebase").as_deref(), Some("true"));
         assert!(check_repo(&repo).is_ok());
 
