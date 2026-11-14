@@ -26,7 +26,8 @@ ui/                          # binary front-end
 ├── interface.rs             # Ui enum (Tty/Plain) with unified interface
 ├── tty.rs                   # TtyUi: full-screen ratatui implementation
 ├── plain.rs                 # PlainUi: line-based fallback implementation
-└── render.rs                # Rendering functions and styling utilities
+├── render.rs                # Rendering functions and styling utilities
+└── keys.rs                  # Single-source key dispatch: bindings and hints from one list
 
 logging.rs (src/logging.rs)  # library: the log sink itself (moved out of ui/)
 ```

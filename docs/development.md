@@ -177,7 +177,11 @@ pub type SshPublicKey = String;
 
 See `ssh/keys.rs` for examples of this pattern.
 
-### Keep Files Short
+### Keep Files Short — one file per responsibility
+
+The repository is meant to be understood file by file: each module is a
+directory whose files each cover a single topic, so no reader has to digest
+a huge file to understand one behavior.
 
 When a file grows beyond ~500-800 lines, split it into a folder-module:
 
@@ -186,6 +190,12 @@ foo.rs → foo/mod.rs + foo/one.rs + foo/two.rs
 ```
 
 **Exception**: `#[cfg(test)]` tests at the bottom of a file are exempt. However long, they are always legitimate.
+
+Each module's files are listed in its spec (`docs/modules/<name>.md`,
+"Module Structure" section) and in the [File Structure](#file-structure)
+tree below — keep all three in sync when adding, removing or splitting a
+file. See [Architecture](architecture.md#crate-layout-and-layering-target)
+for the layering rules (ops feature layer vs data layers).
 
 ### Module Organization
 
@@ -246,6 +256,12 @@ foo.rs → foo/mod.rs + foo/one.rs + foo/two.rs
 Two crates from one source tree: a library (`src/lib.rs`) and a thin binary
 (`src/main.rs`). Shared modules are declared once, by the library.
 
+The tree below is split **one file per responsibility** (see
+[Keep Files Short](#keep-files-short--one-file-per-responsibility)): each
+module is a directory of small files, and each module's spec in
+`docs/modules/` lists the same files — so the repository can be understood
+without reading huge files.
+
 ```
 src/
 ├── lib.rs               # Library crate root: pub mod logging, config, discovery,
@@ -254,7 +270,34 @@ src/
 │                        #   wiring (identity, beacon threads)
 ├── logging.rs           # UI-agnostic global log sink (log, log_device, pulse_device,
 │                        #   restore; Level, UiEvent) — library module, re-exported by ui
-├── ops/                 # Feature layer (library API, no front-end deps)
+├── config/              # Data layer: config types, loading, storage — modules/config.md
+│   ├── mod.rs           #   types, storage constants, path helpers
+│   ├── proxy.rs         #   git/ + tmp/ merged reads, lazy purge, deletes in both layers
+│   ├── loading.rs       #   load_config(): ensure repo, scan devices/ through the proxy
+│   ├── device.rs        #   device.json load/save
+│   ├── users.rs         #   users/<user>.json — one file per known user
+│   ├── connection.rs    #   connections/<id>.json — naming + ownership rules
+│   ├── name.rs          #   validated device-name newtype
+│   ├── settings.rs      #   local settings.json (outside git/, never synced)
+│   ├── validation.rs    #   device sanity checks
+│   └── json_helpers.rs  #   internal JSON parsing helpers
+├── discovery/           # Data/protocol: signed UDP beacons — modules/discovery.md
+│   ├── mod.rs
+│   ├── beacon.rs        #   beacon format, signing, verification
+│   ├── local.rs         #   local identity: hostname, IP, host key
+│   └── net.rs           #   UDP send/receive helpers
+├── git/                 # Data layer: repo, remotes, sync — modules/git.md
+│   ├── mod.rs
+│   ├── repo.rs          #   repo init + minimal repo-local git config
+│   ├── remote.rs        #   per-device remotes
+│   └── sync.rs          #   pull/push, commit helpers
+├── ssh/                 # Data/protocol: ssh config blocks, key types, public keys — modules/ssh.md
+│   ├── mod.rs
+│   ├── config.rs        #   managed Host blocks in ~/.ssh/config
+│   ├── keys.rs          #   newtypes (SshPublicKey, SigningPublicKeyB64, ...)
+│   └── public_key.rs    #   fingerprints, known_hosts verification
+├── signing.rs           # Library: Ed25519 signing key management
+├── ops/                 # Feature layer (library API, no front-end deps) — modules/ops.md
 │   ├── mod.rs
 │   ├── devices.rs       # add/remove/wipe device, local traces, name-conflict helpers
 │   ├── sync.rs          # sync_git, trust_new_signing_key
@@ -262,24 +305,26 @@ src/
 │   ├── shell.rs         # setup_cd / shell_rc_file (regroup-cd shell function)
 │   ├── selftest.rs      # environment selftest as a lib feature (returns a report)
 │   └── help.rs          # help text shared with the TUI '?' panel
-├── config/              # Library: config types, loading, storage (unchanged layout)
-├── discovery/           # Library: beacon format/verification, local identity, net
-├── git/                 # Library: repo, remotes, sync
-├── ssh/                 # Library: ssh config blocks, key types, public key handling
-├── signing.rs           # Library: Ed25519 signing key management
 ├── internal/            # Binary: internal subcommands run over SSH by the key actions
 │   ├── mod.rs
 │   ├── receive_install_key.rs
 │   └── receive_remove_key.rs
-├── ui/                  # Binary front-end: Tty/Plain backends
+├── ui/                  # Binary front-end: Tty/Plain backends — modules/ui.md
 │   ├── mod.rs           #   (re-exports regroup::logging)
 │   ├── types.rs         #   UI types (re-exports Level, UiEvent from regroup::logging)
 │   ├── interface.rs     #   Ui enum (Tty/Plain)
 │   ├── tty.rs           #   full-screen TUI
 │   ├── plain.rs         #   plain fallback
-│   └── render.rs        #   rendering
+│   ├── render.rs        #   rendering
+│   └── keys.rs          #   single-source key dispatch (bindings/hints from one list)
 ├── tui/                 # Binary front-end: key actions, connections browser
-└── interactive/         # Binary front-end: main loop, state management
+│   ├── mod.rs
+│   ├── key_actions.rs   #   install/remove SSH key via ssh receive-*
+│   └── connections.rs   #   connections browser
+└── interactive/         # Binary front-end: main loop, state — modules/interactive.md
+    ├── mod.rs
+    ├── state.rs
+    └── utils.rs
 ```
 
 ## Performance Considerations

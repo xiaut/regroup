@@ -11,17 +11,19 @@
 The package builds **two crates from the same source tree**:
 
 - **`regroup` library** (`src/lib.rs`) — everything reusable, with no
-  terminal front-end:
-  - `logging` — the UI-agnostic global log sink (`log`, `log_device`,
-    `pulse_device`, `restore`, direct-output mode, `Level`/`UiEvent`).
-    Until a front-end installs its own sink, messages go to stdout.
-  - `config`, `discovery`, `git`, `ssh`, `signing` — the data and protocol
-    layers, reporting through `logging`.
-  - `ops` — the **feature layer**: every user-facing capability, callable
+  terminal front-end. Two blocks, strictly separated:
+  - **Data & protocol layers** — `config`, `discovery`, `git`, `ssh`,
+    `signing`: types, on-disk formats, and wire protocols. They know
+    nothing about user-facing features and report through `logging`.
+  - **Feature layer** — `ops`: every user-facing capability, callable
     from the TUI, from a future CLI, or from any Rust program embedding the
-    library (see [modules/ops.md](modules/ops.md)). `ops` never depends on a
-    front-end and never calls `process::exit`: it reports through `logging`
-    and returns `Result`s.
+    library (see [modules/ops.md](modules/ops.md)). `ops` sits on top of the
+    data layers, never depends on a front-end, and never calls
+    `process::exit`: it reports through `logging` and returns `Result`s.
+  - `logging` — the UI-agnostic global log sink (`log`, `log_device`,
+    `pulse_device`, `restore`, direct-output mode, `Level`/`UiEvent`),
+    shared by both blocks. Until a front-end installs its own sink,
+    messages go to stdout.
 
 - **`regroup` binary** (`src/main.rs`, thin) — argument dispatch, app wiring
   (identity, beacon threads), and the front-ends:
@@ -37,8 +39,71 @@ Dependency direction is strictly downward:
 main.rs (binary)
  └── internal, ui, tui, interactive     front-ends
       └── ops                         features
-           └── logging, config, discovery, git, ssh, signing
+           └── logging, config, discovery, git, ssh, signing   data & protocol
 ```
+
+### File Layout: one file per responsibility
+
+The library tree is deliberately **fine-grained** — one file per
+responsibility — so the repository can be understood by reading many small
+files instead of a few huge ones:
+
+```
+src/ (library part)
+├── lib.rs            # crate root: declares the modules below
+├── logging.rs        # shared log sink (used by the data layers and by ops)
+├── config/           # data layer: ~/.regroup-config state — modules/config.md
+│   ├── mod.rs        #   types, storage constants, path helpers
+│   ├── proxy.rs      #   git/ + tmp/ merged reads, lazy purge, deletes in both layers
+│   ├── loading.rs    #   load_config(): ensure repo, scan devices/ through the proxy
+│   ├── device.rs     #   device.json load/save
+│   ├── users.rs      #   users/<user>.json — one file per known user
+│   ├── connection.rs #   connections/<id>.json — naming + ownership rules
+│   ├── name.rs       #   validated device-name newtype
+│   ├── settings.rs   #   local settings.json (outside git/, never synced)
+│   ├── validation.rs #   device sanity checks
+│   └── json_helpers.rs
+├── discovery/        # data/protocol: signed UDP beacons — modules/discovery.md
+│   ├── mod.rs
+│   ├── beacon.rs     #   beacon format, signing, verification
+│   ├── local.rs      #   local identity: hostname, IP, host key
+│   └── net.rs        #   UDP send/receive helpers
+├── git/              # data layer: config repo, remotes, sync — modules/git.md
+│   ├── mod.rs
+│   ├── repo.rs       #   repo init + minimal repo-local git config
+│   ├── remote.rs     #   per-device remotes
+│   └── sync.rs       #   pull/push, commit helpers
+├── ssh/              # data/protocol: ssh config + keys — modules/ssh.md
+│   ├── mod.rs
+│   ├── config.rs     #   managed Host blocks in ~/.ssh/config
+│   ├── keys.rs       #   newtypes (SshPublicKey, SigningPublicKeyB64, ...)
+│   └── public_key.rs #   fingerprints, known_hosts verification
+├── signing.rs        # Ed25519 signing key management
+└── ops/              # feature layer, one file per capability — modules/ops.md
+    ├── mod.rs
+    ├── devices.rs    #   add / remove / wipe devices, name conflicts
+    ├── sync.rs       #   git sync of the config repo, signing-key trust
+    ├── keys.rs       #   connection key pairs, authorized_keys, connection IDs
+    ├── shell.rs      #   setup_cd (regroup-cd shell function)
+    ├── selftest.rs   #   environment checks, returns a report (no exit code)
+    └── help.rs       #   help text shared with the TUI '?' panel
+```
+
+The binary half of the tree (`main.rs`, `internal/`, `ui/`, `tui/`,
+`interactive/`) is listed in [File Structure](development.md#file-structure).
+
+Splitting rules:
+
+- A module is a **directory** with a `mod.rs` that declares and re-exports
+  its submodules; each file covers a single topic.
+- Keep files short: past ~500-800 lines (excluding `#[cfg(test)]` tests,
+  which stay at the bottom of their file), split `foo.rs` into a
+  folder-module: `foo.rs → foo/mod.rs + foo/one.rs + foo/two.rs`.
+- Every module has a matching spec in `docs/modules/<name>.md`; its
+  "Module Structure" section lists the same files — the code tree and the
+  docs must stay in sync.
+- Where the current tree already exceeds the limit (e.g. `ui/render.rs`,
+  `interactive/state.rs`), the migration splits those files the same way.
 
 ## Interfaces (target)
 
