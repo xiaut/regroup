@@ -43,6 +43,60 @@ pub fn help_hint_text() -> String {
 /// Below this, panels stack vertically.
 pub const MIN_WIDTH_FOR_SIDE_BY_SIDE: u16 = 80;
 
+/// Wrap `text` to `width` the way the question block's `Paragraph`
+/// (`Wrap { trim: false }`) does, and return `(line_count, last_line_width)`.
+/// Hint-like text (with "   " separators) is wrapped token by token so a
+/// `[key] desc` pair is never split; regular text wraps on words.
+pub(crate) fn wrapped_metrics(text: &str, width: usize, is_hint: bool) -> (usize, usize) {
+    if width == 0 {
+        let lines = text.lines().count().max(1);
+        let last = text.lines().last().map_or(0, |l| l.chars().count());
+        return (lines, last);
+    }
+
+    // For hint text, treat "   " separated tokens as non-breakable
+    // For regular text (question lines), use word-based wrapping
+    let tokens: Vec<&str> = if is_hint && text.contains("   ") {
+        text.split("   ").collect()
+    } else {
+        text.split_whitespace().collect()
+    };
+
+    let separator_len = if is_hint && text.contains("   ") { 3 } else { 1 };
+
+    let mut lines = 0;
+    let mut current_width = 0;
+
+    for token in tokens {
+        let token_len = token.chars().count();
+
+        if current_width == 0 {
+            // First token on this line
+            current_width = token_len;
+        } else if current_width + separator_len + token_len <= width {
+            // Token fits on current line
+            current_width += separator_len + token_len;
+        } else {
+            // Token doesn't fit, move to next line
+            lines += 1;
+            current_width = token_len;
+        }
+    }
+
+    // Don't forget the last line
+    if current_width > 0 {
+        lines += 1;
+    }
+
+    (lines.max(1), current_width)
+}
+
+/// How many lines `text` occupies when wrapped to `width` in the question
+/// block; see [`wrapped_metrics`].
+pub(crate) fn count_wrapped_lines(text: &str, width: usize, is_hint: bool) -> usize {
+    wrapped_metrics(text, width, is_hint).0
+}
+
 /// Static look of one device panel: title, border color and the status
 /// shown when the device has no animated message.
 pub struct PanelTheme {
@@ -1025,6 +1079,12 @@ pub fn render_question(
             ),
         }
     };
+    // Wrapped height of the question line, needed for the text cursor below.
+    let question_lines = count_wrapped_lines(
+        &question_line,
+        area.width.saturating_sub(2) as usize,
+        false,
+    );
     let text = Text::from(vec![
         Line::styled(question_line, Style::new().bold()),
         hint_line,
@@ -1043,11 +1103,89 @@ pub fn render_question(
         question,
         super::types::Question::Rename { .. } | super::types::Question::AddTempUser { .. }
     ) {
-        // Second line inside the block: "> " prefix plus the typed name.
-        let x = area.x + 1 + 2 + ctx.input.chars().count() as u16;
-        let y = area.y + 2;
+        // The input line sits under the (possibly wrapped) question line:
+        // "> " prefix plus the typed text, itself wrapped.
+        let content_width = area.width.saturating_sub(2) as usize;
+        let input_chars = ctx.input.chars().count();
+        let (input_lines, last_len) = if content_width == 0 || 2 + input_chars <= content_width {
+            (1, 2 + input_chars)
+        } else {
+            wrapped_metrics(&format!("> {}", ctx.input), content_width, false)
+        };
+        let x = (area.x + 1 + last_len as u16).min(area.right().saturating_sub(1));
+        let y = (area.y + 1 + question_lines as u16 + input_lines.saturating_sub(1) as u16)
+            .min(area.bottom().saturating_sub(1));
         Some(Position::new(x, y))
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::types::{NavFocus, Navigation, Question};
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
+    fn ctx(input: &str) -> QuestionCtx<'_> {
+        QuestionCtx {
+            input,
+            pending: 0,
+            help: false,
+            verbose: false,
+            active_pane: ActivePane::main_menu(),
+            navigation: Navigation {
+                focus: NavFocus::Center,
+                depth: None,
+            },
+            confirmed_user: false,
+            key_flash: None,
+        }
+    }
+
+    fn question_line_of(q: &Question) -> String {
+        match q {
+            Question::Rename(def, name, suggested) => format!(
+                "New name for {name} ({}; empty = {suggested})",
+                bindings_hint_text(def.bindings)
+            ),
+            _ => unreachable!(),
+        }
+    }
+
+    fn draw_cursor(terminal_width: u16, area: Rect, q: &Question, input: &str) -> Option<Position> {
+        let backend = TestBackend::new(terminal_width, area.y + area.height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut pos = None;
+        terminal
+            .draw(|frame| {
+                pos = render_question(frame, area, q, &ctx(input));
+            })
+            .unwrap();
+        pos
+    }
+
+    #[test]
+    fn text_cursor_sits_after_the_input_on_a_single_line_question() {
+        let q = Question::rename("dev".to_string(), "dev2".to_string());
+        let area = Rect::new(0, 6, 120, 4);
+        let pos = draw_cursor(120, area, &q, "abc").unwrap();
+        assert_eq!(pos, Position::new(area.x + 1 + 2 + 3, area.y + 2));
+    }
+
+    #[test]
+    fn text_cursor_follows_the_wrapped_question_line() {
+        let name = "a-very-long-device-hostname-that-wraps".to_string();
+        let q = Question::rename(name, "suggested".to_string());
+        let area = Rect::new(0, 6, 40, 8);
+        let content_width = (area.width - 2) as usize;
+        let question_lines = count_wrapped_lines(&question_line_of(&q), content_width, false);
+        assert!(question_lines > 1, "test needs a wrapping question line");
+        let pos = draw_cursor(40, area, &q, "abc").unwrap();
+        assert_eq!(
+            pos,
+            Position::new(area.x + 1 + 2 + 3, area.y + 1 + question_lines as u16)
+        );
     }
 }

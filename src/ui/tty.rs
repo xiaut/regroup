@@ -14,62 +14,21 @@ use ratatui::DefaultTerminal;
 
 use super::keys::{resolve, Context, KeyResolution};
 use super::render::{
-    help_hint_text, idle_hint_text, key_label, modal_hint_text, render_all_panes, render_help,
-    render_question, KeyFlash, QuestionCtx, RowFlash,
+    count_wrapped_lines, help_hint_text, idle_hint_text, key_label, modal_hint_text,
+    render_all_panes, render_help, render_question, KeyFlash, QuestionCtx, RowFlash,
 };
-use super::types::{ActivePane, Action, NavFocus, Navigation, Question, UiDevice, UiEvent, UiUser, UserStatus};
-
-/// Calculate how many lines a text will occupy when wrapped to fit a given width.
-/// For hint-like text with "   " (three spaces) separators, treats each token as non-breakable.
-/// For regular text, uses word-based wrapping.
-fn count_wrapped_lines(text: &str, width: usize, is_hint: bool) -> usize {
-    if width == 0 {
-        return text.lines().count();
-    }
-    
-    // For hint text, treat "   " separated tokens as non-breakable
-    // For regular text (question lines), use word-based wrapping
-    let tokens: Vec<&str> = if is_hint && text.contains("   ") {
-        text.split("   ").collect()
-    } else {
-        text.split_whitespace().collect()
-    };
-    
-    let separator_len = if is_hint && text.contains("   ") { 3 } else { 1 };
-    
-    let mut lines = 0;
-    let mut current_width = 0;
-    
-    for token in tokens {
-        let token_len = token.chars().count();
-        
-        if current_width == 0 {
-            // First token on this line
-            current_width = token_len;
-        } else if current_width + separator_len + token_len <= width {
-            // Token fits on current line
-            current_width += separator_len + token_len;
-        } else {
-            // Token doesn't fit, move to next line
-            lines += 1;
-            current_width = token_len;
-        }
-    }
-    
-    // Don't forget the last line
-    if current_width > 0 {
-        lines += 1;
-    }
-    
-    lines.max(1)
-}
+use super::types::{
+    bindings_hint_text, ActivePane, Action, NavFocus, Navigation, Question, UiDevice, UiEvent,
+    UiUser, UserStatus,
+};
 
 /// Calculate the height needed for the question block based on its content.
 /// Returns the height in lines, including borders.
 fn calculate_question_height(question: &Question, ctx: &QuestionCtx, width: u16) -> u16 {
     // The question block has: title border (1) + content + bottom border (1)
-    // Content has: question_line (1 or more when wrapped) + hint_line (1 or more when wrapped)
-    // Minimum height is 4: top border + question + hint + bottom border
+    // Content has: question_line (1 or more when wrapped) + second line (1 or
+    // more when wrapped): the hint line, or the typed input for text questions
+    // Minimum height is 4: top border + question + second line + bottom border
     
     if width <= 2 {
         return 4; // Minimum height
@@ -111,15 +70,28 @@ fn calculate_question_height(question: &Question, ctx: &QuestionCtx, width: u16)
                 modal_hint_text(def),
             )
         }
-        Question::Rename(_def, ..) => {
-            // For rename, we have an input line which is handled specially
-            // The question line and a separate input line ("> ...")
-            // We'll calculate based on the question line + input line
-            return 4; // Minimum height for rename with input
+        Question::Rename(def, name, suggested) => {
+            // Text-input question: the wrapped question line, then the
+            // typed input on its own (possibly wrapped) line.
+            let question_line = format!(
+                "New name for {name} ({}; empty = {suggested})",
+                bindings_hint_text(def.bindings)
+            );
+            let input_line = format!("> {}", ctx.input);
+            let lines = count_wrapped_lines(&question_line, content_width, false)
+                + count_wrapped_lines(&input_line, content_width, false);
+            return (2 + lines as u16).clamp(3, 10);
         }
-        Question::AddTempUser(_def, _) => {
+        Question::AddTempUser(def, device) => {
             // Input line handled like the rename question
-            return 4;
+            let question_line = format!(
+                "Temporary user on {device} (in memory only) — {}",
+                bindings_hint_text(def.bindings)
+            );
+            let input_line = format!("> {}", ctx.input);
+            let lines = count_wrapped_lines(&question_line, content_width, false)
+                + count_wrapped_lines(&input_line, content_width, false);
+            return (2 + lines as u16).clamp(3, 10);
         }
         Question::Delete(def, name) => {
             (
@@ -152,7 +124,7 @@ fn calculate_question_height(question: &Question, ctx: &QuestionCtx, width: u16)
     // Total height: top border (1) + content lines + bottom border (1)
     let total_height = 2 + total_content_lines as u16;
     
-    total_height.min(10).max(3) // Clamp between 3 and 10 lines
+    total_height.clamp(3, 10) // Clamp between 3 and 10 lines
 }
 
 use crate::cli::usage_text;
@@ -577,5 +549,56 @@ impl TtyUi {
             let _ = terminal.hide_cursor();
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::super::types::{NavFocus, Navigation};
+
+    fn ctx(input: &str) -> QuestionCtx<'_> {
+        QuestionCtx {
+            input,
+            pending: 0,
+            help: false,
+            verbose: false,
+            active_pane: ActivePane::main_menu(),
+            navigation: Navigation {
+                focus: NavFocus::Center,
+                depth: None,
+            },
+            confirmed_user: false,
+            key_flash: None,
+        }
+    }
+
+    #[test]
+    fn text_question_height_grows_when_the_question_wraps() {
+        let long_name = "a-very-long-device-hostname-that-wraps".to_string();
+        let q = Question::rename(long_name, "suggested".to_string());
+        // Wide terminal: question and input each fit on one line.
+        assert_eq!(calculate_question_height(&q, &ctx(""), 120), 4);
+        // Narrow terminal: the question line wraps, the block must grow so
+        // the input line stays visible.
+        let narrow = calculate_question_height(&q, &ctx(""), 30);
+        assert!(narrow > 4, "height {narrow} should grow past the fixed 4");
+        assert!(narrow <= 10, "height is clamped at 10");
+    }
+
+    #[test]
+    fn text_question_height_counts_a_wrapped_input_line() {
+        let q = Question::add_temp_user("dev".to_string());
+        // At width 80 (content 78) the question fits on one line but a
+        // 100-char input wraps, so the block is taller than the minimum.
+        let input = "x".repeat(100);
+        let h = calculate_question_height(&q, &ctx(&input), 80);
+        assert_eq!(h, 2 + 1 + 2);
+    }
+
+    #[test]
+    fn action_question_height_is_unchanged() {
+        let q = Question::wipe(3);
+        assert_eq!(calculate_question_height(&q, &ctx(""), 120), 4);
     }
 }
