@@ -52,7 +52,14 @@ Rules:
 - Do all work for that branch/PR inside its worktree; do not check out branches in the main worktree
 - Push the branch and open the PR on the **first commit** — as a **draft** while the work is not ready — so every branch is backed by an open PR from the start. Script S3 — `scripts/first-commit.sh "<msg>"` (§8) — commit with the required trailer + push + `gh pr create --draft` if missing
 - You — the agent — decide when the PR is ready for review: as soon as your work is done, mark the PR **ready for review** yourself (it must no longer be in a draft state) — do not leave it in draft and do not ask the developer to flip it for you. Script S4 — `scripts/finish-pr.sh` (§8) — `gh pr ready` + prints the two test reminders below
-- One (worktree, branch, PR) tuple per session: if more work is requested in the same session, reuse the same worktree and branch — and if that PR has already been merged, open a **new PR on the same branch**, never a second worktree/branch
+- One (worktree, branch, PR) tuple per session: if more work is requested in the same session **and it needs this session's context**, reuse the same worktree and branch — and if that PR has already been merged, open a **new PR on the same branch**, never a second worktree/branch
+- **Hand off context-free work to a new session**: a fix or improvement that would need a new PR but does **not** need this session's context — including anything unrelated or only slightly related to the current task — must not be started in this session (the one-tuple rule is enforced, not relaxed). Instead, end your reply with a ready-to-use command that opens a **new session** seeded with an adequate prompt:
+
+  ```bash
+  vibe "<prompt>"   # run from the repo root
+  ```
+
+  The new session follows §1–§4 on its own and gets its own (worktree, branch, PR) tuple. The prompt must stand alone: state what to change, where, and which AGENTS.md sections apply.
 - Keep the worktree in place while the PR is open so the developer can test
 
 When you are done, always end with two copy-paste-ready reminders so the developer can test the PR — fill in the real worktree name and branch name:
