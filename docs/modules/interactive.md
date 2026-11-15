@@ -122,6 +122,10 @@ pub struct InteractiveState {
     pub temp_users: HashMap<String, String>,
     pub users_selected: Option<String>,
     pub temp_user_pending: Option<String>,
+    // (device, user) waiting for the "install key?" answer that closes
+    // the add-user flow (remote receive-add-local XOR receive-install-key,
+    // then a device-scoped sync)
+    pub install_key_pending: Option<(String, String)>,
     
     // Settings
     pub new_count: usize,

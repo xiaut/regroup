@@ -179,7 +179,11 @@ the selected context:
   add a user on an **added** row (`a` is free there; adding a user is
   device-specific, no user needs to be selected — the user is temporary
   until confirmed), and `a`/`n`
-  add/ignore on a **detected** row. The localhost row gets no add-user
+  add/ignore on a **detected** row. Adding a **detected** device chains:
+  the add-user prompt opens by itself, then the "install key?" question
+  (one remote call — `receive-add-local` XOR `receive-install-key` —
+  over SSH), then a device-scoped sync. The same question closes every
+  add-user flow. The localhost row gets no add-user
   key: a temporary user configures an outgoing connection, and
   connecting to the current device is nonsense. `Enter`/`Right` open the
   Users sub-panel when the **local or an added** row is selected and the
