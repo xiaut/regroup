@@ -305,21 +305,23 @@ mod tests {
                 local_in_config,
             },
         };
-        // Not in the shared configuration: 'a' adds it, 'd' does nothing.
+        // Not in the shared configuration: 'a' adds it, 'r' does nothing.
         let not_added = ctx(false);
         assert_eq!(
             resolve(not_added, KeyCode::Char('a')),
             Some(KeyResolution::Action(Action::AddLocalToConfig))
         );
-        assert_eq!(resolve(not_added, KeyCode::Char('d')), None);
+        assert_eq!(resolve(not_added, KeyCode::Char('r')), None);
         assert!(bindings(not_added).iter().any(|b| b.key == KeyCode::Char('a')));
-        // In the shared configuration: 'd' removes it, 'a' does nothing.
+        // In the shared configuration: 'r' removes it, 'a'/'d' do nothing
+        // ('d' delete stays reserved for added devices).
         let added = ctx(true);
         assert_eq!(
-            resolve(added, KeyCode::Char('d')),
+            resolve(added, KeyCode::Char('r')),
             Some(KeyResolution::Action(Action::RemoveLocalFromConfig))
         );
         assert_eq!(resolve(added, KeyCode::Char('a')), None);
+        assert_eq!(resolve(added, KeyCode::Char('d')), None);
         // Both variants keep the users entry keys; the added-row device
         // actions (sync, wipe, setup-cd, delete) stay off the local row.
         for c in [ctx(false), ctx(true)] {

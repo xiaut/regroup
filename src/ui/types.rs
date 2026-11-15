@@ -405,8 +405,8 @@ static DEVICES_LOCAL_NOT_ADDED_KEYS: &[KeyBinding] = &[
 ];
 
 /// Focused Devices pane, local row selected, local device in the shared
-/// configuration: it can be removed from it (key 'd' — plain "remove",
-/// not "delete": the local files stay recoverable in git history, and
+/// configuration: it can be removed from it (key 'r' — plain "remove",
+/// not 'd' "delete": the local files stay recoverable in git history, and
 /// ~/.ssh/config / known_hosts are untouched — the local device has no
 /// such traces).
 static DEVICES_LOCAL_ADDED_KEYS: &[KeyBinding] = &[
@@ -416,7 +416,7 @@ static DEVICES_LOCAL_ADDED_KEYS: &[KeyBinding] = &[
     KeyBinding::internal(Down, "Down", "select"),
     KeyBinding::internal(Enter, "Enter", "users"),
     KeyBinding::internal(Right, "Right", "users"),
-    KeyBinding::new(Char('d'), "d", "remove", Effect::Action(Action::RemoveLocalFromConfig)),
+    KeyBinding::new(Char('r'), "r", "remove", Effect::Action(Action::RemoveLocalFromConfig)),
 ];
 
 /// Focused Devices pane with an added device selected: device
