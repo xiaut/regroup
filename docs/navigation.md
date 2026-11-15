@@ -169,11 +169,13 @@ pane state (see `pane_keys` in `src/ui/types.rs`). Actions are scoped to
 the selected context:
 
 - The **main menu (overview)** offers the **global actions** — everything
-  not specific to a device or a user: `s` sync, `w` wipe, `c` setup-cd,
-  and `q` quit (quit is only offered here).
+  not specific to a device or a user: `s` sync (unscoped: every device ×
+  every user), `w` wipe, `c` setup-cd, and `q` quit (quit is only offered
+  here).
 - A **selected device row** offers only device-specific actions:
   `a`/`r` add/remove on the **localhost** row (plain add/remove — the
-  local data stays recoverable, unlike `d` delete), `d` delete plus `a`
+  local data stays recoverable, unlike `d` delete), `d` delete, `s` sync
+  (scoped to this device: every user of it) plus `a`
   add a user on an **added** row (`a` is free there; adding a user is
   device-specific, no user needs to be selected — the user is temporary
   until confirmed), and `a`/`n`
@@ -184,8 +186,11 @@ the selected context:
   device has at least one user (with no users the pane is not reachable).
 - A **selected user** in the Users pane offers only user-specific actions,
   in two layers: the user layer (`d` set the default user, `x` remove the
-  user) and, on top of it, the key layer (`i`/`r` install/remove an SSH
-  key — the outgoing connection, recorded as a connection file). The same
+  user, `s` sync — scoped: every device × every user, but this user on the
+  selected device; added device only, not offered on the localhost Users
+  pane since the local device has no remote) and, on top of it, the key
+  layer (`i`/`r` install/remove
+  an SSH key — the outgoing connection, recorded as a connection file). The same
   keys are offered on every user row of an added device: **temporary is
   not a special kind of user** — a user added with `a` is temporary until
   confirmed, and a successful key install confirms it (the target device

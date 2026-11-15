@@ -308,7 +308,7 @@ a device or a user — plus navigation:
 
 | Key | Action |
 |-----|--------|
-| `s` | Sync git (pull/push) |
+| `s` | Sync git, unscoped: every device × every user (pull/push) |
 | `w` | Wipe configuration |
 | `c` | Setup regroup-cd shell function |
 | `q` | Quit (only offered here) |
@@ -318,11 +318,14 @@ a device or a user — plus navigation:
 
 ### In Devices Panel (added row selected)
 
-Only device-specific actions (the global ones stay on the main menu):
+Only device-specific actions (the strict globals stay on the main menu) —
+except sync, which is **context-scoped**: here `s` syncs this device only,
+every user of it:
 
 | Key | Action |
 |-----|--------|
 | `d` | Delete selected device |
+| `s` | Sync git scoped to this device: every user of it (pull/push) |
 | `a` | Add a user for the device (`a` is free on this row; adding a user is device-specific — no user needs to be selected). The user is temporary until a sync or a successful key install confirms it |
 | `Right` or `Enter` | Open the Users sub-panel of the selected device (only when the device has at least one user — with no users the pane is not reachable) |
 
@@ -353,6 +356,7 @@ temporary until a sync or a successful key install confirms it):
 | Key | Action |
 |-----|--------|
 | `d` | Set the selected user as the device's default user (device-owned data — the one exception to "on localhost you only edit your own data") |
+| `s` | Sync git, context-scoped: every device × every user, but the selected device as the selected user only (added device only — not offered on the localhost Users pane: the local device has no remote, so sync is unavailable on the current user) |
 | `x` | Remove the selected user (tmp/ entry, or declared user file committed so the removal propagates) |
 | `i` / `r` | Install / remove SSH key to `user@device` (added device; a successful install on a temporary user confirms it; recorded as an outgoing connection file) |
 | `r` | Revoke — **only on an `── external ──` row of the localhost device**: remove the incoming key from your `authorized_keys` and delete the connection file, locally |

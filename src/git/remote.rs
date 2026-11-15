@@ -119,6 +119,14 @@ pub fn git_list_remotes(repo_path: &Path) -> Vec<String> {
     }
 }
 
+/// The git remote URL of a device for a given SSH user:
+/// `{user}@{device}:~/{CONFIG_DIR}/{GIT_DIR}` — the device name is the
+/// ~/.ssh/config alias regroup writes itself, never the IP (which changes
+/// with the network).
+pub fn remote_url(user: &str, device_name: &str) -> String {
+    format!("{}@{}:~/{}/{}", user, device_name, CONFIG_DIR, GIT_DIR)
+}
+
 /// Sync git remotes to match all devices except self
 pub fn sync_git_remotes(
     repo_path: &Path,
@@ -175,9 +183,9 @@ pub fn sync_git_remotes(
         };
 
         // Construct SSH URL for the device's config git repository (using hostname, not IP)
-        let remote_url = format!("{}@{}:~/{}/{}", user, device.name.as_str(), CONFIG_DIR, GIT_DIR);
+        let url = remote_url(user, device.name.as_str());
 
-        if let Err(e) = git_add_remote(repo_path, device.name.as_str(), &remote_url) {
+        if let Err(e) = git_add_remote(repo_path, device.name.as_str(), &url) {
             errors.push(format!("failed to add remote for {}: {}", device.name, e));
         }
     }

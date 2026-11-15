@@ -497,10 +497,11 @@ static DEVICES_LOCAL_ADDED_NO_USERS_KEYS: &[KeyBinding] = &[
 
 /// Focused Devices pane with an added device selected: only
 /// device-specific actions plus entry into the Users sub-panel
-/// (Right/Enter) — the global actions live on the main menu. Key 'a' is
-/// free on this row (it adds the device on a detected row and the local
-/// device on the localhost row), so it is re-used for "add user":
-/// adding a user is device-specific, no user needs to be selected.
+/// (Right/Enter) — the global actions live on the main menu, except sync
+/// which is context-scoped: here it syncs this device, every user of it.
+/// Key 'a' is free on this row (it adds the device on a detected row and
+/// the local device on the localhost row), so it is re-used for "add
+/// user": adding a user is device-specific, no user needs to be selected.
 static DEVICES_ADDED_KEYS: &[KeyBinding] = &[
     KeyBinding::internal(Esc, "Esc", "back"),
     KeyBinding::internal(Left, "Left", "back"),
@@ -509,19 +510,22 @@ static DEVICES_ADDED_KEYS: &[KeyBinding] = &[
     KeyBinding::internal(Enter, "Enter", "users"),
     KeyBinding::internal(Right, "Right", "users"),
     KeyBinding::new(Char('d'), "d", "delete", Effect::Action(Action::DeleteSelected)),
+    KeyBinding::new(Char('s'), "s", "sync device", Effect::Action(Action::Sync)),
     KeyBinding::new(Char('a'), "a", "add user", Effect::Action(Action::AddTempUser)),
 ];
 
 /// Same as [`DEVICES_ADDED_KEYS`] but without the Users entry keys: with
 /// no users on the added device the Users sub-panel is not reachable, so
 /// Right/Enter are not offered (the device row keeps its own actions,
-/// including 'a' add user).
+/// including 'a' add user and 's' sync — the sync then reports that no
+/// user is known on the device yet).
 static DEVICES_ADDED_NO_USERS_KEYS: &[KeyBinding] = &[
     KeyBinding::internal(Esc, "Esc", "back"),
     KeyBinding::internal(Left, "Left", "back"),
     KeyBinding::internal(Up, "Up", "select"),
     KeyBinding::internal(Down, "Down", "select"),
     KeyBinding::new(Char('d'), "d", "delete", Effect::Action(Action::DeleteSelected)),
+    KeyBinding::new(Char('s'), "s", "sync device", Effect::Action(Action::Sync)),
     KeyBinding::new(Char('a'), "a", "add user", Effect::Action(Action::AddTempUser)),
 ];
 
@@ -542,15 +546,17 @@ static DEVICES_DETECTED_KEYS: &[KeyBinding] = &[
 /// install/remove key). "Temporary" is not a special kind of user: a
 /// user added with `a` is temporary until confirmed, and a successful
 /// key install confirms it too — so `i`/`r` are offered on every user
-/// row, not only confirmed ones. The global actions (sync, ...) live on
-/// the main menu, and adding a user is device-specific (key 'a' on the
-/// device row), not a user action.
+/// row, not only confirmed ones. The global actions live on the main
+/// menu, except sync which is context-scoped: here it syncs every device
+/// but pins the selected user on the selected device. Adding a user is
+/// device-specific (key 'a' on the device row), not a user action.
 static USERS_KEYS: &[KeyBinding] = &[
     KeyBinding::internal(Esc, "Esc", "devices"),
     KeyBinding::internal(Left, "Left", "devices"),
     KeyBinding::internal(Up, "Up", "select"),
     KeyBinding::internal(Down, "Down", "select"),
     KeyBinding::new(Char('d'), "d", "set default", Effect::Action(Action::SetDefaultUser)),
+    KeyBinding::new(Char('s'), "s", "sync user", Effect::Action(Action::Sync)),
     KeyBinding::new(Char('i'), "i", "install key", Effect::Action(Action::InstallKeyToSelected)),
     KeyBinding::new(Char('r'), "r", "remove key", Effect::Action(Action::RemoveKeyFromSelected)),
     KeyBinding::new(Char('x'), "x", "remove user", Effect::Action(Action::RemoveUser)),
@@ -558,9 +564,11 @@ static USERS_KEYS: &[KeyBinding] = &[
 
 /// Users pane of the localhost device, a user row selected: only
 /// `d` set default — no install/remove key (connecting to the current
-/// device is nonsense) and no remove-user (on localhost you only edit
-/// your own data; the default user is the exception, living in the
-/// device-owned device.json).
+/// device is nonsense), no remove-user (on localhost you only edit your
+/// own data; the default user is the exception, living in the
+/// device-owned device.json), and no sync: the local device has no
+/// remote, so there is no user@device to sync as — sync is not available
+/// on the current user.
 static USERS_LOCAL_KEYS: &[KeyBinding] = &[
     KeyBinding::internal(Esc, "Esc", "devices"),
     KeyBinding::internal(Left, "Left", "devices"),
@@ -760,6 +768,11 @@ impl Question {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
     Quit,
+    /// Sync git, scoped by where the key was pressed: from the main menu,
+    /// every device and every user; on a selected device row, every user of
+    /// that device; on a selected user row, every device but that user on
+    /// the selected device. The handler derives the scope from the current
+    /// pane and selections.
     Sync,
     /// Add the detected device selected in the Devices panel.
     Add,

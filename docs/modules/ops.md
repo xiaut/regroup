@@ -47,7 +47,7 @@ ops/
 
 | Function | Purpose |
 |----------|---------|
-| `sync_git(home, temp_users)` | Configure a git remote for every known device (except self), then pull from and push to each remote; per-remote results are always logged |
+| `sync_git(home, temp_users, scope)` | Configure a git remote for every known device (except self), then pull from and push to each in-scope `user@device` target; per-target results are always logged. `scope` is a `SyncScope`: `All` (every device, every user), `Device(name)` (one device, every user of it), `User { device, user }` (every device and user, except `device` as `user` only) — set by where in the TUI the sync was triggered |
 | `trust_new_signing_key(home, beacon)` | After a signing-key rotation is accepted, pull the device's authoritative `device.json` |
 
 ## keys.rs — connection key management

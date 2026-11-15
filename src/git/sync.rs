@@ -5,15 +5,15 @@
 use std::io;
 use std::path::Path;
 
-use crate::git::remote;
-
 // Git commands run through crate::ui::run_logged, which puts their output
 // into the one log stream: during a temporary CLI pass (direct output
 // mode) the output is forwarded live to the CLI — interactive prompts
 // work — and recorded for the TUI Logs pane; otherwise it is captured and
 // logged line by line.
 
-/// Pull from a specific remote
+/// Pull from a specific remote. `remote_name` may also be a URL: git
+/// accepts a URL wherever a remote name is expected, which is how
+/// per-user sync targets (no named remote) are reached.
 pub fn git_pull_remote(repo_path: &Path, remote_name: &str) -> io::Result<()> {
     if !super::repo::is_git_repo(repo_path) {
         return Ok(());
@@ -40,7 +40,8 @@ pub fn git_pull_remote(repo_path: &Path, remote_name: &str) -> io::Result<()> {
     Ok(())
 }
 
-/// Push to a specific remote
+/// Push to a specific remote. `remote_name` may also be a URL (see
+/// [`git_pull_remote`]).
 pub fn git_push_remote(repo_path: &Path, remote_name: &str) -> io::Result<()> {
     if !super::repo::is_git_repo(repo_path) {
         return Ok(());
@@ -67,59 +68,47 @@ pub fn git_push_remote(repo_path: &Path, remote_name: &str) -> io::Result<()> {
     Ok(())
 }
 
-/// Pull from all remotes. Each successful pull is logged through the ui
+/// One sync target: `target` is what git receives on the command line (a
+/// remote name or a URL) and `label` is how it is shown in the logs, e.g.
+/// `user@device` for a per-user sync target.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SyncTarget {
+    pub label: String,
+    pub target: String,
+}
+
+/// Sync with specific targets: pull from all of them first, then push to
+/// all of them. Each successful pull/push is logged through the ui
 /// (activity pane in interactive mode).
-pub fn git_pull_all(repo_path: &Path) -> Vec<String> {
+///
+/// Scoped syncs reach each user@device through its own URL, which needs no
+/// named remote: git accepts a URL wherever a remote name is expected, so
+/// every user@device can be synced — and prompt for its own password —
+/// independently.
+pub fn sync_with_targets(repo_path: &Path, targets: &[SyncTarget]) -> Vec<String> {
     let mut errors = Vec::new();
 
     if !super::repo::is_git_repo(repo_path) {
         return errors;
     }
 
-    let remotes = remote::git_list_remotes(repo_path);
-    for r in &remotes {
-        match git_pull_remote(repo_path, r) {
+    for t in targets {
+        match git_pull_remote(repo_path, &t.target) {
             Ok(()) => {
-                crate::ui::log(&format!("  - pulled from {r}"));
+                crate::ui::log(&format!("  - pulled from {}", t.label));
             }
-            Err(e) => errors.push(format!("pull from {}: {}", r, e)),
+            Err(e) => errors.push(format!("pull from {}: {}", t.label, e)),
         }
     }
 
-    errors
-}
-
-/// Push to all remotes. Each successful push is logged through the ui
-/// (activity pane in interactive mode).
-pub fn git_push_all(repo_path: &Path) -> Vec<String> {
-    let mut errors = Vec::new();
-
-    if !super::repo::is_git_repo(repo_path) {
-        return errors;
-    }
-
-    let remotes = remote::git_list_remotes(repo_path);
-    for r in &remotes {
-        match git_push_remote(repo_path, r) {
+    for t in targets {
+        match git_push_remote(repo_path, &t.target) {
             Ok(()) => {
-                crate::ui::log(&format!("  - pushed to {r}"));
+                crate::ui::log(&format!("  - pushed to {}", t.label));
             }
-            Err(e) => errors.push(format!("push to {}: {}", r, e)),
+            Err(e) => errors.push(format!("push to {}: {}", t.label, e)),
         }
     }
-
-    errors
-}
-
-/// Sync with all remotes (pull then push)
-pub fn sync_with_remotes(repo_path: &Path) -> Vec<String> {
-    let mut errors = Vec::new();
-
-    // Pull from all remotes first
-    errors.extend(git_pull_all(repo_path));
-
-    // Then push to all remotes
-    errors.extend(git_push_all(repo_path));
 
     errors
 }
