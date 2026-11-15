@@ -84,3 +84,7 @@ When the PR is merged — or when the developer explicitly asks — and the bran
 4. Delete the remote branch — but only after checking that its actual content has been merged into `main`: `git cherry origin/main <branch>` must show no `+` commits (equivalently, `git diff origin/main <branch>` must be empty). Do not rely on `git branch --merged` alone — a squash merge does not make the branch an ancestor of `main`. If anything on the branch is not merged, keep the branch and report what is missing. Only then: `git push origin --delete <branch>`
 
 Do not check out another branch in the main checkout — that stays the developer's call.
+
+## 7. Reporting — Short Citations Only
+
+The developer is considered to be aware of AGENTS.md. When you execute a rule, report it to the user only as a short citation of the rule — section number plus a few words (e.g. "§ 4: worktree under `.worktrees/`") — never as a full re-explanation of the rule.
