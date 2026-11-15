@@ -258,3 +258,71 @@ pub fn remove_key_action(
         Err(e) => Ok(KeyActionResult::Error(format!("SSH error: {}", e))),
     }
 }
+
+/// Run the remote `receive-add-local` call on a device: ask it over SSH to
+/// add its own localhost to its shared configuration (the same code the
+/// local `regroup receive-add-local` subcommand runs — shared with the
+/// first step of `receive-install-key`). This is one half of the XOR the
+/// add-user flow offers: `receive-add-local` XOR `receive-install-key`.
+///
+/// `to_device` is the logical device name; `to_ip` is the
+/// beacon-advertised address used as the actual SSH transport target —
+/// the name is never resolved (no DNS, no ~/.ssh/config alias, which
+/// regroup writes itself).
+pub fn receive_add_local_action(
+    to_device: &str,
+    to_ip: &str,
+    to_user: &str,
+    to_port: u16,
+) -> Result<KeyActionResult, String> {
+    // Check if device is reachable at its advertised IP (plain TCP
+    // connect, no authenticated probe — see ops.md).
+    if !is_reachable(to_ip, to_port) {
+        return Ok(KeyActionResult::Error(format!(
+            "Device {} unreachable at {}:{}",
+            to_device, to_ip, to_port
+        )));
+    }
+
+    crate::ui::log(&format!(
+        "Connecting via SSH to {}@{} ({}) on port {} to share its own configuration...",
+        to_user, to_ip, to_device, to_port
+    ));
+    crate::ui::log(
+        "Note: If the remote device requires password authentication, you will be prompted for a password."
+    );
+
+    // Build the command for the remote device.
+    // Options must come BEFORE the destination: everything after `user@host`
+    // is sent to the remote as the command.
+    let mut ssh_cmd = Command::new("ssh");
+    if to_port != 22 {
+        ssh_cmd.arg("-p").arg(to_port.to_string());
+    }
+    // Dial the beacon-advertised IP directly, not the device-name alias
+    // (the alias lives in ~/.ssh/config, which regroup writes itself).
+    ssh_cmd.arg(format!("{}@{}", to_user, to_ip));
+    ssh_cmd.arg("regroup").arg("receive-add-local");
+    // Run ssh through the logged runner, like install_key_action: live
+    // forwarding during the temporary CLI pass (password prompts work)
+    // plus recording into the TUI log stream.
+    let output = crate::ui::run_logged(ssh_cmd);
+
+    match output {
+        Ok(output) => {
+            if output.status.success() {
+                Ok(KeyActionResult::Success(format!(
+                    "{} is now shared in its own configuration",
+                    to_device
+                )))
+            } else {
+                Ok(KeyActionResult::Error(format!(
+                    "could not share {}'s configuration (exit {})",
+                    to_device,
+                    output.status.code().unwrap_or(-1)
+                )))
+            }
+        }
+        Err(e) => Ok(KeyActionResult::Error(format!("SSH error: {}", e))),
+    }
+}

@@ -762,6 +762,12 @@ pub fn render_question(
                 ),
                 Line::from(format!("> {}", ctx.input)),
             ),
+            super::types::Question::InstallKey(def, device, user) => (
+                def.title,
+                Color::Yellow,
+                format!("Install an SSH key to {user}@{device}? (the device is synced either way)"),
+                hint_spans(&modal_hint_text(def), ctx.key_flash),
+            ),
             super::types::Question::Delete(def, name) => (
                 def.title,
                 Color::Red,

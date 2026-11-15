@@ -32,7 +32,7 @@ This will:
    - `receive.denyCurrentBranch` set to `updateInstead` (allows pushing to checked-out branches)
    - `pull.rebase` set to `true` (maintains linear history)
 2. Create `settings.json` with defaults
-3. Create `devices/<hostname>/device.json` with auto-detected info
+3. **Not** add the local device to the shared configuration implicitly — the localhost is only shared when you explicitly add it: press `a` on the `localhost` row in the TUI, or run `regroup receive-add-local` (also callable by an external user, e.g. over SSH: `ssh user@host regroup receive-add-local`)
 4. Enter continuous interactive mode: announce + listen for beacons
 
 ### On second device:
@@ -43,7 +43,7 @@ This will:
 
 This will:
 1. Create local `~/.regroup-config/git/`
-2. Create its own device directory (auto-detected info)
+2. Not add its own device implicitly either — add it with `a` on the `localhost` row or `regroup receive-add-local` when you want to share it
 3. Discover the first device via its UDP beacon and prompt to add it
 4. Enter continuous interactive mode (press `s` to pull from and push to git remotes)
 
@@ -175,8 +175,9 @@ Usage:
   ./regroup    continuous interactive mode (full-screen TUI; plain line-based
                fallback when output is piped)
 
-Internal subcommands (run on a target device via SSH by regroup itself when
-installing/removing an SSH key — not for direct use):
+Remote API subcommands (run on a target device via SSH by regroup itself —
+every remote API command starts with `receive-`; see docs/modules/internal.md):
+  ./regroup receive-add-local
   ./regroup receive-install-key --source-user ... --source-device ... --public-key ... --connection-id ...
   ./regroup receive-remove-key  --connection-id ...
 
@@ -318,7 +319,10 @@ Fields:
 # First run - creates config, initializes git, enters discovery loop
 ./regroup
 
-# Config is now at ~/.regroup-config/ with ordi.json
+# Config is now at ~/.regroup-config/ — the local device is NOT in it yet:
+# share it with 'a' on the localhost row, or:
+./regroup receive-add-local
+
 # Git remote for laptop will be added when laptop is discovered
 ```
 
@@ -327,7 +331,10 @@ Fields:
 # First run - creates config, initializes git, enters interactive mode
 ./regroup
 
-# Will discover ordi via its UDP beacon and prompt to add it
+# Will discover ordi via its UDP beacon: press 'a' to add it. The add-user
+# prompt then opens by itself — type a user name, answer "install key?"
+# (one remote call: receive-add-local XOR receive-install-key on ordi),
+# and a device-scoped git sync runs automatically.
 # ordi's entry is created in ~/.ssh/config and the config repo
 ```
 
@@ -346,6 +353,16 @@ Fields:
 # ... then press s
 
 # Useful when you know there are updates but UDP discovery might miss them
+```
+
+### Sharing the local device (localhost) with the network
+
+```bash
+# The local device is never added to the shared configuration implicitly.
+# Add it from the TUI ('a' on the localhost row) or from the shell:
+./regroup receive-add-local
+# An external user can trigger the same add over SSH:
+#   ssh user@host regroup receive-add-local
 ```
 
 ### Removing devices

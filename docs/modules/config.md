@@ -18,9 +18,10 @@ Reads merge the layers as `git/ ∪ (tmp/ − git/)`: on overlap `git/` wins and
 ```
 config/
 ├── mod.rs          # Device/Conf types, storage constants, path helpers
-├── loading.rs      # load_config(): ensure repo, scan devices/, auto-create the local
-│                   #   device on first run only (repo without commits); a removal
-│                   #   of the local device from the shared config is respected
+├── loading.rs      # load_config(): ensure repo, scan devices/ through the proxy; the
+│                   #   local device is NEVER added implicitly — it joins the shared
+│                   #   config only via an explicit add (TUI 'a' on the localhost row,
+│                   #   or the `regroup receive-add-local` remote call)
 ├── device.rs       # device file (device.json) load/save, incl. the optional default_user field + validation tests
 ├── connection.rs   # connection files: naming rule, ownership enforcement, loader
 ├── users.rs        # users/<user>.json: one file per known user
@@ -69,8 +70,14 @@ pub struct Conf {
 
 1. Ensures the repository exists (creates it if not)
 2. Scans `devices/` **through the proxy**: merges `git/devices/` with `tmp/devices/`, where `git/` wins on overlap and overlapping `tmp/` files are purged
-3. Auto-creates a local device entry if not present
-4. Records the current user in the local device's own `users/` (in `git/`);
+3. Does **not** add the local device implicitly: the localhost joins the
+   shared configuration only through an explicit add — key `a` on the
+   localhost row in the TUI, or the `regroup receive-add-local` remote
+   call (both go through `cli::add_local_device_to_config`, which uses
+   `create_device_config` and commits the device file, so the file is the
+   repository's initial commit on first add)
+4. Records the current user in the local device's own `users/` (in `git/`)
+   when the local device is in the shared configuration;
    a temporary user of another device is recorded under `tmp/` instead
 5. Loads local settings from `~/.regroup-config/settings.json` (outside the repo; defaults if absent)
 6. Purges `tmp/` entries that are now present in `git/` (lazy purge) (in `git/`)

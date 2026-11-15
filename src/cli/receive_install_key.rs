@@ -3,6 +3,10 @@
 //! This command is called on the TARGET device via SSH to receive a public key
 //! from the SOURCE device and install it in authorized_keys.
 //!
+//! It starts by running the same add-local step as `receive-add-local`
+//! (a key install implies the target device is in its own shared
+//! configuration), then records the connection and installs the key.
+//!
 //! Usage (from source device):
 //!   ssh user@target "regroup receive-install-key --source-user alice --source-device ordi --public-key '...' --connection-id alice->bob@target"
 
@@ -99,8 +103,16 @@ pub fn handle_receive_install_key() -> Result<(), String> {
         ));
     }
     
+    // A key install implies this device is in its own shared
+    // configuration: run the same add-local step first — the exact code
+    // the `receive-add-local` subcommand runs (shared, no duplication).
+    let home = env::var("HOME").map_err(|_| "HOME variable not set".to_string())?;
+    if !crate::cli::add_local_device_to_config(&home) {
+        eprintln!("WARNING: could not add the local device to the shared configuration — continuing with the key install");
+    }
+
     let config_dir = get_config_dir();
-    
+
     // Check if a connection file already exists for this incoming connection
     // Filename format for incoming: "from_user@from_device->to_user.json"
     let connections_dir = config_dir.join("devices").join(&to_device).join("connections");

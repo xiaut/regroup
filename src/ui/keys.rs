@@ -165,6 +165,7 @@ mod tests {
             Question::wipe(2),
             Question::setup_cd("~/.zshrc".to_string()),
             Question::add_temp_user("dev".to_string()),
+            Question::install_key("dev".to_string(), "alice".to_string()),
         ]
     }
 

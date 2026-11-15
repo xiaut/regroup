@@ -746,6 +746,12 @@ pub enum Question {
     /// or a successful key install confirms it. The input is handled
     /// like the rename question.
     AddTempUser(QuestionDef, String), // device
+    /// After a user name was entered (standard add-user flow, auto-opened
+    /// right after adding a detected device, or started from the Users
+    /// panel): install an SSH key to `user@device`? 'y' runs the remote
+    /// `receive-install-key`, 'n' the remote `receive-add-local` — XOR,
+    /// exactly one remote call. A device-scoped git sync follows.
+    InstallKey(QuestionDef, String, String), // device, user
 }
 
 impl Question {
@@ -759,6 +765,7 @@ impl Question {
             Question::Wipe(def, _) => def,
             Question::SetupCd(def, _) => def,
             Question::AddTempUser(def, _) => def,
+            Question::InstallKey(def, _, _) => def,
         }
     }
 }
@@ -825,6 +832,13 @@ pub enum Action {
     TempUserName(String),
     /// Cancel typing a temporary user name.
     CancelTempUser,
+    /// The add-user flow asks whether to install an SSH key to
+    /// `<user>@<device>`: 'y' runs the remote `receive-install-key`,
+    /// 'n' runs the remote `receive-add-local` (XOR — exactly one remote
+    /// call per add-user flow). A device-scoped git sync follows either
+    /// way.
+    InstallKeyYes,
+    InstallKeyNo,
     /// Remove the selected user (key 'x' in the Users pane of an added
     /// device): delete its user file — tmp/ overlay for a temporary
     /// user, git layer (committed, so the removal propagates) for a
@@ -931,6 +945,19 @@ pub static ADD_TEMP_USER_QUESTION: QuestionDef = QuestionDef {
     ],
 };
 
+/// After a user name was entered in the add-user flow: install an SSH key
+/// to user@device (remote `receive-install-key`, which first runs the
+/// add-local step on the target), or only run the remote
+/// `receive-add-local`? XOR — exactly one remote call, then a
+/// device-scoped git sync.
+pub static INSTALL_KEY_QUESTION: QuestionDef = QuestionDef {
+    title: "Install SSH key",
+    bindings: &[
+        KeyBinding::new(KeyCode::Char('y'), "y", "yes, install a key", Effect::Action(Action::InstallKeyYes)),
+        KeyBinding::new(KeyCode::Char('n'), "n", "no key — just share the device", Effect::Action(Action::InstallKeyNo)),
+    ],
+};
+
 /// While typing a new name, every character key is captured as text;
 /// only Enter and Esc are bound.
 pub static RENAME_QUESTION: QuestionDef = QuestionDef {
@@ -999,6 +1026,10 @@ impl Question {
 
     pub fn add_temp_user(device: String) -> Self {
         Question::AddTempUser(ADD_TEMP_USER_QUESTION, device)
+    }
+
+    pub fn install_key(device: String, user: String) -> Self {
+        Question::InstallKey(INSTALL_KEY_QUESTION, device, user)
     }
 }
 
