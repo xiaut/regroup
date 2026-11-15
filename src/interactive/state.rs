@@ -1201,7 +1201,7 @@ impl InteractiveState {
                 ui::log("  - (dry run - automatic add-user prompt, remote call and sync skipped)");
             } else {
                 ui::log(&format!(
-                    "  - {name} added — now type a user name for it; then one remote call (receive-add-local / receive-install-key) and a sync run automatically"
+                    "  - {name} added — type a user name for it next; then choose whether to install a key on it, and the device is synced automatically"
                 ));
                 self.temp_user_pending = Some(name);
             }
@@ -1503,11 +1503,14 @@ impl InteractiveState {
             return;
         };
 
-        let what = if install { "install SSH key" } else { "receive-add-local" };
+        let what = if install { "install SSH key" } else { "share device config" };
         ui::log(&format!(
-            "  - Remote call on {user}@{device} ({target_ip}): {}",
-            if install { "regroup receive-install-key" } else { "regroup receive-add-local" }
+            "  - {} {user}@{device} ({target_ip}) — you may be asked for a password",
+            if install { "Installing an SSH key on" } else { "Asking" }
         ));
+        if !install {
+            ui::log(&format!("  - {device} will share its own configuration with the network"));
+        }
         let result = tui.with_clean_terminal(what, || {
             if install {
                 crate::tui::key_actions::install_key_action(

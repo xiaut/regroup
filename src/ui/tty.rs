@@ -99,7 +99,7 @@ fn calculate_question_height(question: &Question, ctx: &QuestionCtx, width: u16)
         }
         Question::InstallKey(def, device, user) => {
             (
-                format!("Install an SSH key to {user}@{device}? (a device-scoped git sync follows)"),
+                format!("Install an SSH key to {user}@{device}? (the device is synced either way)"),
                 modal_hint_text(def),
             )
         }

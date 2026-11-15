@@ -953,8 +953,8 @@ pub static ADD_TEMP_USER_QUESTION: QuestionDef = QuestionDef {
 pub static INSTALL_KEY_QUESTION: QuestionDef = QuestionDef {
     title: "Install SSH key",
     bindings: &[
-        KeyBinding::new(KeyCode::Char('y'), "y", "install key (receive-install-key)", Effect::Action(Action::InstallKeyYes)),
-        KeyBinding::new(KeyCode::Char('n'), "n", "add-local only (receive-add-local)", Effect::Action(Action::InstallKeyNo)),
+        KeyBinding::new(KeyCode::Char('y'), "y", "yes, install a key", Effect::Action(Action::InstallKeyYes)),
+        KeyBinding::new(KeyCode::Char('n'), "n", "no key — just share the device", Effect::Action(Action::InstallKeyNo)),
     ],
 };
 

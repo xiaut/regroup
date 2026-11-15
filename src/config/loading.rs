@@ -270,7 +270,7 @@ pub fn load_config() -> Conf {
 
     if devices.is_empty() {
         warn(&format!(
-            "no devices in the shared configuration ({}) — the local device is not added implicitly; add it with 'a' on the localhost row (TUI) or `regroup receive-add-local`",
+            "no devices in the shared configuration ({}) — the local device is not added implicitly; add it with 'a' on the localhost row (TUI)",
             config_dir.display()
         ));
     }

@@ -285,7 +285,7 @@ pub fn receive_add_local_action(
     }
 
     crate::ui::log(&format!(
-        "Connecting via SSH to {}@{} ({}) on port {} to run 'regroup receive-add-local'...",
+        "Connecting via SSH to {}@{} ({}) on port {} to share its own configuration...",
         to_user, to_ip, to_device, to_port
     ));
     crate::ui::log(
@@ -312,12 +312,12 @@ pub fn receive_add_local_action(
         Ok(output) => {
             if output.status.success() {
                 Ok(KeyActionResult::Success(format!(
-                    "receive-add-local succeeded on {} — its localhost is now in its shared configuration",
+                    "{} is now shared in its own configuration",
                     to_device
                 )))
             } else {
                 Ok(KeyActionResult::Error(format!(
-                    "receive-add-local failed on {} (exit {})",
+                    "could not share {}'s configuration (exit {})",
                     to_device,
                     output.status.code().unwrap_or(-1)
                 )))
