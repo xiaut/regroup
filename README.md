@@ -444,6 +444,28 @@ sudo apt install cargo openssh-client git
 cargo build --release
 ```
 
+### Install on PATH — required to test the `receive-*` workflows
+
+The internal `receive-*` commands are executed on the **target** device as
+`ssh user@device regroup receive-...`, so `regroup` must be on the target's
+default PATH. Non-interactive SSH shells do not apply the PATH exports at the
+bottom of `~/.bashrc`, so install the freshly built binary into a default-PATH
+directory instead:
+
+```bash
+# Ubuntu/Debian — symlink while iterating, so every rebuild is live:
+sudo ln -sf "$PWD/target/release/regroup" /usr/local/bin/regroup
+# if the SSH target is another local user that cannot traverse your $HOME, copy instead:
+sudo install -m 755 target/release/regroup /usr/local/bin/regroup
+
+# Termux:
+ln -sf "$PWD/target/release/regroup" "$PREFIX/bin/regroup"
+```
+
+Build inside the worktree of the branch under test, so the tests exercise that
+branch's binary. Check from the source device with
+`ssh user@device 'command -v regroup'`.
+
 ## Requirements
 
 - Rust (cargo)

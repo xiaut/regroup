@@ -117,3 +117,18 @@ The recurring processes above are scripted under `scripts/` — run the script i
 | S5 | `scripts/merged-cleanup.sh` | §6 post-merge cleanup | `scripts/merged-cleanup.sh <worktree-name> <branch>` (anywhere in the repo) |
 
 S2–S4 automate the PR steps with `gh` (`gh pr create --draft`, `gh pr ready`, `gh pr view`); `gh` must be authenticated on the machine running them. S5 deletes the remote branch only when `git diff origin/main <branch>` is empty.
+
+## 9. Testing `receive-*` Commands — Install the Branch Under Test on PATH
+
+The `receive-*` subcommands run on the **target** device as `ssh user@device regroup receive-...`, so whenever tests will invoke any `receive-*` command, the `regroup` binary of the **branch under test** (main checkout or worktree) must be on the target's default PATH — including non-interactive SSH shells, which do not apply the PATH exports at the bottom of `~/.bashrc`. Build inside the worktree of the branch under test and link the binary into a default-PATH directory:
+
+```bash
+cargo build --release
+sudo ln -sf "$PWD/target/release/regroup" /usr/local/bin/regroup   # Ubuntu/Debian
+ln -sf "$PWD/target/release/regroup" "$PREFIX/bin/regroup"         # Termux
+```
+
+- Symlink while iterating (every rebuild is immediately live); use a copy (`install -m 755`) when the target is another local user that cannot traverse `$HOME`
+- Verify from the source device: `ssh user@device 'command -v regroup'`
+- When the worktree is removed (§6), the symlink dangles — re-point it at the current branch or remove it
+- Details: README.md → Building → "Install on PATH"
