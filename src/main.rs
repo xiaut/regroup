@@ -324,6 +324,7 @@ fn main() {
             cli_mode,
             local_name: &local_name,
             local_ip: local_ip.as_deref(),
+            local_port: local_ssh_port,
         },
         conf.udp_port,
         &rx,

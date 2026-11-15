@@ -1,10 +1,10 @@
 //! Terminal user interface for interactive mode.
 //!
 //! Two backends behind the same interface:
-//! - a full-screen ratatui interface when stdout is a terminal: two device
-//!   panels (detected devices on the left, added devices on the right when
-//!   the screen is wide enough; otherwise detected on top, added below),
-//!   an activity log for general messages, and the current question as the
+//! - a full-screen ratatui interface when stdout is a terminal: one Devices
+//!   panel (the local device first, then the added devices, then the
+//!   detected devices, with divider rows between the sections), an
+//!   activity log for general messages, and the current question as the
 //!   bottom block — the question can never be pushed away by notifications;
 //!   key '?' replaces the device panels and the activity pane with the CLI
 //!   help, keeping the bottom block;

@@ -10,6 +10,8 @@ use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 use ratatui::layout::{Constraint, Layout};
+use ratatui::style::{Color, Style, Stylize};
+use ratatui::widgets::BorderType;
 use ratatui::DefaultTerminal;
 
 use super::keys::{resolve, Context, KeyResolution};
@@ -19,8 +21,8 @@ use super::render::{
     QuestionCtx, RowFlash,
 };
 use super::types::{
-    bindings_hint_text, ActivePane, Action, NavFocus, Navigation, Question, UiDevice, UiEvent,
-    UiUser, UserStatus,
+    bindings_hint_text, ActivePane, Action, DeviceSection, NavFocus, Navigation, PaneKeyCtx,
+    Question, UiDevice, UiEvent, UiUser, UserStatus,
 };
 
 /// Calculate the height needed for the question block based on its content.
@@ -52,7 +54,10 @@ fn calculate_question_height(question: &Question, ctx: &QuestionCtx, width: u16)
             (status_line, idle_hint_text(Context::Pane {
                 focus: ctx.navigation.focus,
                 depth: ctx.navigation.depth,
-                confirmed_user: ctx.confirmed_user,
+                keys_ctx: PaneKeyCtx {
+                    confirmed_user: ctx.confirmed_user,
+                    selected_section: ctx.selected_section,
+                },
             }))
         }
         Question::AddDevice(def, name, ip) => {
@@ -136,17 +141,14 @@ pub struct TtyUi {
     pub question: Question,
     /// Text typed for the rename question.
     pub input: String,
-    /// Devices announced but not accepted yet (Detected panel).
-    pub detected: Vec<UiDevice>,
-    /// Devices in the configuration (Added panel).
-    pub added: Vec<UiDevice>,
-    /// Row of the Detected panel highlighted by the selection (passed from state).
-    pub detected_selected: Option<usize>,
-    /// Row of the Added panel highlighted by the selection (passed from state).
-    pub added_selected: Option<usize>,
-    /// Row of the Added panel highlighted in delete mode (passed from state).
+    /// Rows of the Devices panel, in display order: the local device,
+    /// then the added devices, then the detected devices.
+    pub devices: Vec<UiDevice>,
+    /// Row of the Devices panel highlighted by the selection (passed from state).
+    pub devices_selected: Option<usize>,
+    /// Row of the Devices panel highlighted in delete mode (passed from state).
     pub delete_selected: Option<usize>,
-    /// Users of the device selected in the Added panel (Users panel).
+    /// Users of the added device selected in the Devices panel (Users panel).
     pub users: Vec<UiUser>,
     /// Row of the Users panel highlighted by the selection (passed from state).
     pub users_selected: Option<usize>,
@@ -250,14 +252,12 @@ impl TtyUi {
         // Keep only recent pulses of devices that are still displayed.
         let now = Instant::now();
         self.pulses.retain(|key, t| {
-            (self.detected.iter().any(|d| d.key == *key)
-                || self.added.iter().any(|d| d.key == *key))
+            self.devices.iter().any(|d| d.key == *key)
                 && now.duration_since(*t) < Duration::from_millis(super::logging::PULSE_MS)
         });
         // Keep only recent flashes of devices that are still displayed.
         self.flashes.retain(|key, f| {
-            (self.detected.iter().any(|d| d.key == *key)
-                || self.added.iter().any(|d| d.key == *key))
+            self.devices.iter().any(|d| d.key == *key)
                 && now.duration_since(f.start) < Duration::from_secs(60)
         });
     }
@@ -303,6 +303,12 @@ impl TtyUi {
             .users_selected
             .and_then(|i| self.users.get(i))
             .is_some_and(|u| u.status != UserStatus::Temporary);
+        // The section of the selected Devices row drives which action
+        // keys the fullscreen Devices pane offers.
+        let selected_section = self
+            .devices_selected
+            .and_then(|i| self.devices.get(i))
+            .map(|d| d.section);
         let ctx = if self.show_help {
             Context::Help
         } else {
@@ -313,7 +319,10 @@ impl TtyUi {
                 Context::Pane {
                     focus: self.navigation.focus,
                     depth: self.navigation.depth,
-                    confirmed_user,
+                    keys_ctx: PaneKeyCtx {
+                        confirmed_user,
+                        selected_section,
+                    },
                 }
             } else {
                 Context::Modal(def)
@@ -381,9 +390,14 @@ impl TtyUi {
             return None;
         }
 
-        // Navigation state machine (arrows, Enter, Esc).
-        let has_users = !self.users.is_empty();
-        let new_nav = self.navigation.handle_key(code, has_users);
+        // Navigation state machine (arrows, Enter, Esc). The selected
+        // Devices row's section decides whether Right/Enter from the
+        // fullscreen Devices pane open the Users sub-panel.
+        let selected_section = self
+            .devices_selected
+            .and_then(|i| self.devices.get(i))
+            .map(|d| d.section);
+        let new_nav = self.navigation.handle_key(code, selected_section);
         if new_nav != self.navigation {
             let old_focus = self.navigation.focus;
             self.navigation = new_nav;
@@ -392,24 +406,16 @@ impl TtyUi {
             // Clear selections when switching focus
             if new_nav.focus != old_focus {
                 match new_nav.focus {
-                    NavFocus::Detected => {
-                        self.added_selected = None;
+                    NavFocus::Devices => {
                         self.users_selected = None;
                     }
-                    NavFocus::Added => {
-                        self.detected_selected = None;
-                        self.users_selected = None;
-                    }
-                    NavFocus::Users => {
-                        self.detected_selected = None;
-                    }
+                    NavFocus::Users => {}
                     NavFocus::Logs => {
-                        self.detected_selected = None;
-                        self.added_selected = None;
+                        self.devices_selected = None;
+                        self.users_selected = None;
                     }
                     NavFocus::Center => {
-                        self.detected_selected = None;
-                        self.added_selected = None;
+                        self.devices_selected = None;
                         self.users_selected = None;
                     }
                 }
@@ -464,10 +470,8 @@ impl TtyUi {
             log_scroll,
             question,
             input,
-            detected,
-            added,
-            detected_selected,
-            added_selected,
+            devices,
+            devices_selected,
             users,
             users_selected,
             show_help,
@@ -492,13 +496,20 @@ impl TtyUi {
             let confirmed_user = users_selected
                 .and_then(|i| users.get(i))
                 .is_some_and(|u| u.status != UserStatus::Temporary);
+            let selected_section = devices_selected
+                .and_then(|i| devices.get(i))
+                .map(|d| d.section);
             let question_ctx = QuestionCtx {
                 input,
-                pending: detected.len(),
+                pending: devices
+                    .iter()
+                    .filter(|d| d.section == DeviceSection::Detected)
+                    .count(),
                 help: *show_help,
                 active_pane: *active_pane,
                 navigation: *navigation,
                 confirmed_user,
+                selected_section,
                 key_flash: key_flash.as_ref(),
             };
             let question_height = calculate_question_height(question, &question_ctx, frame.area().width);
@@ -518,31 +529,32 @@ impl TtyUi {
                 let help_scroll_bounded = (*help_scroll).min(max_scroll);
                 render_help(frame, main_area, help_scroll_bounded);
             } else {
-                // In MainMenu all three panes share the main area. A
-                // fullscreen device pane keeps the Logs pane visible as a
-                // strip at the bottom of the main area, like the action
-                // pane below the main area; the Logs pane itself fills it.
-                let device_fullscreen = matches!(
-                    *active_pane,
-                    ActivePane::Detected(_) | ActivePane::Added(_) | ActivePane::Users(_)
-                );
-                let (pane_area, logs_strip) = if device_fullscreen {
-                    split_log_strip(main_area)
-                } else {
+                // The Logs pane is a small strip at the bottom of the main
+                // area, always visible (like the question block below the
+                // main area) — so the Devices pane is always big and needs
+                // no fullscreen mode. Only the fullscreen Logs pane fills
+                // the whole main area.
+                let (pane_area, logs_strip) = if matches!(*active_pane, ActivePane::Logs(_)) {
                     (main_area, None)
+                } else {
+                    split_log_strip(main_area)
                 };
                 if let Some(logs_area) = logs_strip {
-                    render_log(frame, logs_area, log, log_scroll);
+                    let logs_focus = matches!(navigation.focus, NavFocus::Logs);
+                    let (border_style, border_type) = if logs_focus {
+                        (Style::new().fg(Color::Cyan).bold(), BorderType::Double)
+                    } else {
+                        (Style::new().fg(Color::Cyan), BorderType::Plain)
+                    };
+                    render_log(frame, logs_area, log, log_scroll, border_style, border_type);
                 }
                 render_all_panes(
                     frame,
                     pane_area,
                     *active_pane,
                     navigation.focus,
-                    detected,
-                    *detected_selected,
-                    added,
-                    *added_selected,
+                    devices,
+                    *devices_selected,
                     log,
                     log_scroll,
                     flashes,
@@ -580,6 +592,7 @@ mod tests {
                 depth: None,
             },
             confirmed_user: false,
+            selected_section: None,
             key_flash: None,
         }
     }

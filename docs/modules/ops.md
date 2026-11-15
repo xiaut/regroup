@@ -83,7 +83,8 @@ CLI mode on any network:
 
 `shell_rc_file(home)` and `setup_cd(home) -> Result<PathBuf, String>` —
 install or refresh the `regroup-cd` shell function in `~/.zshrc` /
-`~/.bashrc`. Reachable from the TUI (key `c` in the Added panel).
+`~/.bashrc`. Reachable from the TUI (key `c` with an added row selected in
+the Devices panel).
 
 ## selftest.rs
 
