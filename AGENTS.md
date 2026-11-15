@@ -49,6 +49,18 @@ Rules:
 - One (worktree, branch, PR) tuple per session: if more work is requested in the same session, reuse the same worktree and branch — and if that PR has already been merged, open a **new PR on the same branch**, never a second worktree/branch
 - Keep the worktree in place while the PR is open so the developer can test
 
+When you are done, always end with two copy-paste-ready reminders so the developer can test the PR — fill in the real worktree name and branch name:
+
+```bash
+cd .worktrees/<name> && cargo run
+```
+
+```bash
+git pull && git switch <branch> && cargo run
+```
+
+The first one is run from the repo root and tests the PR in its worktree. The second one is for the main checkout and stays the developer's call — never check out the branch there yourself.
+
 ## 5. Never Work Outside the Workdir — Temporary Files in `.vibe/tmp/`
 
 Never create, read, modify, or delete anything outside the workdir — not in `/tmp`, not in `$HOME`, not anywhere else. Working outside the approved working directory triggers an "outside workdir" approval prompt to the developer, so keep every file operation inside the worktree.
