@@ -49,7 +49,20 @@ Rules:
 - One (worktree, branch, PR) tuple per session: if more work is requested in the same session, reuse the same worktree and branch — and if that PR has already been merged, open a **new PR on the same branch**, never a second worktree/branch
 - Keep the worktree in place while the PR is open so the developer can test
 
-## 5. When the PR Is Merged
+## 5. Never Work Outside the Workdir — Temporary Files in `.vibe/tmp/`
+
+Never create, read, modify, or delete anything outside the workdir — not in `/tmp`, not in `$HOME`, not anywhere else. Working outside the approved working directory triggers an "outside workdir" approval prompt to the developer, so keep every file operation inside the worktree.
+
+When temporary or scratch files are needed (prototypes, fetched data, throwaway scripts, working notes), put them in a tmp folder **inside the worktree**, under `.vibe/tmp/`:
+
+```bash
+mkdir -p .vibe/tmp
+# use .vibe/tmp/<file> instead of /tmp/<file>
+```
+
+`.vibe/` is ignored via the committed `.gitignore`, so nothing under it ever shows up in `git status` or gets committed by accident.
+
+## 6. When the PR Is Merged
 
 When the PR is merged — or when the developer explicitly asks — and the branch is no longer needed in this session, clean up in this order:
 
