@@ -391,8 +391,9 @@ static CENTER_KEYS: &[KeyBinding] = &[
 ];
 
 /// Focused Devices pane, local row selected, local device NOT in the
-/// shared configuration: it can be added to it (key 'a'). The Users
-/// sub-panel (Right/Enter) shows the local device's own users.
+/// shared configuration: it can be added back (key 'a' — plain "add", the
+/// data stays recoverable in git history, unlike a device deletion).
+/// The Users sub-panel (Right/Enter) shows the local device's own users.
 static DEVICES_LOCAL_NOT_ADDED_KEYS: &[KeyBinding] = &[
     KeyBinding::internal(Esc, "Esc", "back"),
     KeyBinding::internal(Left, "Left", "back"),
@@ -400,12 +401,14 @@ static DEVICES_LOCAL_NOT_ADDED_KEYS: &[KeyBinding] = &[
     KeyBinding::internal(Down, "Down", "select"),
     KeyBinding::internal(Enter, "Enter", "users"),
     KeyBinding::internal(Right, "Right", "users"),
-    KeyBinding::new(Char('a'), "a", "add to config", Effect::Action(Action::AddLocalToConfig)),
+    KeyBinding::new(Char('a'), "a", "add", Effect::Action(Action::AddLocalToConfig)),
 ];
 
 /// Focused Devices pane, local row selected, local device in the shared
-/// configuration: it can be removed from it (key 'd') — without touching
-/// ~/.ssh/config or known_hosts, the local device has no such traces.
+/// configuration: it can be removed from it (key 'd' — plain "remove",
+/// not "delete": the local files stay recoverable in git history, and
+/// ~/.ssh/config / known_hosts are untouched — the local device has no
+/// such traces).
 static DEVICES_LOCAL_ADDED_KEYS: &[KeyBinding] = &[
     KeyBinding::internal(Esc, "Esc", "back"),
     KeyBinding::internal(Left, "Left", "back"),
@@ -413,7 +416,7 @@ static DEVICES_LOCAL_ADDED_KEYS: &[KeyBinding] = &[
     KeyBinding::internal(Down, "Down", "select"),
     KeyBinding::internal(Enter, "Enter", "users"),
     KeyBinding::internal(Right, "Right", "users"),
-    KeyBinding::new(Char('d'), "d", "remove from config", Effect::Action(Action::RemoveLocalFromConfig)),
+    KeyBinding::new(Char('d'), "d", "remove", Effect::Action(Action::RemoveLocalFromConfig)),
 ];
 
 /// Focused Devices pane with an added device selected: device

@@ -68,7 +68,8 @@ row, in the same style: `── localhost (added) ──` or
 `── localhost (not added) ──` with the local device row (the one regroup
 runs on — always shown as one line, whether or not it is in the shared
 configuration; the divider carries that super-state, and the row offers
-`a`/`d` to add/remove it to/from the shared configuration), then
+`a`/`d` add/remove for it — plain add/remove, not delete: the local data
+stays recoverable in git history), then
 `── added ──` with the added (known) devices, then `── detected ──` with
 the detected (pending) ones. The panel sits
 **above** the virtual center, so `Up` or `Right` focuses it from the overview. Because
