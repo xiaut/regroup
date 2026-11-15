@@ -21,6 +21,12 @@
 //! message is printed to the CLI and recorded for the Logs pane, and
 //! external-command output is forwarded live to the CLI by
 //! [`run_logged`] while being recorded the same way.
+//!
+//! The full-screen session is bracketed by `CLI -> TUI (start)` (logged in
+//! [`Ui::start`], before the alternate screen opens) and `TUI -> CLI
+//! (quit)` / `TUI -> CLI (wipe)` (logged at the end of the interactive
+//! loop, printed to the CLI when the ui drops and restores the terminal).
+//! Plain mode logs no markers: there is no screen switch.
 
 pub mod interface;
 pub mod keys;
