@@ -248,8 +248,9 @@ mod tests {
     }
 
     #[test]
-    fn help_is_the_only_global_key() {
-        // '?' is advertised and handled in every pane state.
+    fn help_is_advertised_in_every_pane_state() {
+        // '?' is advertised and handled in every pane state — the single
+        // key that works everywhere.
         for ctx in all_pane_contexts() {
             assert!(bindings(ctx).iter().any(|b| b.key == KeyCode::Char('?')), "? missing in {:?}", ctx);
             assert_eq!(resolve(ctx, KeyCode::Char('?')), Some(KeyResolution::Internal));
@@ -271,26 +272,73 @@ mod tests {
     }
 
     #[test]
+    fn global_actions_live_on_the_main_menu_only() {
+        use crate::ui::types::DeviceSection;
+        let main_menu = Context::Pane {
+            focus: NavFocus::Center,
+            depth: None,
+            keys_ctx: PaneKeyCtx { confirmed_user: false, selected_section: None, local_in_config: false },
+        };
+        // The global actions (not specific to a device or a user) are
+        // advertised and handled on the main menu (overview).
+        let globals = [
+            (KeyCode::Char('s'), Action::Sync),
+            (KeyCode::Char('w'), Action::WipeMode),
+            (KeyCode::Char('c'), Action::SetupCdMode),
+            (KeyCode::Char('k'), Action::ConnectionsMode),
+            (KeyCode::Char('q'), Action::Quit),
+        ];
+        for (key, action) in &globals {
+            assert!(
+                bindings(main_menu).iter().any(|b| b.key == *key),
+                "{key:?} not advertised on the main menu"
+            );
+            assert_eq!(
+                resolve(main_menu, *key),
+                Some(KeyResolution::Action(action.clone())),
+                "{key:?} does not resolve on the main menu"
+            );
+        }
+        // ... and nowhere else: with a device row or a user selected, only
+        // the device-/user-specific actions (plus navigation and help) are
+        // advertised — never the global ones.
+        for ctx in all_pane_contexts() {
+            let Context::Pane { focus, depth, .. } = ctx else { continue };
+            if matches!(focus, NavFocus::Center) && depth.is_none() {
+                continue; // the main menu itself
+            }
+            for (key, _) in &globals {
+                assert!(
+                    !bindings(ctx).iter().any(|b| b.key == *key),
+                    "{key:?} advertised in {ctx:?}"
+                );
+                assert_eq!(resolve(ctx, *key), None, "{key:?} handled in {ctx:?}");
+            }
+        }
+        // A detected row has no users: no add-user key there either.
+        let detected = Context::Pane {
+            focus: NavFocus::Devices,
+            depth: Some(NavDepth::Selected),
+            keys_ctx: PaneKeyCtx {
+                confirmed_user: false,
+                selected_section: Some(DeviceSection::Detected),
+                local_in_config: false,
+            },
+        };
+        assert_eq!(resolve(detected, KeyCode::Char('u')), None);
+    }
+
+    #[test]
     fn unadvertised_key_is_not_handled() {
         use crate::ui::types::DeviceSection;
         let keys_ctx = |selected_section| PaneKeyCtx { confirmed_user: false, selected_section, local_in_config: false };
-        // 's' syncs in the focused Devices pane only when an added
-        // device row is selected — not on a detected or local row.
-        for section in [Some(DeviceSection::Detected), Some(DeviceSection::Local), None] {
+        // 's' syncs from the main menu, not from any Devices pane row:
+        // a selected device offers only device-specific actions.
+        for section in [Some(DeviceSection::Added), Some(DeviceSection::Detected), Some(DeviceSection::Local), None] {
             let ctx = Context::Pane { focus: NavFocus::Devices, depth: Some(NavDepth::Selected), keys_ctx: keys_ctx(section) };
             assert!(!bindings(ctx).iter().any(|b| b.key == KeyCode::Char('s')), "s advertised for section {section:?}");
             assert_eq!(resolve(ctx, KeyCode::Char('s')), None);
         }
-
-        let added = Context::Pane {
-            focus: NavFocus::Devices,
-            depth: Some(NavDepth::Selected),
-            keys_ctx: keys_ctx(Some(DeviceSection::Added)),
-        };
-        assert_eq!(
-            resolve(added, KeyCode::Char('s')),
-            Some(KeyResolution::Action(Action::Sync))
-        );
     }
 
     #[test]
@@ -322,18 +370,45 @@ mod tests {
         );
         assert_eq!(resolve(added, KeyCode::Char('a')), None);
         assert_eq!(resolve(added, KeyCode::Char('d')), None);
-        // Both variants keep the users entry keys; the added-row device
-        // actions (sync, wipe, setup-cd, delete) stay off the local row.
+        // Both variants keep the users entry keys and the device-specific
+        // add-user key; the global actions (sync, wipe, setup-cd) and the
+        // added-row delete stay off the local row.
         for c in [ctx(false), ctx(true)] {
             assert!(
                 bindings(c)
                     .iter()
                     .any(|b| b.key == KeyCode::Enter && b.effect == Effect::Internal)
             );
+            assert_eq!(
+                resolve(c, KeyCode::Char('u')),
+                Some(KeyResolution::Action(Action::AddTempUser))
+            );
             assert_eq!(resolve(c, KeyCode::Char('s')), None);
             assert_eq!(resolve(c, KeyCode::Char('w')), None);
             assert_eq!(resolve(c, KeyCode::Char('c')), None);
+            assert_eq!(resolve(c, KeyCode::Char('d')), None);
         }
+        // The added row offers delete and add-user, not the globals.
+        let added = Context::Pane {
+            focus: NavFocus::Devices,
+            depth: Some(NavDepth::Selected),
+            keys_ctx: PaneKeyCtx {
+                confirmed_user: false,
+                selected_section: Some(DeviceSection::Added),
+                local_in_config: true,
+            },
+        };
+        assert_eq!(
+            resolve(added, KeyCode::Char('d')),
+            Some(KeyResolution::Action(Action::DeleteSelected))
+        );
+        assert_eq!(
+            resolve(added, KeyCode::Char('u')),
+            Some(KeyResolution::Action(Action::AddTempUser))
+        );
+        assert_eq!(resolve(added, KeyCode::Char('s')), None);
+        assert_eq!(resolve(added, KeyCode::Char('w')), None);
+        assert_eq!(resolve(added, KeyCode::Char('c')), None);
     }
 
     #[test]
@@ -357,13 +432,20 @@ mod tests {
                     .any(|b| b.key == KeyCode::Char('i') || b.key == KeyCode::Char('r')),
                 "i/r advertised on localhost (confirmed={confirmed})"
             );
-            // Sync and temp-user keys stay available.
+            // A selected user offers only user-specific actions: the
+            // global sync and the device-specific add-user are not here.
+            assert_eq!(resolve(ctx, KeyCode::Char('s')), None, "s handled in Users (confirmed={confirmed})");
+            assert_eq!(resolve(ctx, KeyCode::Char('u')), None, "u handled in Users (confirmed={confirmed})");
+            assert!(!bindings(ctx).iter().any(|b| b.key == KeyCode::Char('a')), "a advertised in Users (confirmed={confirmed})");
+            // Set-default stays a user-specific action.
             assert_eq!(
-                resolve(ctx, KeyCode::Char('s')),
-                Some(KeyResolution::Action(Action::Sync))
+                resolve(ctx, KeyCode::Char('d')),
+                Some(KeyResolution::Action(Action::SetDefaultUser))
             );
         }
-        // On an added device the confirmed user still gets i/r.
+        // On an added device the confirmed user still gets i/r, and the
+        // temporary user gets x (remove temp user) — but no globals and
+        // no add-user.
         let added = Context::Pane {
             focus: NavFocus::Users,
             depth: Some(NavDepth::Selected),
@@ -381,6 +463,25 @@ mod tests {
             resolve(added, KeyCode::Char('r')),
             Some(KeyResolution::Action(Action::RemoveKeyFromSelected))
         );
+        assert_eq!(resolve(added, KeyCode::Char('s')), None);
+        assert_eq!(resolve(added, KeyCode::Char('a')), None);
+        assert_eq!(resolve(added, KeyCode::Char('u')), None);
+        let temp = Context::Pane {
+            focus: NavFocus::Users,
+            depth: Some(NavDepth::Selected),
+            keys_ctx: PaneKeyCtx {
+                confirmed_user: false,
+                selected_section: Some(DeviceSection::Added),
+                local_in_config: true,
+            },
+        };
+        assert_eq!(
+            resolve(temp, KeyCode::Char('x')),
+            Some(KeyResolution::Action(Action::RemoveTempUser))
+        );
+        assert_eq!(resolve(temp, KeyCode::Char('i')), None);
+        assert_eq!(resolve(temp, KeyCode::Char('s')), None);
+        assert_eq!(resolve(temp, KeyCode::Char('u')), None);
     }
 
     #[test]

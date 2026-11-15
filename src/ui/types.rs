@@ -381,11 +381,20 @@ pub fn pane_keys(focus: NavFocus, depth: Option<NavDepth>, ctx: PaneKeyCtx) -> &
 
 use KeyCode::*;
 
+/// The main menu (overview): navigation plus the **global actions** —
+/// everything that is not specific to a device or a user (sync, wipe,
+/// setup-cd, connections). A selected device row or user row offers
+/// only its own specific actions instead (see the pane tables below).
 static CENTER_KEYS: &[KeyBinding] = &[
     // The Devices panel is above the center, the Logs panel below.
     KeyBinding::internal(Up, "Up", "devices"),
     KeyBinding::internal(Right, "Right", "devices"),
     KeyBinding::internal(Down, "Down", "logs"),
+    // Global actions, available from the main menu.
+    KeyBinding::new(Char('s'), "s", "sync", Effect::Action(Action::Sync)),
+    KeyBinding::new(Char('w'), "w", "wipe", Effect::Action(Action::WipeMode)),
+    KeyBinding::new(Char('c'), "c", "setup-cd", Effect::Action(Action::SetupCdMode)),
+    KeyBinding::new(Char('k'), "k", "connections", Effect::Action(Action::ConnectionsMode)),
     // Quit is only offered on the main menu (overview).
     KeyBinding::new(Char('q'), "q", "quit", Effect::Action(Action::Quit)),
 ];
@@ -394,6 +403,9 @@ static CENTER_KEYS: &[KeyBinding] = &[
 /// shared configuration: it can be added back (key 'a' — plain "add", the
 /// data stays recoverable in git history, unlike a device deletion).
 /// The Users sub-panel (Right/Enter) shows the local device's own users.
+/// Adding a user is device-specific (key 'u'): no user needs to be
+/// selected. Global actions (sync, wipe, ...) are not repeated here —
+/// they live on the main menu.
 static DEVICES_LOCAL_NOT_ADDED_KEYS: &[KeyBinding] = &[
     KeyBinding::internal(Esc, "Esc", "back"),
     KeyBinding::internal(Left, "Left", "back"),
@@ -402,6 +414,7 @@ static DEVICES_LOCAL_NOT_ADDED_KEYS: &[KeyBinding] = &[
     KeyBinding::internal(Enter, "Enter", "users"),
     KeyBinding::internal(Right, "Right", "users"),
     KeyBinding::new(Char('a'), "a", "add", Effect::Action(Action::AddLocalToConfig)),
+    KeyBinding::new(Char('u'), "u", "add user", Effect::Action(Action::AddTempUser)),
 ];
 
 /// Focused Devices pane, local row selected, local device in the shared
@@ -417,10 +430,12 @@ static DEVICES_LOCAL_ADDED_KEYS: &[KeyBinding] = &[
     KeyBinding::internal(Enter, "Enter", "users"),
     KeyBinding::internal(Right, "Right", "users"),
     KeyBinding::new(Char('r'), "r", "remove", Effect::Action(Action::RemoveLocalFromConfig)),
+    KeyBinding::new(Char('u'), "u", "add user", Effect::Action(Action::AddTempUser)),
 ];
 
-/// Focused Devices pane with an added device selected: device
-/// actions plus entry into the Users sub-panel (Right/Enter).
+/// Focused Devices pane with an added device selected: only
+/// device-specific actions (delete, add user) plus entry into the Users
+/// sub-panel (Right/Enter) — the global actions live on the main menu.
 static DEVICES_ADDED_KEYS: &[KeyBinding] = &[
     KeyBinding::internal(Esc, "Esc", "back"),
     KeyBinding::internal(Left, "Left", "back"),
@@ -429,9 +444,7 @@ static DEVICES_ADDED_KEYS: &[KeyBinding] = &[
     KeyBinding::internal(Enter, "Enter", "users"),
     KeyBinding::internal(Right, "Right", "users"),
     KeyBinding::new(Char('d'), "d", "delete", Effect::Action(Action::DeleteSelected)),
-    KeyBinding::new(Char('s'), "s", "sync", Effect::Action(Action::Sync)),
-    KeyBinding::new(Char('w'), "w", "wipe", Effect::Action(Action::WipeMode)),
-    KeyBinding::new(Char('c'), "c", "setup-cd", Effect::Action(Action::SetupCdMode)),
+    KeyBinding::new(Char('u'), "u", "add user", Effect::Action(Action::AddTempUser)),
 ];
 
 /// Focused Devices pane with a detected device selected: only
@@ -445,16 +458,18 @@ static DEVICES_DETECTED_KEYS: &[KeyBinding] = &[
     KeyBinding::new(Char('n'), "n", "ignore", Effect::Action(Action::Ignore)),
 ];
 
+/// Focused Users pane with a confirmed user selected on an added
+/// device: only user-specific actions — the global actions (sync, ...)
+/// live on the main menu, and adding a user is device-specific (key 'u'
+/// on the device row), not a user action.
 static USERS_CONFIRMED_KEYS: &[KeyBinding] = &[
     KeyBinding::internal(Esc, "Esc", "devices"),
     KeyBinding::internal(Left, "Left", "devices"),
     KeyBinding::internal(Up, "Up", "select"),
     KeyBinding::internal(Down, "Down", "select"),
     KeyBinding::new(Char('d'), "d", "set default", Effect::Action(Action::SetDefaultUser)),
-    KeyBinding::new(Char('s'), "s", "sync", Effect::Action(Action::Sync)),
     KeyBinding::new(Char('i'), "i", "install key", Effect::Action(Action::InstallKeyToSelected)),
     KeyBinding::new(Char('r'), "r", "remove key", Effect::Action(Action::RemoveKeyFromSelected)),
-    KeyBinding::new(Char('a'), "a", "add temp user", Effect::Action(Action::AddTempUser)),
 ];
 
 /// Users pane of the localhost device, confirmed user selected: same as
@@ -466,18 +481,16 @@ static USERS_LOCAL_CONFIRMED_KEYS: &[KeyBinding] = &[
     KeyBinding::internal(Up, "Up", "select"),
     KeyBinding::internal(Down, "Down", "select"),
     KeyBinding::new(Char('d'), "d", "set default", Effect::Action(Action::SetDefaultUser)),
-    KeyBinding::new(Char('s'), "s", "sync", Effect::Action(Action::Sync)),
-    KeyBinding::new(Char('a'), "a", "add temp user", Effect::Action(Action::AddTempUser)),
 ];
 
+/// Focused Users pane with a temporary user selected: only its own
+/// user-specific actions.
 static USERS_TEMP_KEYS: &[KeyBinding] = &[
     KeyBinding::internal(Esc, "Esc", "devices"),
     KeyBinding::internal(Left, "Left", "devices"),
     KeyBinding::internal(Up, "Up", "select"),
     KeyBinding::internal(Down, "Down", "select"),
     KeyBinding::new(Char('d'), "d", "set default", Effect::Action(Action::SetDefaultUser)),
-    KeyBinding::new(Char('s'), "s", "sync", Effect::Action(Action::Sync)),
-    KeyBinding::new(Char('a'), "a", "add temp user", Effect::Action(Action::AddTempUser)),
     KeyBinding::new(Char('x'), "x", "remove temp user", Effect::Action(Action::RemoveTempUser)),
 ];
 

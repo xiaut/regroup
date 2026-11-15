@@ -160,11 +160,22 @@ arrows are consumed by the list, so leaving the pane is done with
 | `PgUp`/`PgDn` | Scroll scrollable content (Logs pane, help) |
 
 Character shortcuts act as commands, not navigation, and are listed per
-pane state (see `pane_keys` in `src/ui/types.rs`): `s` sync, `d` delete,
-`w` wipe, `c` setup-cd on an **added** row, `a`/`r` add/remove on the
-**localhost** row (plain add/remove — the local data stays recoverable,
-unlike `d` delete), `a`/`n` on a **detected** row, and `Enter`/`Right`
-into Users when the **local or an added** row is selected in the Devices
-panel, and so on. In the Users pane, `d` sets the selected user as the
-device's default user. `q` quit is only offered on the main menu (overview);
+pane state (see `pane_keys` in `src/ui/types.rs`). Actions are scoped to
+the selected context:
+
+- The **main menu (overview)** offers the **global actions** — everything
+  not specific to a device or a user: `s` sync, `w` wipe, `c` setup-cd,
+  `k` connections, and `q` quit (quit is only offered here).
+- A **selected device row** offers only device-specific actions:
+  `a`/`r` add/remove on the **localhost** row (plain add/remove — the
+  local data stays recoverable, unlike `d` delete), `d` delete on an
+  **added** row, `a`/`n` add/ignore on a **detected** row, and `u` add a
+  temporary user on the **localhost or an added** row — adding a user is
+  device-specific, no user needs to be selected. `Enter`/`Right` open the
+  Users sub-panel when the **local or an added** row is selected.
+- A **selected user** in the Users pane offers only user-specific actions:
+  `d` set the default user, `i`/`r` install/remove an SSH key (confirmed
+  user, not on localhost), `x` remove a temporary user.
+
+In every pane state the navigation keys and `?` help are available.
 `?` help is the single key that works in every pane state.
