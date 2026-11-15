@@ -22,6 +22,10 @@
 //
 // Run:            ./regroup                (continuous interactive mode)
 //                 ./regroup test           (dry run: nothing is modified)
+//                 ./regroup add-local      (add the local device to the shared
+//                                           configuration — the localhost is never
+//                                           added implicitly; also reachable from
+//                                           the TUI with 'a' on the localhost row)
 //                 ./regroup remove <name>  (remove a device)
 //                 ./regroup wipe [--yes]   (delete the whole configuration)
 //                 ./regroup selftest       (external tools + ssh-keygen fingerprint checks)
@@ -66,7 +70,8 @@ use std::thread;
 use std::time::Duration;
 
 use cli::{
-    confirm, die, remove_device, run_selftest, setup_cd, usage, wipe as wipe_config,
+    add_local_device_to_config, confirm, die, remove_device, run_selftest, setup_cd, usage,
+    wipe as wipe_config,
 };
 use config::load_config;
 use discovery::beacon::{BeaconDevice, BeaconIdentity, announce_beacon, listen_beacons_continuous};
@@ -80,6 +85,7 @@ fn main() {
     let mut dry_run = false;
     let mut help = false;
     let mut selftest = false;
+    let mut add_local = false;
     let mut remove_name: Option<String> = None;
     let mut wipe = false;
     let mut assume_yes = false;
@@ -122,6 +128,8 @@ fn main() {
                 }
                 Err(e) => die(&e),
             }
+        } else if a == "add-local" {
+            add_local = true;
         } else if a == "remove" {
             remove_name = match args.get(i + 1) {
                 Some(name) => {
@@ -191,6 +199,26 @@ fn main() {
         {
             die("~/.ssh/config is not writable");
         }
+    }
+
+    // --- add the local device to the shared configuration (non-interactive) ---
+    // The localhost is never added implicitly at load time; this external
+    // call is one of the two explicit ways to add it (the other is 'a' on
+    // the localhost row in the TUI). No ~/.ssh traces: the local device
+    // has none.
+    if add_local {
+        if dry_run {
+            println!("Dry run: the local device would be added to the shared configuration.");
+        } else if add_local_device_to_config(&home) {
+            println!(
+                "Added {} to the shared configuration (device file and current user committed).",
+                host_name()
+            );
+        } else {
+            eprintln!("ERROR: could not add the local device to the shared configuration — see warnings above");
+            std::process::exit(2);
+        }
+        return;
     }
 
     // --- device removal / full wipe (non-interactive) ---

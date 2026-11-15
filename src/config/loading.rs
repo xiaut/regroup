@@ -41,10 +41,14 @@ fn warn(msg: &str) {
 }
 
 // ============================================================
-// Auto-create device configuration
+// Local device file creation (explicit add only)
 // ============================================================
 
-/// Auto-create device configuration with self-detected information
+/// Create this device's own device file with self-detected information.
+/// Never called implicitly at load time: the local device joins the
+/// shared configuration only through an explicit add — the TUI localhost
+/// row (key 'a') or the `regroup add-local` external call, both going
+/// through `cli::add_local_device_to_config`.
 pub fn create_device_config(config_dir: &Path) -> Result<Device, String> {
     let hostname = host_name();
 
@@ -97,9 +101,10 @@ pub fn create_device_config(config_dir: &Path) -> Result<Device, String> {
         return Err(format!("cannot save device config: {}", e));
     }
 
-    // First run: the device file is the repository's initial commit, so the
-    // local branch exists before any sync with another device (a removal
-    // on a commit-less repository cannot be committed).
+    // On the first explicit add, the device file is the repository's
+    // initial commit, so the local branch exists before any sync with
+    // another device (a removal on a commit-less repository cannot be
+    // committed).
     if let Err(e) = crate::git::sync::git_add_and_commit_file(
         config_dir,
         &device_path,
@@ -222,30 +227,12 @@ pub fn load_config() -> Conf {
         }
     }
 
-    // Check if current device's config exists, if not create it — but
-    // only on first run, i.e. when the repository has no commit yet (the
-    // auto-created device file is the repository's initial commit). A
-    // deliberate removal of the local device from the shared
-    // configuration leaves commits behind and must not be undone on the
-    // next load.
+    // The local device is NOT implicitly added to the shared
+    // configuration: it joins only when the user explicitly asks for it —
+    // 'a' on the localhost row in the TUI, or the `regroup add-local`
+    // external call (both go through cli::add_local_device_to_config).
+    // A removal of the local device is therefore respected as-is.
     let local_hostname = host_name();
-    let local_ssh_public_key = get_ssh_server_public_key();
-
-    let current_device_exists = devices.iter().any(|d| {
-        d.name.as_str() == local_hostname || (local_ssh_public_key.as_ref() == Some(&d.ssh_public_key))
-    });
-
-    if !current_device_exists && !crate::git::repo::has_commits(&config_dir) {
-        // Auto-create this device's configuration
-        match create_device_config(&config_dir) {
-            Ok(new_device) => {
-                devices.push(new_device);
-            }
-            Err(e) => {
-                warn(&format!("could not create device config: {}", e));
-            }
-        }
-    }
 
     // Record the current user on the local device when it is in the
     // shared configuration: `devices/<self>/users/<user>.json` is written
@@ -283,7 +270,7 @@ pub fn load_config() -> Conf {
 
     if devices.is_empty() {
         warn(&format!(
-            "no devices in the shared configuration ({}) — the local device is not added; use 'a' on the localhost row to add it",
+            "no devices in the shared configuration ({}) — the local device is not added implicitly; add it with 'a' on the localhost row (TUI) or `regroup add-local`",
             config_dir.display()
         ));
     }

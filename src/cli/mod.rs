@@ -818,18 +818,23 @@ pub fn remove_device(
     ok
 }
 
-/// Add the local device to the shared configuration (key 'a' on the
-/// localhost row when it is not added): (re)create its device file and
-/// the current user's file in the git layer and commit them, so a git
-/// sync shares them with the other devices. No ~/.ssh/config block and
-/// no known_hosts entry: the local device has no such traces.
+/// Add the local device to the shared configuration: (re)create its device
+/// file and the current user's file in the git layer and commit them, so a
+/// git sync shares them with the other devices. This is one of the only
+/// two ways the local device joins the shared configuration — the other is
+/// key 'a' on the localhost row in the TUI; the load path never adds it
+/// implicitly. The `regroup add-local` external call (run by the user from
+/// the shell, or by an external user over SSH) goes through here.
+/// No ~/.ssh/config block and no known_hosts entry: the local device has
+/// no such traces.
 /// Returns true when the device file is present in the git layer
 /// afterwards.
 pub fn add_local_device_to_config(home: &str) -> bool {
     let root = root_config_dir(home);
     let config_dir = config_dir_of(home);
     let local_name = host_name();
-    // Device file (also the repository's initial commit on first run).
+    // Device file (also the repository's initial commit when the add
+    // happens on a fresh, commit-less repository).
     if let Err(e) = crate::config::loading::create_device_config(&config_dir) {
         warn(&format!("could not create the local device config: {e}"));
         return false;

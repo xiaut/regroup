@@ -32,7 +32,7 @@ This will:
    - `receive.denyCurrentBranch` set to `updateInstead` (allows pushing to checked-out branches)
    - `pull.rebase` set to `true` (maintains linear history)
 2. Create `settings.json` with defaults
-3. Create `devices/<hostname>/device.json` with auto-detected info
+3. **Not** add the local device to the shared configuration implicitly — the localhost is only shared when you explicitly add it: press `a` on the `localhost` row in the TUI, or run `regroup add-local` (also callable by an external user, e.g. over SSH: `ssh user@host regroup add-local`)
 4. Enter continuous interactive mode: announce + listen for beacons
 
 ### On second device:
@@ -43,7 +43,7 @@ This will:
 
 This will:
 1. Create local `~/.regroup-config/git/`
-2. Create its own device directory (auto-detected info)
+2. Not add its own device implicitly either — add it with `a` on the `localhost` row or `regroup add-local` when you want to share it
 3. Discover the first device via its UDP beacon and prompt to add it
 4. Enter continuous interactive mode (press `s` to pull from and push to git remotes)
 
@@ -318,7 +318,10 @@ Fields:
 # First run - creates config, initializes git, enters discovery loop
 ./regroup
 
-# Config is now at ~/.regroup-config/ with ordi.json
+# Config is now at ~/.regroup-config/ — the local device is NOT in it yet:
+# share it with 'a' on the localhost row, or:
+./regroup add-local
+
 # Git remote for laptop will be added when laptop is discovered
 ```
 
@@ -346,6 +349,16 @@ Fields:
 # ... then press s
 
 # Useful when you know there are updates but UDP discovery might miss them
+```
+
+### Sharing the local device (localhost) with the network
+
+```bash
+# The local device is never added to the shared configuration implicitly.
+# Add it from the TUI ('a' on the localhost row) or from the shell:
+./regroup add-local
+# An external user can trigger the same add over SSH:
+#   ssh user@host regroup add-local
 ```
 
 ### Removing devices

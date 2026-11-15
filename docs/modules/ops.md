@@ -38,6 +38,8 @@ ops/
 | Function | Purpose |
 |----------|---------|
 | `add_device_to_config(home, ssh_config, beacon, name, new_count) -> Option<Device>` | Verify the announced host key, write the placeholder device file to the `tmp/` overlay (never committed), update `~/.ssh/config` |
+| `add_local_device_to_config(home) -> bool` | Add the **local** device to the shared configuration (device file + current user file, committed). The localhost is never added implicitly — this and the TUI localhost row (`a`) are the only two add paths; the `regroup add-local` external call goes through this |
+| `remove_local_device_from_config(home) -> bool` | Remove the local device from the shared configuration (git-layer directory deleted and the deletion committed; `tmp/` overlay kept) |
 | `remove_device(home, ssh_config, device, last_ip) -> bool` | Delete the device directory in both proxy layers (`git/` deletion committed, propagates via sync; `tmp/` copy removed) + local traces |
 | `remove_local_traces(home, ssh_config, device, last_ip)` | `~/.ssh/config` block, known_hosts entries (last known IP), git remote |
 | `wipe(home, ssh_config, devices) -> Result<(), String>` | Remove all regroup `Host` blocks, then delete `~/.regroup-config` entirely |
