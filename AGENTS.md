@@ -39,4 +39,14 @@ Rules:
 - `.worktrees/` is ignored via the committed `.gitignore`, so the main worktree's `git status` stays clean
 - Do all work for that branch/PR inside its worktree; do not check out branches in the main worktree
 - Push the branch and open the PR on the **first commit** — as a **draft** while the work is not ready — so every branch is backed by an open PR from the start
-- Keep the worktree in place while the PR is open so the developer can test; remove it with `git worktree remove .worktrees/<name>` followed by `git worktree prune` only after the PR is merged or when the developer explicitly asks
+- Keep the worktree in place while the PR is open so the developer can test
+
+## 4. When the PR Is Merged
+
+When the PR is merged — or when the developer explicitly asks — clean up, in this order:
+
+1. Fetch so the local refs reflect the merge: `git fetch --all --prune`
+2. Remove the worktree: `git worktree remove .worktrees/<name>`, then `git worktree prune`
+3. Delete the remote branch if it still exists: `git push origin --delete <branch>`
+
+Do not check out or update `main` in the main checkout — that is the developer's call.
