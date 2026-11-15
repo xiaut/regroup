@@ -308,6 +308,11 @@ pub struct InteractiveState {
     users_selected: Option<String>,
     /// Device waiting for the user to type a temporary user name.
     temp_user_pending: Option<String>,
+    /// (device, user) waiting for the "install an SSH key?" answer that
+    /// closes the standard add-user flow: 'y' runs the remote
+    /// `receive-install-key`, 'n' the remote `receive-add-local` (XOR),
+    /// then a device-scoped git sync.
+    install_key_pending: Option<(String, String)>,
     /// Devices accepted this run.
     new_count: usize,
     /// Label of the closing `TUI -> CLI (...)` marker: "quit" normally,
@@ -337,6 +342,7 @@ impl InteractiveState {
             temp_users: HashMap::new(),
             users_selected: None,
             temp_user_pending: None,
+            install_key_pending: None,
             new_count: 0,
             exit_label: "quit",
         };
@@ -408,6 +414,8 @@ impl InteractiveState {
             Question::trust_key(device.name.clone())
         } else if let Some(device) = &self.temp_user_pending {
             Question::add_temp_user(device.clone())
+        } else if let Some((device, user)) = &self.install_key_pending {
+            Question::install_key(device.clone(), user.clone())
         } else if plain
             && !ctx.dry_run
             && let Some(device) = self.pending_devices.front()
@@ -838,6 +846,8 @@ impl InteractiveState {
             Action::CancelTempUser => {
                 self.temp_user_pending = None;
             }
+            Action::InstallKeyYes => self.install_key_choice(ctx, tui, true),
+            Action::InstallKeyNo => self.install_key_choice(ctx, tui, false),
             Action::RemoveUser => {
                 self.remove_user(ctx);
             }
@@ -1164,7 +1174,11 @@ impl InteractiveState {
     }
 
     /// Add `device` under `name`: write to disk and update the in-memory
-    /// maps so future beacons for it are treated as a known device.
+    /// maps so future beacons for it are treated as a known device. The
+    /// add-user prompt then opens by itself: adding a device implies
+    /// adding a user, which implies one remote call (XOR
+    /// `receive-add-local` / `receive-install-key`) and a device-scoped
+    /// git sync (see install_key_choice).
     fn add_device(&mut self, ctx: &Context, beacon_device: BeaconDevice, name: String) {
         if let Some(device) = add_device_to_config(
             ctx.home,
@@ -1183,6 +1197,14 @@ impl InteractiveState {
                 .insert(beacon_device.ssh_public_key.clone(), device);
             self.known_ip
                 .insert(beacon_device.ssh_public_key.clone(), beacon_device.ip.clone());
+            if ctx.dry_run {
+                ui::log("  - (dry run - automatic add-user prompt, remote call and sync skipped)");
+            } else {
+                ui::log(&format!(
+                    "  - {name} added — now type a user name for it; then one remote call (receive-add-local / receive-install-key) and a sync run automatically"
+                ));
+                self.temp_user_pending = Some(name);
+            }
         }
     }
     
@@ -1429,10 +1451,108 @@ impl InteractiveState {
             ));
         }
         ui::log(&format!(
-            "  - User {name} added on {device} — temporary until confirmed (kept in tmp/; a git sync 's' or a successful key install 'i' confirms it)"
+            "  - User {name} added on {device} — temporary until confirmed (kept in tmp/; a git sync or a successful key install confirms it)"
         ));
         self.temp_users.insert(device.clone(), name.clone());
-        self.users_selected = Some(name);
+        self.users_selected = Some(name.clone());
+        // The standard add-user flow continues: ask whether to install an
+        // SSH key (remote receive-install-key) or only run the remote
+        // receive-add-local — XOR — then sync the device.
+        if ctx.dry_run {
+            ui::log("  - (dry run - remote call and device-scoped sync skipped)");
+        } else {
+            self.install_key_pending = Some((device, name));
+        }
+    }
+
+    /// The "install an SSH key to user@device?" answer of the add-user
+    /// flow: run exactly ONE remote call over SSH through the temporary
+    /// CLI pass — 'y' → `receive-install-key` (which first runs the
+    /// add-local step on the target), 'n' → `receive-add-local` — then a
+    /// git sync scoped to that device, and reload the state (the pull
+    /// brings the device's authoritative device.json and users, purging
+    /// the tmp/ placeholder). A failing remote call is a warning: the
+    /// sync still runs.
+    fn install_key_choice(&mut self, ctx: &Context, tui: &mut ui::Ui, install: bool) {
+        let Some((device, user)) = self.install_key_pending.take() else {
+            return;
+        };
+        if ctx.dry_run {
+            ui::log("  - (dry run - remote call and device-scoped sync skipped)");
+            return;
+        }
+        let Some(target_device) = self
+            .key_to_device
+            .values()
+            .find(|m| m.name.as_str() == device)
+            .cloned()
+        else {
+            ui::log(&format!("  - Device '{device}' not found — no remote call, no sync"));
+            return;
+        };
+        let target_port = target_device.port;
+        let config_dir = root_config_dir(ctx.home).join(GIT_DIR);
+        let current_user = crate::discovery::local_user();
+        // Transport address = the IP the device advertised in its beacon
+        // (known_ip), never the device-name alias.
+        let Some(target_ip) = self.known_ip.get(&target_device.ssh_public_key).cloned() else {
+            ui::log(&format!(
+                "  - No beacon received from {device} this run, so its current IP is unknown — remote call skipped (the sync still runs)"
+            ));
+            self.sync_device(ctx, tui, &device);
+            return;
+        };
+
+        let what = if install { "install SSH key" } else { "receive-add-local" };
+        ui::log(&format!(
+            "  - Remote call on {user}@{device} ({target_ip}): {}",
+            if install { "regroup receive-install-key" } else { "regroup receive-add-local" }
+        ));
+        let result = tui.with_clean_terminal(what, || {
+            if install {
+                crate::tui::key_actions::install_key_action(
+                    ctx.home,
+                    &config_dir,
+                    ctx.local_name,
+                    &current_user,
+                    &device,
+                    &target_ip,
+                    &user,
+                    target_port,
+                )
+            } else {
+                crate::tui::key_actions::receive_add_local_action(
+                    &device,
+                    &target_ip,
+                    &user,
+                    target_port,
+                )
+            }
+        });
+        match result {
+            Ok(crate::tui::key_actions::KeyActionResult::Success(msg)) => {
+                ui::log(&format!("  - {msg}"));
+            }
+            Ok(crate::tui::key_actions::KeyActionResult::Error(msg)) => {
+                ui::log(&format!("  - WARNING: remote call failed: {msg} — the device-scoped sync still runs"));
+            }
+            Ok(crate::tui::key_actions::KeyActionResult::Cancelled) => {
+                ui::log("  - Remote call cancelled — the device-scoped sync still runs");
+            }
+            Err(e) => {
+                ui::log(&format!("  - WARNING: remote call failed: {e} — the device-scoped sync still runs"));
+            }
+        }
+        self.sync_device(ctx, tui, &device);
+    }
+
+    /// Git sync scoped to one device, then reload the state (a pull may
+    /// have brought new device configs and device-declared users).
+    fn sync_device(&mut self, ctx: &Context, tui: &mut ui::Ui, device: &str) {
+        tui.with_clean_terminal("git sync", || {
+            sync_git(ctx.home, &self.temp_users, &SyncScope::Device(device.to_string()));
+            self.reload(ctx);
+        });
     }
 
     /// Remove the selected user of the selected device (key 'x' in the
@@ -1876,6 +1996,7 @@ mod tests {
             temp_users: HashMap::new(),
             users_selected: Some(user.to_string()),
             temp_user_pending: None,
+            install_key_pending: None,
             new_count: 0,
             exit_label: "quit",
         }

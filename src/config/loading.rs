@@ -47,8 +47,8 @@ fn warn(msg: &str) {
 /// Create this device's own device file with self-detected information.
 /// Never called implicitly at load time: the local device joins the
 /// shared configuration only through an explicit add — the TUI localhost
-/// row (key 'a') or the `regroup add-local` external call, both going
-/// through `cli::add_local_device_to_config`.
+/// row (key 'a') or the `regroup receive-add-local` remote call, both
+/// going through `cli::add_local_device_to_config`.
 pub fn create_device_config(config_dir: &Path) -> Result<Device, String> {
     let hostname = host_name();
 
@@ -229,8 +229,8 @@ pub fn load_config() -> Conf {
 
     // The local device is NOT implicitly added to the shared
     // configuration: it joins only when the user explicitly asks for it —
-    // 'a' on the localhost row in the TUI, or the `regroup add-local`
-    // external call (both go through cli::add_local_device_to_config).
+    // 'a' on the localhost row in the TUI, or the `regroup receive-add-local`
+    // remote call (both go through cli::add_local_device_to_config).
     // A removal of the local device is therefore respected as-is.
     let local_hostname = host_name();
 
@@ -270,7 +270,7 @@ pub fn load_config() -> Conf {
 
     if devices.is_empty() {
         warn(&format!(
-            "no devices in the shared configuration ({}) — the local device is not added implicitly; add it with 'a' on the localhost row (TUI) or `regroup add-local`",
+            "no devices in the shared configuration ({}) — the local device is not added implicitly; add it with 'a' on the localhost row (TUI) or `regroup receive-add-local`",
             config_dir.display()
         ));
     }

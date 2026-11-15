@@ -96,6 +96,12 @@ impl PlainUi {
             Question::AddTempUser(_, device) => {
                 format!("Add user on {device} (empty = cancel):")
             }
+            Question::InstallKey(def, device, user) => {
+                let hints: Vec<String> = def.bindings.iter()
+                    .map(|b| format!("{}", b.label))
+                    .collect();
+                format!("Install an SSH key to {user}@{device}? [{}]:", hints.join("/"))
+            }
         }
     }
 
@@ -159,6 +165,8 @@ impl PlainUi {
             Question::Delete(..) => Some(Action::DeleteCancel),
             Question::Wipe(..) => Some(Action::WipeCancel),
             Question::SetupCd(..) => Some(Action::SetupCdCancel),
+            // Empty line = default answer 'n': receive-add-local only.
+            Question::InstallKey(..) => Some(Action::InstallKeyNo),
             _ => None,
         }
     }

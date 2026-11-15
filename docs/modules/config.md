@@ -21,7 +21,7 @@ config/
 ├── loading.rs      # load_config(): ensure repo, scan devices/ through the proxy; the
 │                   #   local device is NEVER added implicitly — it joins the shared
 │                   #   config only via an explicit add (TUI 'a' on the localhost row,
-│                   #   or the `regroup add-local` external call)
+│                   #   or the `regroup receive-add-local` remote call)
 ├── device.rs       # device file (device.json) load/save, incl. the optional default_user field + validation tests
 ├── connection.rs   # connection files: naming rule, ownership enforcement, loader
 ├── users.rs        # users/<user>.json: one file per known user
@@ -72,8 +72,8 @@ pub struct Conf {
 2. Scans `devices/` **through the proxy**: merges `git/devices/` with `tmp/devices/`, where `git/` wins on overlap and overlapping `tmp/` files are purged
 3. Does **not** add the local device implicitly: the localhost joins the
    shared configuration only through an explicit add — key `a` on the
-   localhost row in the TUI, or the `regroup add-local` external call (both
-   go through `cli::add_local_device_to_config`, which uses
+   localhost row in the TUI, or the `regroup receive-add-local` remote
+   call (both go through `cli::add_local_device_to_config`, which uses
    `create_device_config` and commits the device file, so the file is the
    repository's initial commit on first add)
 4. Records the current user in the local device's own `users/` (in `git/`)

@@ -22,10 +22,11 @@
 //
 // Run:            ./regroup                (continuous interactive mode)
 //                 ./regroup test           (dry run: nothing is modified)
-//                 ./regroup add-local      (add the local device to the shared
+//                 ./regroup receive-add-local (add the local device to the shared
 //                                           configuration — the localhost is never
 //                                           added implicitly; also reachable from
-//                                           the TUI with 'a' on the localhost row)
+//                                           the TUI with 'a' on the localhost row;
+//                                           remote API command, hence 'receive-')
 //                 ./regroup remove <name>  (remove a device)
 //                 ./regroup wipe [--yes]   (delete the whole configuration)
 //                 ./regroup selftest       (external tools + ssh-keygen fingerprint checks)
@@ -128,7 +129,7 @@ fn main() {
                 }
                 Err(e) => die(&e),
             }
-        } else if a == "add-local" {
+        } else if a == "receive-add-local" {
             add_local = true;
         } else if a == "remove" {
             remove_name = match args.get(i + 1) {
@@ -204,8 +205,9 @@ fn main() {
     // --- add the local device to the shared configuration (non-interactive) ---
     // The localhost is never added implicitly at load time; this external
     // call is one of the two explicit ways to add it (the other is 'a' on
-    // the localhost row in the TUI). No ~/.ssh traces: the local device
-    // has none.
+    // the localhost row in the TUI). Remote API command: the name starts
+    // with 'receive-' like every subcommand run on a target device over
+    // SSH. No ~/.ssh traces: the local device has none.
     if add_local {
         if dry_run {
             println!("Dry run: the local device would be added to the shared configuration.");

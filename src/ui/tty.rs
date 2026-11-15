@@ -97,6 +97,12 @@ fn calculate_question_height(question: &Question, ctx: &QuestionCtx, width: u16)
                 + count_wrapped_lines(&input_line, content_width, false);
             return (2 + lines as u16).clamp(3, 10);
         }
+        Question::InstallKey(def, device, user) => {
+            (
+                format!("Install an SSH key to {user}@{device}? (a device-scoped git sync follows)"),
+                modal_hint_text(def),
+            )
+        }
         Question::Delete(def, name) => {
             (
                 format!("Delete {name} from configuration?"),
