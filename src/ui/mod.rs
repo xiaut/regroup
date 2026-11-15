@@ -26,7 +26,9 @@
 //! [`Ui::start`], before the alternate screen opens) and `TUI -> CLI
 //! (quit)` / `TUI -> CLI (wipe)` (logged at the end of the interactive
 //! loop, printed to the CLI when the ui drops and restores the terminal).
-//! Plain mode logs no markers: there is no screen switch.
+//! Plain mode logs no markers: there is no screen switch. Actions that
+//! need no live terminal also run in place, unwrapped, with no markers —
+//! their log lines land in the Logs pane like any other.
 
 pub mod interface;
 pub mod keys;

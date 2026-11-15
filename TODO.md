@@ -25,32 +25,7 @@ To do:
   `src/config/users.rs`; current user from `discovery::local_user()`).
 - Keep detected rows without a Users pane.
 
-## 2. Question: is the temporary CLI pass useless on some actions?
-
-`Ui::with_clean_terminal` (`src/ui/interface.rs:152`) leaves the
-alternate screen, enables direct output, logs `TUI -> CLI (<action>)` /
-`CLI -> TUI (<action>)`, and pauses with "Press Enter to return" on
-**every** call. Call sites (`src/interactive/state.rs`):
-
-| action label        | line | runs a subprocess whose output must be seen live? |
-|---------------------|------|----------------------------------------------------|
-| `git sync`          | 688  | yes (git pull/push/commit)                         |
-| `trust new signing key` | 714 | probably only file writes + `ui::log`          |
-| `wipe`              | 814  | question — mostly deletions                        |
-| `remove device`     | 967, 1435 | question — file/ssh-config edits, maybe git  |
-| `add device`        | 1090 | question — file writes, maybe git commit           |
-| `install SSH key`   | 1316 | yes (ssh / receive-install-key)                    |
-| `remove SSH key`    | 1389 | yes (ssh / receive-remove-key)                     |
-
-Question: for actions that only log through `ui::log` and spawn no
-subprocess, the whole pass — leaving the TUI, the Enter pause,
-re-entering — is pure friction. Should the pass be reserved for actions
-with real direct output (sync, key install/remove), keeping the log
-markers but skipping the screen switch and the pause? Also note the
-inconsistency: `SetupCdConfirm` is *not* wrapped in a pass at all, even
-though it writes to the shell rc file.
-
-## 3. Default user per device
+## 2. Default user per device
 
 New concept: each device has **one default user**.
 

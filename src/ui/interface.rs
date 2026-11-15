@@ -164,6 +164,14 @@ impl Ui {
     /// while still being recorded in the stream, so the full pass reappears
     /// in the Logs pane when the TUI resumes. The guard restores the
     /// previous mode when the pass ends, even on panic.
+    ///
+    /// Reserve this full pass (screen switch + pause) for actions that run
+    /// a subprocess needing the live terminal — git pull/push and ssh may
+    /// prompt for a password, which only works with the screen switched
+    /// away. Actions that need no live terminal run in place, unwrapped:
+    /// their log lines go to the Logs pane like any other, with no
+    /// transition markers (the TUI never left, so there is no transition
+    /// to mark).
     pub fn with_clean_terminal<F, R>(&mut self, action: &str, f: F) -> R
     where
         F: FnOnce() -> R,
@@ -211,5 +219,19 @@ impl Ui {
                 f()
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Plain mode has no screen to switch away from: the pass wrapper just
+    // runs the function and returns its value.
+    #[test]
+    fn with_clean_terminal_runs_the_function_in_plain_mode() {
+        let mut ui = Ui::Plain(PlainUi::new());
+        let result = ui.with_clean_terminal("git sync", || "done");
+        assert_eq!(result, "done");
     }
 }

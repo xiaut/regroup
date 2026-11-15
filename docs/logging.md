@@ -64,14 +64,19 @@ branch.
 ## Rule 3 — One log stream; the CLI shows only the CLI passes
 
 There is a **single log stream**. The **Logs pane of the full-screen TUI
-always shows it in full**. A temporary CLI pass from the TUI
-(`Ui::with_clean_terminal`: git sync, device add/remove, wipe, SSH key
-install/remove, signing-key trust) is the only time the stream is also
-printed to the CLI — so **the CLI shows exactly the lines emitted during
-passes**, and **everything shown in the CLI during a pass appears in the
-Logs pane** when the TUI resumes. Each pass is delimited in the stream by
-two markers: `TUI -> CLI (<action>)` when the pass starts and
-`CLI -> TUI (<action>)` when the TUI resumes.
+always shows it in full**. A **temporary CLI pass** (`Ui::with_clean_terminal`)
+is the only time the stream is also printed to the CLI — so **the CLI shows
+exactly the lines emitted during passes**, and **everything shown in the CLI
+during a pass appears in the Logs pane** when the TUI resumes. Each pass is
+delimited in the stream by two markers: `TUI -> CLI (<action>)` when the pass
+starts and `CLI -> TUI (<action>)` when the TUI resumes. Reserve the pass
+for actions that run a subprocess needing the live terminal — git sync,
+signing-key trust (pulls from the device), SSH key install/remove — because
+git pull/push and ssh may prompt for a password, which only works with the
+screen switched away. All other actions (device add/remove, wipe, setup-cd)
+run in place, unwrapped: their log lines land in the Logs pane like any
+other, with no pass markers of their own — the screen never switches during
+them, so there is no transition to mark.
 
 The full-screen session itself is delimited the same way: `CLI -> TUI
 (start)` is logged when the TUI takes the terminal (printed to the CLI
