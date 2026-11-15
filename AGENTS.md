@@ -64,7 +64,7 @@ Rules:
   The new session follows §1–§4 on its own, reads the full instructions from the TODO entry in `TODO.md`, and gets its own (worktree, branch, PR) tuple. The PR that implements the TODO must also **remove that entry from `TODO.md`** in the same branch — the TODO removal is part of the PR, not a separate change.
 - Keep the worktree in place while the PR is open so the developer can test
 
-When you are done, always end with two copy-paste-ready reminders so the developer can test the PR — fill in the real worktree name and branch name:
+When you are done, end with the two test reminders below **only if they are accurate** — verify before printing and omit or adapt any that is not — and fill in the real worktree name and branch name:
 
 ```bash
 cd .worktrees/<name> && cargo run
@@ -74,7 +74,10 @@ cd .worktrees/<name> && cargo run
 git pull && git switch <branch> && cargo run
 ```
 
-The first one is run from the repo root and tests the PR in its worktree. The second one is for the main checkout and stays the developer's call — never check out the branch there yourself.
+- The first one is printed only if the worktree exists at `.worktrees/<name>` **and** `cargo run` actually exercises this change; for a change `cargo run` cannot test (e.g. docs-only), print a one-line note instead of the command.
+- The second one is printed only if `<branch>` still exists and the same `cargo run` caveat applies; it is for the main checkout and stays the developer's call — never check out the branch there yourself.
+
+If neither reminder is accurate, end your reply without them. Script S4 — `scripts/finish-pr.sh` (§8) — prints each reminder only when mechanically accurate (worktree and branch exist); whether `cargo run` exercises the change stays the agent's judgment.
 
 ## 5. Never Work Outside the Workdir — Temporary Files in `.vibe/tmp/`
 
@@ -115,7 +118,7 @@ The recurring processes above are scripted under `scripts/` — run the script i
 | S1 | `scripts/bootstrap.sh` | §1 + §2 | `scripts/bootstrap.sh` (anywhere in the repo) |
 | S2 | `scripts/new-work.sh` | §4 worktree + branch + push | `scripts/new-work.sh <worktree-name> <branch> [base-ref=main]` |
 | S3 | `scripts/first-commit.sh` | §4 commit + push + draft PR | `scripts/first-commit.sh "<commit message>"` (inside the worktree) |
-| S4 | `scripts/finish-pr.sh` | §4 ready-for-review + test reminders | `scripts/finish-pr.sh` (inside `.worktrees/<name>`) |
+| S4 | `scripts/finish-pr.sh` | §4 ready-for-review + test reminders (only if accurate) | `scripts/finish-pr.sh` (inside `.worktrees/<name>`) |
 | S5 | `scripts/merged-cleanup.sh` | §6 post-merge cleanup | `scripts/merged-cleanup.sh <worktree-name> <branch>` (anywhere in the repo) |
 
 S2–S4 automate the PR steps with `gh` (`gh pr create --draft`, `gh pr ready`, `gh pr view`); `gh` must be authenticated on the machine running them. S5 deletes the remote branch only when `git diff origin/main <branch>` is empty.
