@@ -94,7 +94,7 @@ When the PR is merged — or when the developer explicitly asks — and the bran
 1. Fetch so the local refs reflect the merge: `git fetch --all --prune`
 2. Update the local `main` branch if possible: in the main checkout run `git merge --ff-only origin/main`. Fast-forward only — never reset, never force; if that is not possible (diverged local `main`, conflicting uncommitted changes), leave `main` as is and report it.
 3. Remove the worktree: `git worktree remove .worktrees/<name>`, then `git worktree prune`
-4. Delete the remote branch — but only after checking that its actual content has been merged into `main`: `git cherry origin/main <branch>` must show no `+` commits (equivalently, `git diff origin/main <branch>` must be empty). Do not rely on `git branch --merged` alone — a squash merge does not make the branch an ancestor of `main`. If anything on the branch is not merged, keep the branch and report what is missing. Only then: `git push origin --delete <branch>`
+4. Delete the remote branch — but only after checking that its actual content has been merged into `main`: `git diff origin/main <branch>` must be empty. Do not gate on `git cherry origin/main <branch>` — the two checks are not equivalent: after a clean squash merge, cherry shows `-` for the squashed commit, while a branch whose tree matches `origin/main` but whose patch-id differs still shows `+` alongside an empty diff. The empty diff is the authoritative check. Do not rely on `git branch --merged` alone — a squash merge does not make the branch an ancestor of `main`. If anything on the branch is not merged, keep the branch and report what is missing. Only then: `git push origin --delete <branch>`
 
 Do not check out another branch in the main checkout — that stays the developer's call.
 
@@ -116,7 +116,7 @@ The recurring processes above are scripted under `scripts/` — run the script i
 | S4 | `scripts/finish-pr.sh` | §4 ready-for-review + test reminders | `scripts/finish-pr.sh` (inside `.worktrees/<name>`) |
 | S5 | `scripts/merged-cleanup.sh` | §6 post-merge cleanup | `scripts/merged-cleanup.sh <worktree-name> <branch>` (anywhere in the repo) |
 
-S2–S4 automate the PR steps with `gh` (`gh pr create --draft`, `gh pr ready`, `gh pr view`); `gh` must be authenticated on the machine running them. S5 deletes the remote branch only when `git cherry origin/main <branch>` shows no `+` commits.
+S2–S4 automate the PR steps with `gh` (`gh pr create --draft`, `gh pr ready`, `gh pr view`); `gh` must be authenticated on the machine running them. S5 deletes the remote branch only when `git diff origin/main <branch>` is empty.
 
 ## 9. Testing `receive-*` Commands — Install the Branch Under Test on PATH
 

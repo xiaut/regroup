@@ -19,7 +19,7 @@ fi
 git -C "$root" worktree remove "$root/.worktrees/$name"
 git -C "$root" worktree prune
 # 4. Delete the remote branch only if its content is fully in origin/main.
-#    git cherry shows '+' after a squash merge, so gate on an empty diff instead (§6).
+#    git cherry can show '+' after a squash merge, so gate on an empty diff instead (§6).
 if [ -n "$(git -C "$root" diff origin/main "$branch")" ]; then
   echo "branch $branch still differs from origin/main; keeping it (§6)" >&2
   exit 1
