@@ -17,7 +17,8 @@ use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::Duration;
 
 use crate::cli::{NameConflict,
-    add_device_to_config, device_name_taken, die, find_name_conflicts, remove_device, remove_local_traces, setup_cd,
+    add_device_to_config, add_local_device_to_config, device_name_taken, die, find_name_conflicts,
+    remove_device, remove_local_device_from_config, remove_local_traces, setup_cd,
     shell_rc_file, sync_git, trust_new_signing_key, unique_device_name, usage,
     wipe as wipe_config,
 };
@@ -436,6 +437,18 @@ impl InteractiveState {
     /// decision, sorted by name). The pane shows them as one list, each
     /// section under its divider row (localhost / added / detected).
     fn devices_view(&self, ctx: &Context) -> Vec<UiDevice> {
+        let root = root_config_dir(ctx.home);
+        // The local row's super-state: is the local device in the shared
+        // configuration (its device.json present in the git layer)?
+        let local_in_config = crate::config::proxy::in_git(
+            &root,
+            &format!(
+                "{}/{}/{}",
+                crate::config::DEVICES_DIR,
+                ctx.local_name,
+                crate::config::DEVICE_FILE
+            ),
+        );
         let mut devices = Vec::new();
         devices.push(UiDevice {
             key: ctx.local_public_key.as_str().to_string(),
@@ -443,6 +456,7 @@ impl InteractiveState {
             ip: ctx.local_ip.map(|s| s.to_string()),
             port: ctx.local_port,
             section: DeviceSection::Local,
+            in_shared_config: local_in_config,
         });
         let mut added: Vec<&Device> = self.key_to_device.values().collect();
         added.sort_by(|a, b| a.name.as_str().cmp(b.name.as_str()));
@@ -452,6 +466,7 @@ impl InteractiveState {
             ip: self.known_ip.get(&m.ssh_public_key).cloned(),
             port: m.port,
             section: DeviceSection::Added,
+            in_shared_config: true,
         }));
         let mut detected: Vec<&BeaconDevice> = self.pending_devices.iter().collect();
         detected.sort_by(|a, b| a.name.cmp(&b.name));
@@ -461,6 +476,7 @@ impl InteractiveState {
             ip: Some(d.ip.clone()),
             port: d.port,
             section: DeviceSection::Detected,
+            in_shared_config: false,
         }));
         devices
     }
@@ -872,6 +888,36 @@ impl InteractiveState {
             Action::InstallKeyToSelected => self.install_key_to_selected(ctx, tui),
             Action::RemoveKeyFromSelected => self.remove_key_from_selected(ctx, tui),
             Action::DeleteSelected => self.delete_selected_device(ctx),
+            Action::AddLocalToConfig => {
+                if ctx.dry_run {
+                    ui::log("  - (dry run - adding the local device to the shared configuration skipped)");
+                } else if add_local_device_to_config(ctx.home) {
+                    ui::log(&format!(
+                        "  - {} added to the shared configuration (device file and current user committed)",
+                        ctx.local_name
+                    ));
+                } else {
+                    ui::log(&format!(
+                        "  - Could not add {} to the shared configuration — see warnings",
+                        ctx.local_name
+                    ));
+                }
+            }
+            Action::RemoveLocalFromConfig => {
+                if ctx.dry_run {
+                    ui::log("  - (dry run - removing the local device from the shared configuration skipped)");
+                } else if remove_local_device_from_config(ctx.home) {
+                    ui::log(&format!(
+                        "  - {} removed from the shared configuration (its directory deleted from the repository; local tmp/ data kept)",
+                        ctx.local_name
+                    ));
+                } else {
+                    ui::log(&format!(
+                        "  - Could not remove {} from the shared configuration — see warnings",
+                        ctx.local_name
+                    ));
+                }
+            }
             Action::ConnectionsMode => {
                 // Connections management is notified only: the connections
                 // browser (crate::tui::connections) is not wired into the
@@ -1143,6 +1189,12 @@ impl InteractiveState {
     /// added this run and the sync has not brought a user of the same
     /// name yet. A confirmed user the local user has an outgoing
     /// connection to shows as "SSH key installed".
+    ///
+    /// The pane is grouped by super-state: on the localhost device the
+    /// current user is the pinned first row (always shown, whether or not
+    /// its file is in the shared configuration), then come the added
+    /// users, then the not-added ones; on other devices, added first,
+    /// then not-added.
     fn users_view(&self, ctx: &Context) -> Vec<UiUser> {
         let Some(name) = self.selected_device(ctx) else {
             return Vec::new();
@@ -1182,9 +1234,44 @@ impl InteractiveState {
                 users.push(UiUser {
                     name: user.name,
                     status,
+                    added: !entry.temporary,
+                    pinned: false,
                 });
             }
         }
+        // On the localhost device the current user is always shown, as the
+        // pinned first row — even when its user file is not (yet) in the
+        // shared configuration.
+        if matches!(self.device_selected, Some(DeviceRow::Local)) {
+            match users.iter().position(|u| u.name == current_user) {
+                Some(pos) => {
+                    users[pos].pinned = true;
+                    let u = users.remove(pos);
+                    users.insert(0, u);
+                }
+                None => users.insert(
+                    0,
+                    UiUser {
+                        name: current_user,
+                        status: UserStatus::Confirmed,
+                        added: false,
+                        pinned: true,
+                    },
+                ),
+            }
+        }
+        // Display order: pinned row first, then added, then not added;
+        // name order within each group.
+        users.sort_by(|a, b| {
+            let key = |u: &UiUser| {
+                (
+                    if u.pinned { 0 } else { 1 },
+                    if u.added { 0 } else { 1 },
+                    u.name.clone(),
+                )
+            };
+            key(a).cmp(&key(b))
+        });
         users
     }
 
@@ -1556,6 +1643,91 @@ mod tests {
         state.device_selected = Some(DeviceRow::Detected(key.clone()));
 
         assert!(state.users_view(&ctx).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn users_view_pins_current_user_first_and_groups_by_membership() {
+        let (dir, home) = test_home("local-groups");
+        let root = root_config_dir(&home);
+        let git = root.join(GIT_DIR);
+        // Declared in git/ on the local device: the current user and alice.
+        let current = crate::discovery::local_user();
+        ensure_local_user_file(&git, "testhost", &current).unwrap();
+        ensure_local_user_file(&git, "testhost", "alice").unwrap();
+        // tmp/-only (not in the shared configuration): bob.
+        proxy::write_tmp_user_file(&root, "testhost", "bob").unwrap();
+
+        let key = SshPublicKey::from("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFake");
+        let ssh_config = dir.join("ssh_config");
+        let ctx = test_ctx(&home, &key, &ssh_config);
+        let mut state = test_state("laptop", "alice");
+        state.device_selected = Some(DeviceRow::Local);
+
+        let users = state.users_view(&ctx);
+        let names: Vec<(&str, bool, bool)> = users
+            .iter()
+            .map(|u| (u.name.as_str(), u.added, u.pinned))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                (current.as_str(), true, true),
+                ("alice", true, false),
+                ("bob", false, false),
+            ],
+            "pinned current user first, then added, then not added"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn users_view_pins_current_user_even_when_absent_from_disk() {
+        let (dir, home) = test_home("local-absent");
+        let root = root_config_dir(&home);
+        // No user files at all: the current user is still shown, pinned
+        // and not added.
+        let current = crate::discovery::local_user();
+        let key = SshPublicKey::from("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFake");
+        let ssh_config = dir.join("ssh_config");
+        let ctx = test_ctx(&home, &key, &ssh_config);
+        let mut state = test_state("laptop", "alice");
+        state.device_selected = Some(DeviceRow::Local);
+        let _ = root;
+
+        let users = state.users_view(&ctx);
+        assert_eq!(users.len(), 1);
+        assert_eq!(users[0].name, current);
+        assert!(users[0].pinned);
+        assert!(!users[0].added);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn devices_view_marks_local_row_by_shared_config_membership() {
+        let (dir, home) = test_home("local-membership");
+        let root = root_config_dir(&home);
+        let key = SshPublicKey::from("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFake");
+        let ssh_config = dir.join("ssh_config");
+        let ctx = test_ctx(&home, &key, &ssh_config);
+        let state = test_state("laptop", "alice");
+
+        // No device file in the git layer: the local row is "not added".
+        let devices = state.devices_view(&ctx);
+        assert_eq!(devices.len(), 1);
+        assert_eq!(devices[0].section, DeviceSection::Local);
+        assert!(!devices[0].in_shared_config);
+
+        // device.json present in the git layer: "added".
+        let dev_file = root
+            .join(GIT_DIR)
+            .join("devices")
+            .join("testhost")
+            .join("device.json");
+        std::fs::create_dir_all(dev_file.parent().unwrap()).unwrap();
+        std::fs::write(&dev_file, "{}").unwrap();
+        let devices = state.devices_view(&ctx);
+        assert!(devices[0].in_shared_config);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

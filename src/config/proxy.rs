@@ -127,10 +127,6 @@ pub fn resolve(root: &Path, rel: &str) -> Option<PathBuf> {
 }
 
 /// Whether `rel` exists in the git (authoritative) layer.
-#[allow(
-    dead_code,
-    reason = "part of the proxy API surface; exercised by the unit tests"
-)]
 pub fn in_git(root: &Path, rel: &str) -> bool {
     git_path(root, rel).exists()
 }

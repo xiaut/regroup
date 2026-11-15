@@ -9,9 +9,9 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::config::{root_config_dir, CONFIG_DIR, GIT_DIR, Device, load_config};
+use crate::config::{root_config_dir, CONFIG_DIR, GIT_DIR, DEVICES_DIR, DEVICE_FILE, Device, load_config};
 use crate::discovery::beacon::BeaconDevice;
-use crate::discovery::host_name;
+use crate::discovery::{host_name, local_user};
 use crate::git::{self, sync::git_add_and_commit_file};
 use crate::ssh::config::{remove_block, update_block};
 use crate::ssh::public_key::{self};
@@ -136,7 +136,7 @@ pub fn run_selftest() -> ! {
 /// The full help text, shared by `regroup -h` and the interactive help
 /// panel (key '?' in the full-screen ui, 'h' in plain mode).
 pub fn usage_text() -> &'static str {
-"Up / Right / Down - from the overview, focus a pane: Devices (Up/Right, one list:\n                    localhost, added, detected rows) or Logs (Down)\n  Up/Down         - in the focused Devices/Users pane: select a row\n  Right/Enter     - in the Devices pane with the local or an added device\n                    selected, open its Users panel (device+user actions\n                    need a selected user)\n  Left / Esc      - back (Users -> Devices -> overview)\n  Down/Enter      - in the focused Logs pane: fullscreen logs (Esc leaves)\n  a / n           - (detected row selected) add / ignore the device\n                    (ignored beacons are skipped for this run)\n  d               - (added row selected) delete the selected device\n  i / r           - (Users, confirmed user) install / remove an SSH key to\n                    user@device\n  a / x           - (Users) add / remove a temporary user (kept in tmp/,\n                    until a git sync brings the device's declared users)\n  s               - sync git (pull from remotes, push to remotes)\n  w               - wipe the whole configuration and quit (Enter confirms, q cancels)\n  c               - install the 'regroup-cd' shell function (Enter confirms, q cancels)\n  Enter/y         - confirm (delete, wipe, rename); in plain mode, add the device\n                    at the front of the queue\n  n               - cancel a confirmation\n  PgUp/PgDn       - scroll the activity log\n  ?               - show this help panel (Esc closes it)\n  q               - quit (from the overview)\n\nConfiguration layout (~/.regroup-config/):\n  settings.json                     (local only: udp_port, wait_secs — never synced)\n  git/                              (source of truth, synced with peers)\n    devices/\n      <hostname>/                   (one directory per device)\n        device.json                 (latest known state: name, ssh_public_key, port)\n        users/<user>.json           (known users of the device, written by the device itself)\n        connections/<conn>.json     (connections of the device, owner-scoped)\n  tmp/                              (temporary overlay — never committed or synced)\n\nExit codes:\n  0  normal exit\n  1  selftest failure\n  2  configuration or environment error"}
+"Up / Right / Down - from the overview, focus a pane: Devices (Up/Right, one list:\n                    localhost, added, detected rows) or Logs (Down)\n  Up/Down         - in the focused Devices/Users pane: select a row\n  Right/Enter     - in the Devices pane with the local or an added device\n                    selected, open its Users panel (device+user actions\n                    need a selected user)\n  Left / Esc      - back (Users -> Devices -> overview)\n  Down/Enter      - in the focused Logs pane: fullscreen logs (Esc leaves)\n  a / n           - (detected row selected) add / ignore the device\n                    (ignored beacons are skipped for this run)\n  a / d           - (localhost row) add / remove the local device to/from\n                    the shared configuration\n  d               - (added row selected) delete the selected device\n  i / r           - (Users, confirmed user, not on localhost) install /\n                    remove an SSH key to user@device\n  a / x           - (Users) add / remove a temporary user (kept in tmp/,\n                    until a git sync brings the device's declared users)\n  s               - sync git (pull from remotes, push to remotes)\n  w               - wipe the whole configuration and quit (Enter confirms, q cancels)\n  c               - install the 'regroup-cd' shell function (Enter confirms, q cancels)\n  Enter/y         - confirm (delete, wipe, rename); in plain mode, add the device\n                    at the front of the queue\n  n               - cancel a confirmation\n  PgUp/PgDn       - scroll the activity log\n  ?               - show this help panel (Esc closes it)\n  q               - quit (from the overview)\n\nConfiguration layout (~/.regroup-config/):\n  settings.json                     (local only: udp_port, wait_secs — never synced)\n  git/                              (source of truth, synced with peers)\n    devices/\n      <hostname>/                   (one directory per device)\n        device.json                 (latest known state: name, ssh_public_key, port)\n        users/<user>.json           (known users of the device, written by the device itself)\n        connections/<conn>.json     (connections of the device, owner-scoped)\n  tmp/                              (temporary overlay — never committed or synced)\n\nExit codes:\n  0  normal exit\n  1  selftest failure\n  2  configuration or environment error"}
 
 /// Print usage information
 pub fn usage() {
@@ -719,6 +719,75 @@ pub fn remove_device(
     }
     remove_local_traces(home, ssh_config, device, last_ip);
     ok
+}
+
+/// Add the local device to the shared configuration (key 'a' on the
+/// localhost row when it is not added): (re)create its device file and
+/// the current user's file in the git layer and commit them, so a git
+/// sync shares them with the other devices. No ~/.ssh/config block and
+/// no known_hosts entry: the local device has no such traces.
+/// Returns true when the device file is present in the git layer
+/// afterwards.
+pub fn add_local_device_to_config(home: &str) -> bool {
+    let root = root_config_dir(home);
+    let config_dir = config_dir_of(home);
+    let local_name = host_name();
+    // Device file (also the repository's initial commit on first run).
+    if let Err(e) = crate::config::loading::create_device_config(&config_dir) {
+        warn(&format!("could not create the local device config: {e}"));
+        return false;
+    }
+    // Current user file, recorded once and committed (same as at config
+    // load, see load_config).
+    let current_user = local_user();
+    if !current_user.is_empty() && current_user != "unknown" {
+        match crate::config::users::ensure_local_user_file(&config_dir, &local_name, &current_user) {
+            Ok(true) => {
+                let user_path =
+                    crate::config::users::user_file_path(&config_dir, &local_name, &current_user);
+                if let Err(e) = git_add_and_commit_file(
+                    &config_dir,
+                    &user_path,
+                    &format!("Add user {current_user} on {local_name}"),
+                ) {
+                    warn(&format!("could not commit user file: {e}"));
+                }
+            }
+            Ok(false) => {}
+            Err(e) => warn(&format!(
+                "could not record user {current_user} on {local_name}: {e}"
+            )),
+        }
+    }
+    crate::config::proxy::in_git(&root, &format!("{DEVICES_DIR}/{local_name}/{DEVICE_FILE}"))
+}
+
+/// Remove the local device from the shared configuration (key 'd' on the
+/// localhost row when it is added): delete its directory from the git
+/// layer and commit the deletion, so it propagates to the other devices
+/// on git sync. The tmp/ overlay (local-only data) and ~/.ssh/config /
+/// known_hosts are untouched — the local device has no such traces.
+/// Returns true when the device file is gone from the git layer
+/// afterwards.
+pub fn remove_local_device_from_config(home: &str) -> bool {
+    let root = root_config_dir(home);
+    let config_dir = config_dir_of(home);
+    let local_name = host_name();
+    let rel = format!("{DEVICES_DIR}/{local_name}");
+    let dir = config_dir.join(&rel);
+    if dir.exists() {
+        if let Err(e) = fs::remove_dir_all(&dir) {
+            warn(&format!("could not delete {}: {e}", dir.display()));
+            return false;
+        }
+        // `git add` on the directory stages every deletion inside it.
+        if let Err(e) =
+            git_add_and_commit_file(&config_dir, &dir, &format!("Remove device {local_name}"))
+        {
+            warn(&format!("could not commit removal of {local_name}: {e}"));
+        }
+    }
+    !crate::config::proxy::in_git(&root, &format!("{rel}/{DEVICE_FILE}"))
 }
 
 /// Delete the whole regroup configuration: the ~/.ssh/config blocks of all

@@ -319,6 +319,9 @@ impl Navigation {
 pub struct PaneKeyCtx {
     pub confirmed_user: bool,
     pub selected_section: Option<DeviceSection>,
+    /// Whether the local device is in the shared configuration — drives
+    /// the localhost row's keys (add vs remove from the shared config).
+    pub local_in_config: bool,
 }
 
 /// The key dictionary of a pane state: every key that works in
@@ -341,12 +344,29 @@ pub fn pane_keys(focus: NavFocus, depth: Option<NavDepth>, ctx: PaneKeyCtx) -> &
         (Devices, Some(Selected)) => match ctx.selected_section {
             Some(DeviceSection::Added) => DEVICES_ADDED_KEYS,
             Some(DeviceSection::Detected) => DEVICES_DETECTED_KEYS,
-            _ => DEVICES_LOCAL_KEYS,
+            // The localhost row offers add or remove from the shared
+            // configuration, depending on its membership.
+            Some(DeviceSection::Local) => {
+                if ctx.local_in_config {
+                    DEVICES_LOCAL_ADDED_KEYS
+                } else {
+                    DEVICES_LOCAL_NOT_ADDED_KEYS
+                }
+            }
+            _ => DEVICES_LOCAL_NOT_ADDED_KEYS,
         },
         (Devices, Some(Fullscreen)) => &[],
         (Users, None) => &[],
         (Users, Some(Selected)) => {
-            if ctx.confirmed_user {
+            // On the localhost device no install/remove key: connecting
+            // to the current device is nonsense.
+            if ctx.selected_section == Some(DeviceSection::Local) {
+                if ctx.confirmed_user {
+                    USERS_LOCAL_CONFIRMED_KEYS
+                } else {
+                    USERS_TEMP_KEYS
+                }
+            } else if ctx.confirmed_user {
                 USERS_CONFIRMED_KEYS
             } else {
                 USERS_TEMP_KEYS
@@ -370,16 +390,30 @@ static CENTER_KEYS: &[KeyBinding] = &[
     KeyBinding::new(Char('q'), "q", "quit", Effect::Action(Action::Quit)),
 ];
 
-/// Focused Devices pane with the local device selected: no device
-/// actions, but the Users sub-panel (Right/Enter) shows the local
-/// device's own users.
-static DEVICES_LOCAL_KEYS: &[KeyBinding] = &[
+/// Focused Devices pane, local row selected, local device NOT in the
+/// shared configuration: it can be added to it (key 'a'). The Users
+/// sub-panel (Right/Enter) shows the local device's own users.
+static DEVICES_LOCAL_NOT_ADDED_KEYS: &[KeyBinding] = &[
     KeyBinding::internal(Esc, "Esc", "back"),
     KeyBinding::internal(Left, "Left", "back"),
     KeyBinding::internal(Up, "Up", "select"),
     KeyBinding::internal(Down, "Down", "select"),
     KeyBinding::internal(Enter, "Enter", "users"),
     KeyBinding::internal(Right, "Right", "users"),
+    KeyBinding::new(Char('a'), "a", "add to config", Effect::Action(Action::AddLocalToConfig)),
+];
+
+/// Focused Devices pane, local row selected, local device in the shared
+/// configuration: it can be removed from it (key 'd') — without touching
+/// ~/.ssh/config or known_hosts, the local device has no such traces.
+static DEVICES_LOCAL_ADDED_KEYS: &[KeyBinding] = &[
+    KeyBinding::internal(Esc, "Esc", "back"),
+    KeyBinding::internal(Left, "Left", "back"),
+    KeyBinding::internal(Up, "Up", "select"),
+    KeyBinding::internal(Down, "Down", "select"),
+    KeyBinding::internal(Enter, "Enter", "users"),
+    KeyBinding::internal(Right, "Right", "users"),
+    KeyBinding::new(Char('d'), "d", "remove from config", Effect::Action(Action::RemoveLocalFromConfig)),
 ];
 
 /// Focused Devices pane with an added device selected: device
@@ -416,6 +450,18 @@ static USERS_CONFIRMED_KEYS: &[KeyBinding] = &[
     KeyBinding::new(Char('s'), "s", "sync", Effect::Action(Action::Sync)),
     KeyBinding::new(Char('i'), "i", "install key", Effect::Action(Action::InstallKeyToSelected)),
     KeyBinding::new(Char('r'), "r", "remove key", Effect::Action(Action::RemoveKeyFromSelected)),
+    KeyBinding::new(Char('a'), "a", "add temp user", Effect::Action(Action::AddTempUser)),
+];
+
+/// Users pane of the localhost device, confirmed user selected: same as
+/// USERS_CONFIRMED_KEYS but without install/remove key — connecting to
+/// the current device is nonsense.
+static USERS_LOCAL_CONFIRMED_KEYS: &[KeyBinding] = &[
+    KeyBinding::internal(Esc, "Esc", "devices"),
+    KeyBinding::internal(Left, "Left", "devices"),
+    KeyBinding::internal(Up, "Up", "select"),
+    KeyBinding::internal(Down, "Down", "select"),
+    KeyBinding::new(Char('s'), "s", "sync", Effect::Action(Action::Sync)),
     KeyBinding::new(Char('a'), "a", "add temp user", Effect::Action(Action::AddTempUser)),
 ];
 
@@ -499,6 +545,12 @@ pub struct UiDevice {
     /// Which section of the Devices pane the row belongs to (local,
     /// added, detected) — decides the divider rows and the action keys.
     pub section: DeviceSection,
+    /// Whether the device is in the shared configuration (its
+    /// `device.json` is present in the git layer). Only meaningful for
+    /// the local row, where it drives the divider label
+    /// `── localhost (added|not added) ──` and the add/remove keys;
+    /// always true for added rows, false for detected ones.
+    pub in_shared_config: bool,
 }
 
 /// Status of a user on the selected device, shown in the Users panel.
@@ -520,6 +572,14 @@ pub enum UserStatus {
 pub struct UiUser {
     pub name: String,
     pub status: UserStatus,
+    /// Whether the user is in the shared configuration (its file is
+    /// present in the git layer): the Users pane's super-state, shown as
+    /// the `── added ──` / `── not added ──` group dividers.
+    pub added: bool,
+    /// Pinned first row of the Users pane — the current user on the
+    /// localhost device, always shown under its own
+    /// `── current user (added|not added) ──` divider.
+    pub pinned: bool,
 }
 
 impl UiUser {
@@ -630,6 +690,15 @@ pub enum Action {
     CancelTempUser,
     /// Remove the selected temporary user (key 'x').
     RemoveTempUser,
+    /// Add the local device to the shared configuration (key 'a' on the
+    /// localhost row when it is not added): create its device file and
+    /// the current user's file in the git layer and commit them.
+    AddLocalToConfig,
+    /// Remove the local device from the shared configuration (key 'd' on
+    /// the localhost row when it is added): delete its directory from the
+    /// git layer and commit the deletion. No ~/.ssh/config block or
+    /// known_hosts entry is touched — the local device has none.
+    RemoveLocalFromConfig,
 }
 
 // Static pane definitions. The keys of a pane are not listed here: they

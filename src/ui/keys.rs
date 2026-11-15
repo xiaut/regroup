@@ -139,11 +139,13 @@ mod tests {
             for depth in [None, Some(NavDepth::Selected), Some(NavDepth::Fullscreen)] {
                 for confirmed_user in [false, true] {
                     for selected_section in [None, Some(DeviceSection::Local), Some(DeviceSection::Added), Some(DeviceSection::Detected)] {
-                        contexts.push(Context::Pane {
-                            focus,
-                            depth,
-                            keys_ctx: PaneKeyCtx { confirmed_user, selected_section },
-                        });
+                        for local_in_config in [false, true] {
+                            contexts.push(Context::Pane {
+                                focus,
+                                depth,
+                                keys_ctx: PaneKeyCtx { confirmed_user, selected_section, local_in_config },
+                            });
+                        }
                     }
                 }
             }
@@ -169,7 +171,7 @@ mod tests {
             Question::Idle(_) => Context::Pane {
                 focus,
                 depth,
-                keys_ctx: PaneKeyCtx { confirmed_user: true, selected_section: None },
+                keys_ctx: PaneKeyCtx { confirmed_user: true, selected_section: None, local_in_config: false },
             },
             q if matches!(q, Question::Rename(..) | Question::AddTempUser(..)) => Context::TextInput(q.def()),
             q => Context::Modal(q.def()),
@@ -206,7 +208,7 @@ mod tests {
         let overview = Context::Pane {
             focus: NavFocus::Center,
             depth: None,
-            keys_ctx: PaneKeyCtx { confirmed_user: false, selected_section: None },
+            keys_ctx: PaneKeyCtx { confirmed_user: false, selected_section: None, local_in_config: false },
         };
         assert!(
             bindings(overview)
@@ -271,7 +273,7 @@ mod tests {
     #[test]
     fn unadvertised_key_is_not_handled() {
         use crate::ui::types::DeviceSection;
-        let keys_ctx = |selected_section| PaneKeyCtx { confirmed_user: false, selected_section };
+        let keys_ctx = |selected_section| PaneKeyCtx { confirmed_user: false, selected_section, local_in_config: false };
         // 's' syncs in the focused Devices pane only when an added
         // device row is selected — not on a detected or local row.
         for section in [Some(DeviceSection::Detected), Some(DeviceSection::Local), None] {
@@ -288,6 +290,94 @@ mod tests {
         assert_eq!(
             resolve(added, KeyCode::Char('s')),
             Some(KeyResolution::Action(Action::Sync))
+        );
+    }
+
+    #[test]
+    fn local_row_offers_add_or_remove_depending_on_membership() {
+        use crate::ui::types::DeviceSection;
+        let ctx = |local_in_config| Context::Pane {
+            focus: NavFocus::Devices,
+            depth: Some(NavDepth::Selected),
+            keys_ctx: PaneKeyCtx {
+                confirmed_user: false,
+                selected_section: Some(DeviceSection::Local),
+                local_in_config,
+            },
+        };
+        // Not in the shared configuration: 'a' adds it, 'd' does nothing.
+        let not_added = ctx(false);
+        assert_eq!(
+            resolve(not_added, KeyCode::Char('a')),
+            Some(KeyResolution::Action(Action::AddLocalToConfig))
+        );
+        assert_eq!(resolve(not_added, KeyCode::Char('d')), None);
+        assert!(bindings(not_added).iter().any(|b| b.key == KeyCode::Char('a')));
+        // In the shared configuration: 'd' removes it, 'a' does nothing.
+        let added = ctx(true);
+        assert_eq!(
+            resolve(added, KeyCode::Char('d')),
+            Some(KeyResolution::Action(Action::RemoveLocalFromConfig))
+        );
+        assert_eq!(resolve(added, KeyCode::Char('a')), None);
+        // Both variants keep the users entry keys; the added-row device
+        // actions (sync, wipe, setup-cd, delete) stay off the local row.
+        for c in [ctx(false), ctx(true)] {
+            assert!(
+                bindings(c)
+                    .iter()
+                    .any(|b| b.key == KeyCode::Enter && b.effect == Effect::Internal)
+            );
+            assert_eq!(resolve(c, KeyCode::Char('s')), None);
+            assert_eq!(resolve(c, KeyCode::Char('w')), None);
+            assert_eq!(resolve(c, KeyCode::Char('c')), None);
+        }
+    }
+
+    #[test]
+    fn users_pane_on_localhost_withholds_install_remove_key() {
+        use crate::ui::types::DeviceSection;
+        for confirmed in [true, false] {
+            let ctx = Context::Pane {
+                focus: NavFocus::Users,
+                depth: Some(NavDepth::Selected),
+                keys_ctx: PaneKeyCtx {
+                    confirmed_user: confirmed,
+                    selected_section: Some(DeviceSection::Local),
+                    local_in_config: true,
+                },
+            };
+            assert_eq!(resolve(ctx, KeyCode::Char('i')), None, "i handled on localhost (confirmed={confirmed})");
+            assert_eq!(resolve(ctx, KeyCode::Char('r')), None, "r handled on localhost (confirmed={confirmed})");
+            assert!(
+                !bindings(ctx)
+                    .iter()
+                    .any(|b| b.key == KeyCode::Char('i') || b.key == KeyCode::Char('r')),
+                "i/r advertised on localhost (confirmed={confirmed})"
+            );
+            // Sync and temp-user keys stay available.
+            assert_eq!(
+                resolve(ctx, KeyCode::Char('s')),
+                Some(KeyResolution::Action(Action::Sync))
+            );
+        }
+        // On an added device the confirmed user still gets i/r.
+        let added = Context::Pane {
+            focus: NavFocus::Users,
+            depth: Some(NavDepth::Selected),
+            keys_ctx: PaneKeyCtx {
+                confirmed_user: true,
+                selected_section: Some(DeviceSection::Added),
+                local_in_config: true,
+            },
+        };
+        assert_eq!(
+            resolve(added, KeyCode::Char('i')),
+            Some(KeyResolution::Action(Action::InstallKeyToSelected))
+        );
+        assert_eq!(
+            resolve(added, KeyCode::Char('r')),
+            Some(KeyResolution::Action(Action::RemoveKeyFromSelected))
         );
     }
 
