@@ -118,16 +118,13 @@ pub(crate) fn count_wrapped_lines(text: &str, width: usize, is_hint: bool) -> us
     wrapped_metrics(text, width, is_hint).0
 }
 
-/// Divider row between two sections of the Devices pane (added,
-/// detected): a non-selectable labeled line in dark gray.
-fn divider_row(label: &str) -> Row<'static> {
-    Row::new([
-        Cell::from(format!("── {label} ──")),
-        Cell::from(""),
-        Cell::from(""),
-        Cell::from(""),
-    ])
-    .style(Style::new().fg(Color::DarkGray))
+/// Divider row between two groups of a pane (a Devices-pane section, a
+/// Users-pane membership group): a non-selectable labeled line in dark
+/// gray, padded to the pane's `columns`.
+fn divider_row(label: &str, columns: usize) -> Row<'static> {
+    let mut cells = vec![Cell::from(format!("── {label} ──"))];
+    cells.resize_with(columns, || Cell::from(""));
+    Row::new(cells).style(Style::new().fg(Color::DarkGray))
 }
 
 /// The rows of the Devices pane: one row per device, each section
@@ -147,10 +144,21 @@ fn device_rows(
     let mut last_section: Option<DeviceSection> = None;
     for (i, d) in devices.iter().enumerate() {
         // Every section opens with its divider row, in the same style:
-        // "── localhost ──", "── added ──", "── detected ──" (a section is
-        // non-empty here: we are about to render one of its rows).
+        // "── added ──", "── detected ──" — and the localhost divider
+        // carries the super-state of the local device:
+        // "── localhost (added) ──" / "── localhost (not added) ──"
+        // (a section is non-empty here: we are about to render one of
+        // its rows).
         if last_section != Some(d.section) {
-            rows.push(divider_row(d.section.label()));
+            let label = if d.section == DeviceSection::Local {
+                format!(
+                    "localhost ({})",
+                    if d.in_shared_config { "added" } else { "not added" }
+                )
+            } else {
+                d.section.label().to_string()
+            };
+            rows.push(divider_row(&label, 4));
         }
         last_section = Some(d.section);
         let flash = flashes
@@ -252,6 +260,9 @@ pub struct QuestionCtx<'a> {
     /// Section of the selected row in the Devices pane (drives the
     /// Devices-pane hints: which action keys are offered).
     pub selected_section: Option<DeviceSection>,
+    /// Whether the local device is in the shared configuration (drives
+    /// the localhost row's add/remove key).
+    pub local_in_config: bool,
     /// Last key press, highlighted in the hint line while recent.
     pub key_flash: Option<&'a KeyFlash>,
 }
@@ -464,9 +475,14 @@ pub fn log_style(msg: &str) -> Style {
     }
 }
 
-/// Users sub-panel of the Added pane: the users of the selected device,
-/// one row per user with the status column (temporary / confirmed / SSH key
-/// installed). Highlighted border when the panel is the active one.
+/// Users sub-panel of the Devices pane: the users of the selected device
+/// (local or added), grouped by super-state with divider rows: the pinned
+/// row first on the localhost device (`── current user (added) ──` /
+/// `── current user (not added) ──`), then `── added ──` (users in the
+/// shared configuration), then `── not added ──`. Each user row keeps the
+/// sub-status column (temporary / confirmed / SSH key installed).
+/// `selected` is an index into `users`; dividers are not selectable.
+/// Highlighted border when the panel is the active one.
 pub fn render_users_panel(
     frame: &mut Frame,
     area: Rect,
@@ -477,7 +493,40 @@ pub fn render_users_panel(
     use super::types::UserStatus;
     let border = if active { Color::Magenta } else { Color::DarkGray };
     let border_type = if active { BorderType::Double } else { BorderType::Plain };
-    let rows = users.iter().enumerate().map(|(i, u)| {
+    // The super-state of each user, in display order: the pinned row
+    // first, then added, then not added (users_view returns them in
+    // this order).
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Group {
+        Pinned,
+        Added,
+        NotAdded,
+    }
+    let group_of = |u: &super::types::UiUser| {
+        if u.pinned {
+            Group::Pinned
+        } else if u.added {
+            Group::Added
+        } else {
+            Group::NotAdded
+        }
+    };
+    let mut rows: Vec<Row<'static>> = Vec::new();
+    let mut last_group: Option<Group> = None;
+    for (i, u) in users.iter().enumerate() {
+        let group = group_of(u);
+        if last_group != Some(group) {
+            let label = match group {
+                Group::Pinned => format!(
+                    "current user ({})",
+                    if u.added { "added" } else { "not added" }
+                ),
+                Group::Added => "added".to_string(),
+                Group::NotAdded => "not added".to_string(),
+            };
+            rows.push(divider_row(&label, 2));
+        }
+        last_group = Some(group);
         let mut style = match u.status {
             UserStatus::Temporary => Style::new().fg(Color::Yellow),
             UserStatus::Confirmed => Style::new().fg(Color::Green),
@@ -486,8 +535,10 @@ pub fn render_users_panel(
         if selected == Some(i) {
             style = Style::new().add_modifier(Modifier::REVERSED);
         }
-        Row::new([Cell::from(u.name.clone()), Cell::from(u.status_label())]).style(style)
-    });
+        rows.push(
+            Row::new([Cell::from(u.name.clone()), Cell::from(u.status_label())]).style(style),
+        );
+    }
     let table = Table::new(
         rows,
         [Constraint::Percentage(45), Constraint::Percentage(55)],
@@ -531,7 +582,8 @@ pub fn render_all_panes(
     match active_pane {
         ActivePane::Devices(_) | ActivePane::Users(_) => {
             // Full-screen Devices pane with the Users sub-panel on the
-            // right: the users of the added device selected in the pane.
+            // right: the users of the device selected in the pane (local
+            // or added).
             let devices_width = (width * 3) / 5;
             let [devices_area, users_area] = Layout::horizontal([
                 Constraint::Length(devices_width),
@@ -651,6 +703,7 @@ pub fn render_question(
                     keys_ctx: PaneKeyCtx {
                         confirmed_user: ctx.confirmed_user,
                         selected_section: ctx.selected_section,
+                        local_in_config: ctx.local_in_config,
                     },
                 });
                 (
@@ -777,6 +830,7 @@ mod tests {
             },
             confirmed_user: false,
             selected_section: None,
+            local_in_config: false,
             key_flash: None,
         }
     }
@@ -952,12 +1006,22 @@ mod tests {
     }
 
     fn ui_device(key: &str, name: &str, section: crate::ui::types::DeviceSection) -> UiDevice {
+        ui_device_shared(key, name, section, true)
+    }
+
+    fn ui_device_shared(
+        key: &str,
+        name: &str,
+        section: crate::ui::types::DeviceSection,
+        in_shared_config: bool,
+    ) -> UiDevice {
         UiDevice {
             key: key.to_string(),
             name: name.to_string(),
             ip: Some("10.0.0.1".to_string()),
             port: 22,
             section,
+            in_shared_config,
         }
     }
 
@@ -1009,7 +1073,7 @@ mod tests {
                 .position(|l| l.contains(needle))
                 .unwrap_or_else(|| panic!("{needle} not rendered"))
         };
-        let p_local_div = pos("── localhost ──");
+        let p_local_div = pos("── localhost (added) ──");
         let p_local = pos("myhost");
         let p_added_div = pos("── added ──");
         let p_alpha = pos("alpha");
@@ -1035,6 +1099,102 @@ mod tests {
         });
         assert!(beta_row, "selected device row must be highlighted");
         assert!(!buf[(0, p_local as u16)]
+            .modifier
+            .contains(Modifier::REVERSED));
+    }
+
+    #[test]
+    fn localhost_divider_shows_shared_config_membership() {
+        use crate::ui::types::DeviceSection;
+        for (in_shared, needle) in [
+            (true, "── localhost (added) ──"),
+            (false, "── localhost (not added) ──"),
+        ] {
+            let backend = TestBackend::new(80, 24);
+            let mut terminal = Terminal::new(backend).unwrap();
+            let devices = vec![ui_device_shared("k-local", "myhost", DeviceSection::Local, in_shared)];
+            terminal
+                .draw(|frame| {
+                    render_all_panes(
+                        frame,
+                        frame.area(),
+                        ActivePane::main_menu(),
+                        NavFocus::Center,
+                        &devices,
+                        Some(0),
+                        &[],
+                        0,
+                        &HashMap::new(),
+                        &HashMap::new(),
+                        &[],
+                        None,
+                    );
+                })
+                .unwrap();
+            let buf = terminal.backend().buffer();
+            let lines: Vec<String> = (0..buf.area.height)
+                .map(|y| {
+                    (0..buf.area.width)
+                        .map(|x| buf[(x, y)].symbol().chars().next().unwrap_or(' '))
+                        .collect()
+                })
+                .collect();
+            assert!(
+                lines.iter().any(|l| l.contains(needle)),
+                "divider {needle} not rendered for in_shared_config={in_shared}"
+            );
+        }
+    }
+
+    #[test]
+    fn users_pane_pins_current_user_then_added_then_not_added() {
+        use crate::ui::types::{UiUser, UserStatus};
+        let backend = TestBackend::new(60, 12);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let users = vec![
+            UiUser { name: "matthias".to_string(), status: UserStatus::KeyInstalled, added: true, pinned: true },
+            UiUser { name: "alice".to_string(), status: UserStatus::Confirmed, added: true, pinned: false },
+            UiUser { name: "bob".to_string(), status: UserStatus::Temporary, added: false, pinned: false },
+        ];
+        terminal
+            .draw(|frame| {
+                render_users_panel(frame, frame.area(), &users, Some(2), true);
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer();
+        let lines: Vec<String> = (0..buf.area.height)
+            .map(|y| {
+                (0..buf.area.width)
+                    .map(|x| buf[(x, y)].symbol().chars().next().unwrap_or(' '))
+                    .collect()
+            })
+            .collect();
+        let pos = |needle: &str| {
+            lines
+                .iter()
+                .position(|l| l.contains(needle))
+                .unwrap_or_else(|| panic!("{needle} not rendered"))
+        };
+        let p_cur_div = pos("── current user (added) ──");
+        let p_matthias = pos("matthias");
+        let p_added_div = pos("── added ──");
+        let p_alice = pos("alice");
+        let p_na_div = pos("── not added ──");
+        let p_bob = pos("bob");
+        assert!(
+            p_cur_div < p_matthias
+                && p_matthias < p_added_div
+                && p_added_div < p_alice
+                && p_alice < p_na_div
+                && p_na_div < p_bob,
+            "users out of order: {p_cur_div} {p_matthias} {p_added_div} {p_alice} {p_na_div} {p_bob}"
+        );
+        // The selection index addresses user rows, not dividers: index 2
+        // highlights "bob".
+        let bob_row = (0..buf.area.width)
+            .any(|x| buf[(x, p_bob as u16)].modifier.contains(Modifier::REVERSED));
+        assert!(bob_row, "selected user row must be highlighted");
+        assert!(!buf[(0, p_matthias as u16)]
             .modifier
             .contains(Modifier::REVERSED));
     }

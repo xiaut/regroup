@@ -57,6 +57,7 @@ fn calculate_question_height(question: &Question, ctx: &QuestionCtx, width: u16)
                 keys_ctx: PaneKeyCtx {
                     confirmed_user: ctx.confirmed_user,
                     selected_section: ctx.selected_section,
+                    local_in_config: ctx.local_in_config,
                 },
             }))
         }
@@ -148,7 +149,8 @@ pub struct TtyUi {
     pub devices_selected: Option<usize>,
     /// Row of the Devices panel highlighted in delete mode (passed from state).
     pub delete_selected: Option<usize>,
-    /// Users of the added device selected in the Devices panel (Users panel).
+    /// Users of the device selected in the Devices panel, local or added
+    /// (Users panel).
     pub users: Vec<UiUser>,
     /// Row of the Users panel highlighted by the selection (passed from state).
     pub users_selected: Option<usize>,
@@ -304,11 +306,15 @@ impl TtyUi {
             .and_then(|i| self.users.get(i))
             .is_some_and(|u| u.status != UserStatus::Temporary);
         // The section of the selected Devices row drives which action
-        // keys the fullscreen Devices pane offers.
-        let selected_section = self
+        // keys the fullscreen Devices pane offers; for the local row its
+        // shared-config membership drives add vs remove.
+        let selected_device = self
             .devices_selected
-            .and_then(|i| self.devices.get(i))
-            .map(|d| d.section);
+            .and_then(|i| self.devices.get(i));
+        let selected_section = selected_device.map(|d| d.section);
+        let local_in_config = selected_device
+            .map(|d| d.in_shared_config)
+            .unwrap_or(false);
         let ctx = if self.show_help {
             Context::Help
         } else {
@@ -322,6 +328,7 @@ impl TtyUi {
                     keys_ctx: PaneKeyCtx {
                         confirmed_user,
                         selected_section,
+                        local_in_config,
                     },
                 }
             } else {
@@ -498,9 +505,12 @@ impl TtyUi {
             let confirmed_user = users_selected
                 .and_then(|i| users.get(i))
                 .is_some_and(|u| u.status != UserStatus::Temporary);
-            let selected_section = devices_selected
-                .and_then(|i| devices.get(i))
-                .map(|d| d.section);
+            let selected_device = devices_selected
+                .and_then(|i| devices.get(i));
+            let selected_section = selected_device.map(|d| d.section);
+            let local_in_config = selected_device
+                .map(|d| d.in_shared_config)
+                .unwrap_or(false);
             let question_ctx = QuestionCtx {
                 input,
                 pending: devices
@@ -512,6 +522,7 @@ impl TtyUi {
                 navigation: *navigation,
                 confirmed_user,
                 selected_section,
+                local_in_config,
                 key_flash: key_flash.as_ref(),
             };
             let question_height = calculate_question_height(question, &question_ctx, frame.area().width);
@@ -595,6 +606,7 @@ mod tests {
             },
             confirmed_user: false,
             selected_section: None,
+            local_in_config: false,
             key_flash: None,
         }
     }

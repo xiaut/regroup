@@ -15,6 +15,23 @@ pub fn is_git_repo(path: &Path) -> bool {
     path.join(".git").exists()
 }
 
+/// Whether the repository has at least one commit. A fresh `git init`
+/// has none: the local device config's auto-creation makes the
+/// repository's initial commit, so "no commits yet" means first run —
+/// while "commits exist but the local device file is absent" means the
+/// local device was deliberately removed from the shared configuration
+/// and must not be re-created on the next load.
+pub fn has_commits(repo_path: &Path) -> bool {
+    if !is_git_repo(repo_path) {
+        return false;
+    }
+    Command::new("git")
+        .current_dir(repo_path)
+        .args(["rev-parse", "--verify", "-q", "HEAD"])
+        .output()
+        .is_ok_and(|o| o.status.success())
+}
+
 /// Repo-local git settings required for unattended decentralized sync.
 ///
 /// Deliberately minimal: the `tmp/` overlay keeps unconfirmed data out of
@@ -190,6 +207,32 @@ mod tests {
         // Fresh repository: clean tree, all checks pass.
         assert!(check_repo(&repo).is_ok(), "check_repo on fresh repo: {:?}", check_repo(&repo));
 
+        let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn has_commits_distinguishes_fresh_repo_from_initial_commit() {
+        if !git_available() {
+            return;
+        }
+        let repo = temp_repo("has-commits");
+        git_init(&repo).expect("git init");
+        assert!(!has_commits(&repo), "a fresh git init has no commits");
+        // The local device config's auto-creation is the initial commit.
+        fs::write(repo.join("device.json"), "{}").unwrap();
+        let out = Command::new("git")
+            .current_dir(&repo)
+            .args(["add", "device.json"])
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        let out = Command::new("git")
+            .current_dir(&repo)
+            .args(["commit", "-m", "Add device x"])
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        assert!(has_commits(&repo), "after the initial commit, has_commits is true");
         let _ = fs::remove_dir_all(&repo);
     }
 

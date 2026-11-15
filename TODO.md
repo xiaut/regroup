@@ -1,31 +1,6 @@
 # TODO
 
-## 1. Users pane: localhost and added devices only
-
-The Users sub-panel should be reachable on the **localhost** row and on
-**added** device rows — never on a *detected* row (a pending device has
-no users yet; that part already holds).
-
-Current state:
-
-- `Navigation::handle_key` (`src/ui/types.rs`) opens the Users sub-panel
-  from the Devices pane only when the selected row is
-  `Some(DeviceSection::Added)`; `DEVICES_LOCAL_KEYS` has no `Enter`/`Right`
-  "users" key, so the localhost row cannot open it.
-- `InteractiveState::users_view` / `selected_added_device`
-  (`src/interactive/state.rs`) resolve users only for `DeviceRow::Added`.
-
-To do:
-
-- Add `Enter`/`Right` → users on the local row (`DEVICES_LOCAL_KEYS`) and
-  let `Navigation::handle_key` accept `DeviceSection::Local`.
-- Extend `selected_added_device` / `users_view` to also serve
-  `DeviceRow::Local`, loading the local device's own users
-  (`devices/<local_name>/users/`, written by `ensure_local_user_file` in
-  `src/config/users.rs`; current user from `discovery::local_user()`).
-- Keep detected rows without a Users pane.
-
-## 2. Default user per device
+## 1. Default user per device
 
 New concept: each device has **one default user**.
 

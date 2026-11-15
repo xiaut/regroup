@@ -153,7 +153,7 @@ impl DeviceSection {
 /// of the dashboard), Down (Logs, below).
 /// Enter goes deeper, Esc goes back.
 /// Users sub-panel is nested inside Devices (reached by Right/Enter from
-/// Devices fullscreen with an added device selected).
+/// Devices with the local or an added device selected).
 ///
 /// Navigation focus: which direction from center.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -227,9 +227,9 @@ impl Navigation {
     /// Handle a navigation key press, return the new navigation state.
     ///
     /// `selected_section` is the section of the selected row in the
-    /// Devices pane: from the fullscreen Devices pane, only an added
-    /// device row can open the Users sub-panel (a detected row has no
-    /// users yet); on any other row Right/Enter rewind one step.
+    /// Devices pane: from the Devices pane, the local row and an added
+    /// device row open the Users sub-panel (a detected row has no users
+    /// yet); on any other row Right/Enter do nothing.
     pub fn handle_key(self, key: KeyCode, selected_section: Option<DeviceSection>) -> Self {
         use KeyCode::*;
         use NavDepth::*;
@@ -251,12 +251,15 @@ impl Navigation {
             (Logs, Some(Selected), Esc) => Navigation::overview(),
             (Logs, Some(Fullscreen), Esc) => Navigation { focus: Logs, depth: Some(Selected) },
 
-            // Right/Enter open the Users sub-panel when an added device
-            // row is selected. The Devices pane has no fullscreen mode
-            // anymore: the Logs pane is a small always-visible strip, so
-            // the Devices pane is always big.
+            // Right/Enter open the Users sub-panel when the local or an
+            // added device row is selected (a detected row has no users
+            // yet). The Devices pane has no fullscreen mode anymore: the
+            // Logs pane is a small always-visible strip, so the Devices
+            // pane is always big.
             (Devices, Some(Selected), Right | Enter) => match selected_section {
-                Some(DeviceSection::Added) => Navigation { focus: Users, depth: Some(Selected) },
+                Some(DeviceSection::Local | DeviceSection::Added) => {
+                    Navigation { focus: Users, depth: Some(Selected) }
+                }
                 _ => self,
             },
 
@@ -316,6 +319,9 @@ impl Navigation {
 pub struct PaneKeyCtx {
     pub confirmed_user: bool,
     pub selected_section: Option<DeviceSection>,
+    /// Whether the local device is in the shared configuration — drives
+    /// the localhost row's keys (add vs remove from the shared config).
+    pub local_in_config: bool,
 }
 
 /// The key dictionary of a pane state: every key that works in
@@ -338,12 +344,29 @@ pub fn pane_keys(focus: NavFocus, depth: Option<NavDepth>, ctx: PaneKeyCtx) -> &
         (Devices, Some(Selected)) => match ctx.selected_section {
             Some(DeviceSection::Added) => DEVICES_ADDED_KEYS,
             Some(DeviceSection::Detected) => DEVICES_DETECTED_KEYS,
-            _ => DEVICES_LOCAL_KEYS,
+            // The localhost row offers add or remove from the shared
+            // configuration, depending on its membership.
+            Some(DeviceSection::Local) => {
+                if ctx.local_in_config {
+                    DEVICES_LOCAL_ADDED_KEYS
+                } else {
+                    DEVICES_LOCAL_NOT_ADDED_KEYS
+                }
+            }
+            _ => DEVICES_LOCAL_NOT_ADDED_KEYS,
         },
         (Devices, Some(Fullscreen)) => &[],
         (Users, None) => &[],
         (Users, Some(Selected)) => {
-            if ctx.confirmed_user {
+            // On the localhost device no install/remove key: connecting
+            // to the current device is nonsense.
+            if ctx.selected_section == Some(DeviceSection::Local) {
+                if ctx.confirmed_user {
+                    USERS_LOCAL_CONFIRMED_KEYS
+                } else {
+                    USERS_TEMP_KEYS
+                }
+            } else if ctx.confirmed_user {
                 USERS_CONFIRMED_KEYS
             } else {
                 USERS_TEMP_KEYS
@@ -367,13 +390,33 @@ static CENTER_KEYS: &[KeyBinding] = &[
     KeyBinding::new(Char('q'), "q", "quit", Effect::Action(Action::Quit)),
 ];
 
-/// Focused Devices pane with the local device selected: the local
-/// row has no action keys, only navigation and selection.
-static DEVICES_LOCAL_KEYS: &[KeyBinding] = &[
+/// Focused Devices pane, local row selected, local device NOT in the
+/// shared configuration: it can be added back (key 'a' — plain "add", the
+/// data stays recoverable in git history, unlike a device deletion).
+/// The Users sub-panel (Right/Enter) shows the local device's own users.
+static DEVICES_LOCAL_NOT_ADDED_KEYS: &[KeyBinding] = &[
     KeyBinding::internal(Esc, "Esc", "back"),
     KeyBinding::internal(Left, "Left", "back"),
     KeyBinding::internal(Up, "Up", "select"),
     KeyBinding::internal(Down, "Down", "select"),
+    KeyBinding::internal(Enter, "Enter", "users"),
+    KeyBinding::internal(Right, "Right", "users"),
+    KeyBinding::new(Char('a'), "a", "add", Effect::Action(Action::AddLocalToConfig)),
+];
+
+/// Focused Devices pane, local row selected, local device in the shared
+/// configuration: it can be removed from it (key 'r' — plain "remove",
+/// not 'd' "delete": the local files stay recoverable in git history, and
+/// ~/.ssh/config / known_hosts are untouched — the local device has no
+/// such traces).
+static DEVICES_LOCAL_ADDED_KEYS: &[KeyBinding] = &[
+    KeyBinding::internal(Esc, "Esc", "back"),
+    KeyBinding::internal(Left, "Left", "back"),
+    KeyBinding::internal(Up, "Up", "select"),
+    KeyBinding::internal(Down, "Down", "select"),
+    KeyBinding::internal(Enter, "Enter", "users"),
+    KeyBinding::internal(Right, "Right", "users"),
+    KeyBinding::new(Char('r'), "r", "remove", Effect::Action(Action::RemoveLocalFromConfig)),
 ];
 
 /// Focused Devices pane with an added device selected: device
@@ -410,6 +453,18 @@ static USERS_CONFIRMED_KEYS: &[KeyBinding] = &[
     KeyBinding::new(Char('s'), "s", "sync", Effect::Action(Action::Sync)),
     KeyBinding::new(Char('i'), "i", "install key", Effect::Action(Action::InstallKeyToSelected)),
     KeyBinding::new(Char('r'), "r", "remove key", Effect::Action(Action::RemoveKeyFromSelected)),
+    KeyBinding::new(Char('a'), "a", "add temp user", Effect::Action(Action::AddTempUser)),
+];
+
+/// Users pane of the localhost device, confirmed user selected: same as
+/// USERS_CONFIRMED_KEYS but without install/remove key — connecting to
+/// the current device is nonsense.
+static USERS_LOCAL_CONFIRMED_KEYS: &[KeyBinding] = &[
+    KeyBinding::internal(Esc, "Esc", "devices"),
+    KeyBinding::internal(Left, "Left", "devices"),
+    KeyBinding::internal(Up, "Up", "select"),
+    KeyBinding::internal(Down, "Down", "select"),
+    KeyBinding::new(Char('s'), "s", "sync", Effect::Action(Action::Sync)),
     KeyBinding::new(Char('a'), "a", "add temp user", Effect::Action(Action::AddTempUser)),
 ];
 
@@ -450,7 +505,8 @@ pub enum ActivePane {
     /// added devices and the detected devices (divider rows between).
     Devices(Pane),
     /// Users sub-panel of the Devices panel: the users of the selected
-    /// added device. Device+user actions live here, not in the device panel.
+    /// device (local or added). Device+user actions live here, not in the
+    /// device panel.
     Users(Pane),
     /// Logs pane (formerly Activity)
     Logs(Pane),
@@ -492,6 +548,12 @@ pub struct UiDevice {
     /// Which section of the Devices pane the row belongs to (local,
     /// added, detected) — decides the divider rows and the action keys.
     pub section: DeviceSection,
+    /// Whether the device is in the shared configuration (its
+    /// `device.json` is present in the git layer). Only meaningful for
+    /// the local row, where it drives the divider label
+    /// `── localhost (added|not added) ──` and the add/remove keys;
+    /// always true for added rows, false for detected ones.
+    pub in_shared_config: bool,
 }
 
 /// Status of a user on the selected device, shown in the Users panel.
@@ -513,6 +575,14 @@ pub enum UserStatus {
 pub struct UiUser {
     pub name: String,
     pub status: UserStatus,
+    /// Whether the user is in the shared configuration (its file is
+    /// present in the git layer): the Users pane's super-state, shown as
+    /// the `── added ──` / `── not added ──` group dividers.
+    pub added: bool,
+    /// Pinned first row of the Users pane — the current user on the
+    /// localhost device, always shown under its own
+    /// `── current user (added|not added) ──` divider.
+    pub pinned: bool,
 }
 
 impl UiUser {
@@ -623,6 +693,15 @@ pub enum Action {
     CancelTempUser,
     /// Remove the selected temporary user (key 'x').
     RemoveTempUser,
+    /// Add the local device to the shared configuration (key 'a' on the
+    /// localhost row when it is not added): create its device file and
+    /// the current user's file in the git layer and commit them.
+    AddLocalToConfig,
+    /// Remove the local device from the shared configuration (key 'd' on
+    /// the localhost row when it is added): delete its directory from the
+    /// git layer and commit the deletion. No ~/.ssh/config block or
+    /// known_hosts entry is touched — the local device has none.
+    RemoveLocalFromConfig,
 }
 
 // Static pane definitions. The keys of a pane are not listed here: they
@@ -805,17 +884,20 @@ mod navigation_tests {
     }
 
     #[test]
-    fn users_entry_only_from_an_added_device_row() {
+    fn users_entry_from_local_and_added_rows_only() {
         let focused = nav(NavFocus::Devices, Some(NavDepth::Selected));
-        // An added device row selected: Right/Enter open the Users sub-panel.
-        for key in [Enter, Right] {
-            assert_eq!(
-                focused.handle_key(key, Some(DeviceSection::Added)),
-                nav(NavFocus::Users, Some(NavDepth::Selected))
-            );
+        // The local row and an added device row: Right/Enter open the
+        // Users sub-panel.
+        for section in [Some(DeviceSection::Local), Some(DeviceSection::Added)] {
+            for key in [Enter, Right] {
+                assert_eq!(
+                    focused.handle_key(key, section),
+                    nav(NavFocus::Users, Some(NavDepth::Selected))
+                );
+            }
         }
-        // On a detected or local row Right/Enter do nothing.
-        for section in [Some(DeviceSection::Detected), Some(DeviceSection::Local), None] {
+        // On a detected row (no users yet) or with no selection, Right/Enter do nothing.
+        for section in [Some(DeviceSection::Detected), None] {
             assert_eq!(focused.handle_key(Enter, section), focused);
             assert_eq!(focused.handle_key(Right, section), focused);
         }

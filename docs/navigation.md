@@ -52,32 +52,51 @@ The arrow pointing toward a panel walks into it; the opposite arrow (or
 Main screen (overview: Devices pane big, Logs strip at the bottom)
 ├── Devices panel (always big, full width)
 │   └── one list, each section under its divider:
-│       ── localhost ── → local device row → ── added ── → added devices
-│       → ── detected ── → detected devices (Up/Down select, wrapping)
+│       ── localhost (added|not added) ── → local device row (always one line)
+│       → ── added ── → added devices → ── detected ── → detected devices
+│       (Up/Down select, wrapping)
 │       └── Users sub-panel   ← nested INSIDE the Devices panel
-│           └── (user rows; Up/Down select, wrapping)
+│           └── ── current user (added|not added) ── → pinned row (localhost only)
+│               → ── added ── → added users → ── not added ── → not-added users
+│               (Up/Down select, wrapping)
 └── Logs strip (bottom, always visible)
     └── fullscreen view (scrolling) — the only fullscreen left
 ```
 
 The **Devices panel is a single list**, each section under its divider
-row, in the same style: `── localhost ──` with the local device row (the
-one regroup runs on), then `── added ──` with the added (known) devices,
-then `── detected ──` with the detected (pending) ones. The panel sits
+row, in the same style: `── localhost (added) ──` or
+`── localhost (not added) ──` with the local device row (the one regroup
+runs on — always shown as one line, whether or not it is in the shared
+configuration; the divider carries that super-state, and the row offers
+`a`/`r` add/remove for it — plain add/remove, not `d` delete: the local
+data stays recoverable in git history), then
+`── added ──` with the added (known) devices, then `── detected ──` with
+the detected (pending) ones. The panel sits
 **above** the virtual center, so `Up` or `Right` focuses it from the overview. Because
 the Logs pane is only a small strip, the Devices pane is always big — it
 has no fullscreen mode.
 
 The **Users sub-panel is part of the Devices panel**, not a sibling panel.
-It is a sub-context of the selected *added* device, reached with `Right`
-or `Enter` from the focused Devices panel; `Left` or `Esc` returns to the
-device level. There is no lateral panel switch to reach it.
+It is a sub-context of the selected device — the *local* row or an *added*
+row — reached with `Right` or `Enter` from the focused Devices panel;
+`Left` or `Esc` returns to the device level. There is no lateral panel
+switch to reach it.
 
 `Right`/`Enter` enter the Users selection mode only when the selected row
-is an added device (a detected row has no users yet). Whatever the device's user
-list looks like — even a single user, or none — entering the mode from an
-added device always works. Entering the mode is what unlocks the associated
-user actions; it is never skipped because the list is short or empty.
+is the local device or an added device (a detected row has no users yet).
+Whatever the device's user list looks like — even a single user, or none —
+entering the mode from the local or an added row always works. Entering
+the mode is what unlocks the associated user actions; it is never skipped
+because the list is short or empty.
+
+The **Users sub-panel is grouped by super-state**, like the Devices pane:
+on the localhost device the current user is the pinned first row under
+`── current user (added|not added) ──` (always shown, one line), then
+`── added ──` (users in the shared configuration) and `── not added ──`
+(users only in the local tmp/ overlay). The status column is the
+sub-status (confirmed / temporary / SSH key installed). On the localhost
+device no install/remove-key action is offered: connecting to the current
+device is nonsense.
 
 ## Scenarios
 
@@ -89,7 +108,7 @@ the row list is active immediately (`Up`/`Down` select, wrapping):
 | Press | State |
 |-------|-------|
 | `Up` or `Right` | Devices panel **focused**, row list active (first row = the local device selected) |
-| `Right` or `Enter` | **Users sub-panel** of the selected added device (first user selected) — only when an added device row is selected |
+| `Right` or `Enter` | **Users sub-panel** of the selected device (first user selected — the pinned current user on localhost) — only when the local or an added device row is selected |
 | `Left` or `Esc` | Back to the center, overview |
 | `Left`/`Esc` | From the Users sub-panel: back to the Devices panel |
 
@@ -134,7 +153,9 @@ arrows are consumed by the list, so leaving the pane is done with
 
 Character shortcuts act as commands, not navigation, and are listed per
 pane state (see `pane_keys` in `src/ui/types.rs`): `s` sync, `d` delete,
-`w` wipe, `c` setup-cd and `Enter`/`Right` into Users when an **added** row
-is selected in the Devices panel, `a`/`n` when a **detected** row is
-selected, and so on. `q` quit is only offered on the main menu (overview);
+`w` wipe, `c` setup-cd on an **added** row, `a`/`r` add/remove on the
+**localhost** row (plain add/remove — the local data stays recoverable,
+unlike `d` delete), `a`/`n` on a **detected** row, and `Enter`/`Right`
+into Users when the **local or an added** row is selected in the Devices
+panel, and so on. `q` quit is only offered on the main menu (overview);
 `?` help is the single key that works in every pane state.
