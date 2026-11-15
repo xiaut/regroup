@@ -39,14 +39,15 @@ Rules:
 - `.worktrees/` is ignored via the committed `.gitignore`, so the main worktree's `git status` stays clean
 - Do all work for that branch/PR inside its worktree; do not check out branches in the main worktree
 - Push the branch and open the PR on the **first commit** — as a **draft** while the work is not ready — so every branch is backed by an open PR from the start
+- One (worktree, branch, PR) tuple per session: if more work is requested in the same session, reuse the same worktree and branch — and if that PR has already been merged, open a **new PR on the same branch**, never a second worktree/branch
 - Keep the worktree in place while the PR is open so the developer can test
 
 ## 4. When the PR Is Merged
 
-When the PR is merged — or when the developer explicitly asks — clean up, in this order:
+When the PR is merged — or when the developer explicitly asks — and the branch is no longer needed in this session, clean up in this order:
 
 1. Fetch so the local refs reflect the merge: `git fetch --all --prune`
 2. Remove the worktree: `git worktree remove .worktrees/<name>`, then `git worktree prune`
-3. Delete the remote branch if it still exists: `git push origin --delete <branch>`
+3. Delete the remote branch — but only after checking that its actual content has been merged into `main`: `git cherry origin/main <branch>` must show no `+` commits (equivalently, `git diff origin/main <branch>` must be empty). Do not rely on `git branch --merged` alone — a squash merge does not make the branch an ancestor of `main`. If anything on the branch is not merged, keep the branch and report what is missing. Only then: `git push origin --delete <branch>`
 
 Do not check out or update `main` in the main checkout — that is the developer's call.
