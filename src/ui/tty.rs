@@ -369,7 +369,9 @@ impl TtyUi {
                 KeyCode::Down => self.help_scroll = self.help_scroll.saturating_sub(1),
                 KeyCode::PageUp => self.help_scroll = self.help_scroll.saturating_add(10),
                 KeyCode::PageDown => self.help_scroll = self.help_scroll.saturating_sub(10),
-                KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q') => {
+                // Esc is the only key that closes the help panel (the
+                // only "close" binding in HELP_BINDINGS); '?' opens it.
+                KeyCode::Esc => {
                     self.show_help = false;
                     self.help_scroll = 0;
                 }

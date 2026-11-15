@@ -300,7 +300,7 @@ Add device2 (192.168.1.101) to config? [y/N/q/s]: n
 | `k` | Connections management |
 | `i` | Install SSH key |
 | `r` | Remove SSH key |
-| `?` | Toggle help panel |
+| `?` | Show the help panel (Esc closes it) |
 | `Enter` | Go one level deeper in the context hierarchy (always offered, listed first) |
 | `Esc` | Go one level back (always offered, listed first) |
 | `Up/Down/Left/Right` | Walk directionally from the virtual center: overview → Devices (Up/Right) or Logs strip (Down) focused → Users sub-panel (Right) or fullscreen Logs (Down); the opposite key rewinds (see [navigation.md](../navigation.md)) |
@@ -373,7 +373,7 @@ The UI uses color and styling to convey information:
 
 Press `?` to show the help panel, which displays the help text
 (`ops::help::usage_text` — interactive commands only, no CLI subcommands) with
-section headers in bold. Use `Up/Down/PgUp/PgDn` to scroll, `?` or `Esc` to close.
+section headers in bold. Use `Up/Down/PgUp/PgDn` to scroll, `Esc` to close.
 
 ## Logging
 

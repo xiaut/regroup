@@ -322,7 +322,11 @@ mod tests {
         let ctx = Context::Help;
         // 's' is not advertised while the help panel is open, so it does nothing.
         assert_eq!(resolve(ctx, KeyCode::Char('s')), None);
-        assert_eq!(resolve(ctx, KeyCode::Char('q')), Some(KeyResolution::Internal));
+        // Esc is the only key that closes the help panel: '?' and 'q'
+        // are not in HELP_BINDINGS, so they are not handled here ('?'
+        // only opens the panel from a pane, via HELP_KEY).
+        assert_eq!(resolve(ctx, KeyCode::Char('?')), None);
+        assert_eq!(resolve(ctx, KeyCode::Char('q')), None);
         assert_eq!(resolve(ctx, KeyCode::Esc), Some(KeyResolution::Internal));
     }
 }

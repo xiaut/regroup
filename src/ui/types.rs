@@ -43,15 +43,15 @@ impl KeyBinding {
 /// ui::keys appends it to every pane's key list.
 pub const HELP_KEY: KeyBinding = KeyBinding::internal(KeyCode::Char('?'), "?", "help");
 
-/// Keys that work while the help panel is open.
+/// Keys that work while the help panel is open. Esc is the only key
+/// that closes it; `?` opens it from any pane (HELP_KEY) but does not
+/// close it.
 pub static HELP_BINDINGS: &[KeyBinding] = &[
     KeyBinding::internal(KeyCode::Up, "Up", "scroll help"),
     KeyBinding::internal(KeyCode::Down, "Down", "scroll help"),
     KeyBinding::internal(KeyCode::PageUp, "PgUp", "scroll help"),
     KeyBinding::internal(KeyCode::PageDown, "PgDn", "scroll help"),
     KeyBinding::internal(KeyCode::Esc, "Esc", "close"),
-    KeyBinding::internal(KeyCode::Char('?'), "?", "close"),
-    KeyBinding::internal(KeyCode::Char('q'), "q", "close"),
 ];
 
 /// Render a binding list as a hint line body: `[key] desc   [key] desc`.

@@ -194,7 +194,7 @@ Interactive commands (full-screen mode; see docs/navigation.md):
   w               - wipe the whole configuration and quit (Enter confirms, Esc cancels)
   c               - install the 'regroup-cd' shell function (Enter confirms, Esc cancels)
   PgUp/PgDn       - scroll the activity log
-  ?               - show/hide the help panel
+  ?               - show the help panel (Esc closes it)
   q               - quit the program
 
 Config repository structure (~/.regroup-config/git/):
