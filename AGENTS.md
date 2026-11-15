@@ -1,15 +1,29 @@
 # AGENTS.md for `regroup`
 
-## Load Project Context First (mandatory)
+## Fetch Remote Branches First (mandatory)
 
-When you begin ANY work on this repository, your first action must be to run:
+Before starting ANY work on this repository — and in particular before creating a worktree for a branch or a pull request — you must fetch all remote branches so that you always start from up-to-date code:
+
+```bash
+git fetch --all --prune
+```
+
+**This is mandatory.** Do not create branches, worktrees, or PRs from stale local refs. After fetching, base your work on the up-to-date remote-tracking refs (e.g. `origin/<branch>`), for example:
+
+```bash
+git worktree add .worktrees/<name> -b <branch> origin/<branch>
+```
+
+## Load Project Context (mandatory)
+
+When you begin ANY work on this repository, right after fetching, you must run:
 
 ```bash
 tree -I ".git|target" --dirsfirst
 cat Cargo.toml
 ```
 
-**This is mandatory.** Do not read files, do not plan, do not ask questions. Run these commands first.
+**This is mandatory.** Do not read files, do not plan, do not ask questions. Run these commands next, before reading anything else.
 
 ### Why
 
