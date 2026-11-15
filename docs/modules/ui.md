@@ -254,9 +254,14 @@ The TUI interface uses **ratatui** (formerly tui-rs) with **crossterm** for term
   device, not a device, not a sibling panel: `Right`/`Enter` from the
   Devices pane with an added row selected enters the sub-panel (first
   user selected), and `Left`/`Esc` returns to the Devices pane. Device+user actions (install/remove SSH key) live there and only
-  appear for a confirmed user; a temporary user only allows the git sync
-  that brings the device's declared users (the temporary user is stored
-  under `tmp/`, never synced). See [navigation.md](../navigation.md).
+  appear for a confirmed user on a non-local device; a temporary user
+  only offers its own user-specific action (`x` remove) — the git sync
+  that brings the device's declared users is a global action on the main
+  menu (`s`). Adding a user (`a`) is device-specific and lives on the
+  added device row, not here. On the localhost device the pane also ends
+  with an `── external ──` group listing the incoming connections
+  targeting the current user (revoke with `r`). See
+  [navigation.md](../navigation.md).
 - **Logs strip** (bottom of the main area, always visible): tail of the
   general log
 - **Question block** (bottom): Current question and available actions
@@ -288,23 +293,46 @@ Add device2 (192.168.1.101) to config? [y/N/q/s]: n
 
 ## Key Bindings
 
-### Global Keys (Idle)
+In the full-screen ui, keys are **scoped to the selected context** (see
+`pane_keys` in `src/ui/types.rs`): the hint line always shows exactly the
+keys that work in the current pane state, and a key that is not listed is
+not handled. Navigation keys and `?` help are available in every pane
+state; `?` is the single key that works everywhere.
+
+### Main menu (overview)
+
+The main menu offers the **global actions** — everything not specific to
+a device or a user — plus navigation:
 
 | Key | Action |
 |-----|--------|
-| `q` | Quit |
 | `s` | Sync git (pull/push) |
-| `d` | Delete mode (select device to delete) |
 | `w` | Wipe configuration |
 | `c` | Setup regroup-cd shell function |
-| `k` | Connections management |
-| `i` | Install SSH key |
-| `r` | Remove SSH key |
+| `q` | Quit (only offered here) |
+| `Up`/`Right` | Focus the Devices panel |
+| `Down` | Focus the Logs strip |
 | `?` | Show the help panel (Esc closes it) |
-| `Enter` | Go one level deeper in the context hierarchy (always offered, listed first) |
-| `Esc` | Go one level back (always offered, listed first) |
-| `Up/Down/Left/Right` | Walk directionally from the virtual center: overview → Devices (Up/Right) or Logs strip (Down) focused → Users sub-panel (Right) or fullscreen Logs (Down); the opposite key rewinds (see [navigation.md](../navigation.md)) |
-| `PgUp/PgDn` | Scroll Logs pane |
+
+### In Devices Panel (added row selected)
+
+Only device-specific actions (the global ones stay on the main menu):
+
+| Key | Action |
+|-----|--------|
+| `d` | Delete selected device |
+| `a` | Add a user for the device (`a` is free on this row; adding a user is device-specific — no user needs to be selected). The user is temporary until a sync or a successful key install confirms it |
+| `Right` or `Enter` | Open the Users sub-panel of the selected device |
+
+### In Devices Panel (localhost row selected)
+
+| Key | Action |
+|-----|--------|
+| `a` or `r` | Add / remove the local device to/from the shared configuration (depending on its membership) |
+| `Right` or `Enter` | Open the Users sub-panel of the local device |
+
+No add-user key on the localhost row: a temporary user configures an
+outgoing connection, and connecting to the current device is nonsense.
 
 ### In Devices Panel (detected row selected)
 
@@ -313,12 +341,39 @@ Add device2 (192.168.1.101) to config? [y/N/q/s]: n
 | `a` | Add selected device |
 | `n` | Ignore selected device |
 
-### In Devices Panel (added row selected)
+### In Users Panel (a user selected)
+
+Only user-specific actions, in two layers — the user layer and, on top of
+it, the key layer. The same keys are offered on every user row of an added
+device: temporary is not a special kind of user (a user added with `a` is
+temporary until a sync or a successful key install confirms it):
 
 | Key | Action |
 |-----|--------|
-| `d` | Delete selected device |
-| `Right` or `Enter` | Open the Users sub-panel of the selected device |
+| `d` | Set the selected user as the device's default user (device-owned data — the one exception to "on localhost you only edit your own data") |
+| `x` | Remove the selected user (tmp/ entry, or declared user file committed so the removal propagates) |
+| `i` / `r` | Install / remove SSH key to `user@device` (added device; a successful install on a temporary user confirms it; recorded as an outgoing connection file) |
+| `r` | Revoke — **only on an `── external ──` row of the localhost device**: remove the incoming key from your `authorized_keys` and delete the connection file, locally |
+| `Left` or `Esc` | Back to the Devices panel |
+
+On the localhost device the Users pane ends with an **`── external ──`
+group** (always shown, even when empty): one row per incoming connection
+targeting the current user, labelled by the source `user@device`.
+
+### Navigation keys (every pane state)
+
+| Key | Action |
+|-----|--------|
+| `Enter` | Go one level deeper in the context hierarchy (always offered, listed first) |
+| `Esc` | Go one level back (always offered, listed first) |
+| `Up/Down/Left/Right` | Walk directionally from the virtual center: overview → Devices (Up/Right) or Logs strip (Down) focused → Users sub-panel (Right) or fullscreen Logs (Down); the opposite key rewinds (see [navigation.md](../navigation.md)) |
+| `PgUp/PgDn` | Scroll Logs pane |
+
+### Plain mode (idle prompt)
+
+The plain fallback offers the global keys on its prompt line, built from
+the idle question's binding table:
+`[q=quit, s=sync git, d=delete, w=wipe, c=setup-cd, k=connections, h=help, ?=help]`.
 
 ### In Add Device Prompt
 

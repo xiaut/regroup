@@ -313,15 +313,18 @@ impl Navigation {
 
 /// The extra context the key dictionary of a pane state depends on,
 /// beyond `(focus, depth)`: which row is selected in the Devices pane
-/// (drives the action keys of the fullscreen Devices pane) and whether
-/// the selected user in the Users pane is confirmed.
+/// (drives the action keys of the fullscreen Devices pane) and, in the
+/// Users pane, whether the selected user row is an external (incoming
+/// connection) row.
 #[derive(Clone, Copy, Debug)]
 pub struct PaneKeyCtx {
-    pub confirmed_user: bool,
     pub selected_section: Option<DeviceSection>,
     /// Whether the local device is in the shared configuration — drives
     /// the localhost row's keys (add vs remove from the shared config).
     pub local_in_config: bool,
+    /// Whether the selected Users row is an external row (an incoming
+    /// connection of the localhost device) — drives the revoke key.
+    pub user_external: bool,
 }
 
 /// The key dictionary of a pane state: every key that works in
@@ -358,18 +361,17 @@ pub fn pane_keys(focus: NavFocus, depth: Option<NavDepth>, ctx: PaneKeyCtx) -> &
         (Devices, Some(Fullscreen)) => &[],
         (Users, None) => &[],
         (Users, Some(Selected)) => {
-            // On the localhost device no install/remove key: connecting
-            // to the current device is nonsense.
-            if ctx.selected_section == Some(DeviceSection::Local) {
-                if ctx.confirmed_user {
-                    USERS_LOCAL_CONFIRMED_KEYS
-                } else {
-                    USERS_TEMP_KEYS
-                }
-            } else if ctx.confirmed_user {
-                USERS_CONFIRMED_KEYS
+            // An external row (incoming connection of the localhost
+            // device) only offers revoke.
+            if ctx.user_external {
+                USERS_EXTERNAL_KEYS
+            // On the localhost device no install/remove/remove-user key:
+            // connecting to the current device is nonsense, and only the
+            // current user's own data may be edited there.
+            } else if ctx.selected_section == Some(DeviceSection::Local) {
+                USERS_LOCAL_KEYS
             } else {
-                USERS_TEMP_KEYS
+                USERS_KEYS
             }
         }
         (Users, Some(Fullscreen)) => &[],
@@ -381,11 +383,19 @@ pub fn pane_keys(focus: NavFocus, depth: Option<NavDepth>, ctx: PaneKeyCtx) -> &
 
 use KeyCode::*;
 
+/// The main menu (overview): navigation plus the **global actions** —
+/// everything that is not specific to a device or a user (sync, wipe,
+/// setup-cd, connections). A selected device row or user row offers
+/// only its own specific actions instead (see the pane tables below).
 static CENTER_KEYS: &[KeyBinding] = &[
     // The Devices panel is above the center, the Logs panel below.
     KeyBinding::internal(Up, "Up", "devices"),
     KeyBinding::internal(Right, "Right", "devices"),
     KeyBinding::internal(Down, "Down", "logs"),
+    // Global actions, available from the main menu.
+    KeyBinding::new(Char('s'), "s", "sync", Effect::Action(Action::Sync)),
+    KeyBinding::new(Char('w'), "w", "wipe", Effect::Action(Action::WipeMode)),
+    KeyBinding::new(Char('c'), "c", "setup-cd", Effect::Action(Action::SetupCdMode)),
     // Quit is only offered on the main menu (overview).
     KeyBinding::new(Char('q'), "q", "quit", Effect::Action(Action::Quit)),
 ];
@@ -394,6 +404,11 @@ static CENTER_KEYS: &[KeyBinding] = &[
 /// shared configuration: it can be added back (key 'a' — plain "add", the
 /// data stays recoverable in git history, unlike a device deletion).
 /// The Users sub-panel (Right/Enter) shows the local device's own users.
+/// No add-user key here: a temporary user configures an outgoing
+/// connection, and connecting to the current device is nonsense — the
+/// local device's users are the local users (the current one is pinned).
+/// Global actions (sync, wipe, ...) are not repeated here — they live on
+/// the main menu.
 static DEVICES_LOCAL_NOT_ADDED_KEYS: &[KeyBinding] = &[
     KeyBinding::internal(Esc, "Esc", "back"),
     KeyBinding::internal(Left, "Left", "back"),
@@ -419,8 +434,12 @@ static DEVICES_LOCAL_ADDED_KEYS: &[KeyBinding] = &[
     KeyBinding::new(Char('r'), "r", "remove", Effect::Action(Action::RemoveLocalFromConfig)),
 ];
 
-/// Focused Devices pane with an added device selected: device
-/// actions plus entry into the Users sub-panel (Right/Enter).
+/// Focused Devices pane with an added device selected: only
+/// device-specific actions plus entry into the Users sub-panel
+/// (Right/Enter) — the global actions live on the main menu. Key 'a' is
+/// free on this row (it adds the device on a detected row and the local
+/// device on the localhost row), so it is re-used for "add user":
+/// adding a user is device-specific, no user needs to be selected.
 static DEVICES_ADDED_KEYS: &[KeyBinding] = &[
     KeyBinding::internal(Esc, "Esc", "back"),
     KeyBinding::internal(Left, "Left", "back"),
@@ -429,9 +448,7 @@ static DEVICES_ADDED_KEYS: &[KeyBinding] = &[
     KeyBinding::internal(Enter, "Enter", "users"),
     KeyBinding::internal(Right, "Right", "users"),
     KeyBinding::new(Char('d'), "d", "delete", Effect::Action(Action::DeleteSelected)),
-    KeyBinding::new(Char('s'), "s", "sync", Effect::Action(Action::Sync)),
-    KeyBinding::new(Char('w'), "w", "wipe", Effect::Action(Action::WipeMode)),
-    KeyBinding::new(Char('c'), "c", "setup-cd", Effect::Action(Action::SetupCdMode)),
+    KeyBinding::new(Char('a'), "a", "add user", Effect::Action(Action::AddTempUser)),
 ];
 
 /// Focused Devices pane with a detected device selected: only
@@ -445,40 +462,51 @@ static DEVICES_DETECTED_KEYS: &[KeyBinding] = &[
     KeyBinding::new(Char('n'), "n", "ignore", Effect::Action(Action::Ignore)),
 ];
 
-static USERS_CONFIRMED_KEYS: &[KeyBinding] = &[
+/// Focused Users pane of an added device, a user row selected: only
+/// user-specific actions, in two layers — the user layer (`d` set
+/// default, `x` remove user) and, on top, the key layer (`i`/`r`
+/// install/remove key). "Temporary" is not a special kind of user: a
+/// user added with `a` is temporary until confirmed, and a successful
+/// key install confirms it too — so `i`/`r` are offered on every user
+/// row, not only confirmed ones. The global actions (sync, ...) live on
+/// the main menu, and adding a user is device-specific (key 'a' on the
+/// device row), not a user action.
+static USERS_KEYS: &[KeyBinding] = &[
     KeyBinding::internal(Esc, "Esc", "devices"),
     KeyBinding::internal(Left, "Left", "devices"),
     KeyBinding::internal(Up, "Up", "select"),
     KeyBinding::internal(Down, "Down", "select"),
     KeyBinding::new(Char('d'), "d", "set default", Effect::Action(Action::SetDefaultUser)),
-    KeyBinding::new(Char('s'), "s", "sync", Effect::Action(Action::Sync)),
     KeyBinding::new(Char('i'), "i", "install key", Effect::Action(Action::InstallKeyToSelected)),
     KeyBinding::new(Char('r'), "r", "remove key", Effect::Action(Action::RemoveKeyFromSelected)),
-    KeyBinding::new(Char('a'), "a", "add temp user", Effect::Action(Action::AddTempUser)),
+    KeyBinding::new(Char('x'), "x", "remove user", Effect::Action(Action::RemoveUser)),
 ];
 
-/// Users pane of the localhost device, confirmed user selected: same as
-/// USERS_CONFIRMED_KEYS but without install/remove key — connecting to
-/// the current device is nonsense.
-static USERS_LOCAL_CONFIRMED_KEYS: &[KeyBinding] = &[
+/// Users pane of the localhost device, a user row selected: only
+/// `d` set default — no install/remove key (connecting to the current
+/// device is nonsense) and no remove-user (on localhost you only edit
+/// your own data; the default user is the exception, living in the
+/// device-owned device.json).
+static USERS_LOCAL_KEYS: &[KeyBinding] = &[
     KeyBinding::internal(Esc, "Esc", "devices"),
     KeyBinding::internal(Left, "Left", "devices"),
     KeyBinding::internal(Up, "Up", "select"),
     KeyBinding::internal(Down, "Down", "select"),
     KeyBinding::new(Char('d'), "d", "set default", Effect::Action(Action::SetDefaultUser)),
-    KeyBinding::new(Char('s'), "s", "sync", Effect::Action(Action::Sync)),
-    KeyBinding::new(Char('a'), "a", "add temp user", Effect::Action(Action::AddTempUser)),
 ];
 
-static USERS_TEMP_KEYS: &[KeyBinding] = &[
+/// Focused Users pane of the localhost device, external row selected
+/// (an incoming connection targeting the current user, listed under the
+/// `── external ──` divider): the only action is revoke — remove the key
+/// from the current user's authorized_keys and delete the connection
+/// file (a local operation on this device; no SSH, connecting to the
+/// current device is nonsense).
+static USERS_EXTERNAL_KEYS: &[KeyBinding] = &[
     KeyBinding::internal(Esc, "Esc", "devices"),
     KeyBinding::internal(Left, "Left", "devices"),
     KeyBinding::internal(Up, "Up", "select"),
     KeyBinding::internal(Down, "Down", "select"),
-    KeyBinding::new(Char('d'), "d", "set default", Effect::Action(Action::SetDefaultUser)),
-    KeyBinding::new(Char('s'), "s", "sync", Effect::Action(Action::Sync)),
-    KeyBinding::new(Char('a'), "a", "add temp user", Effect::Action(Action::AddTempUser)),
-    KeyBinding::new(Char('x'), "x", "remove temp user", Effect::Action(Action::RemoveTempUser)),
+    KeyBinding::new(Char('r'), "r", "revoke", Effect::Action(Action::RevokeIncomingKey)),
 ];
 
 static LOGS_SELECTED_KEYS: &[KeyBinding] = &[
@@ -571,6 +599,10 @@ pub enum UserStatus {
     /// Confirmed, and the local user has an SSH key installed towards
     /// this user (connection file in the local device's connections/).
     KeyInstalled,
+    /// An incoming connection of the localhost device (an external row
+    /// under the `── external ──` divider): a key another device's user
+    /// installed towards the current user; revocable locally.
+    IncomingKey,
 }
 
 /// One user of the selected device, for the Users panel.
@@ -590,6 +622,11 @@ pub struct UiUser {
     /// `default_user` in the device's `device.json`): pinned as the very
     /// first row of the Users pane, under its own `── default ──` divider.
     pub is_default: bool,
+    /// Set on an external row (localhost Users pane, `── external ──`
+    /// group): the incoming connection targeting the current user.
+    /// `name` is then the source `user@device`. Carries everything the
+    /// revoke action needs (public key, connection id, file name).
+    pub incoming: Option<crate::config::connection::Connection>,
 }
 
 impl UiUser {
@@ -599,6 +636,7 @@ impl UiUser {
             UserStatus::Temporary => "temporary — to confirm",
             UserStatus::Confirmed => "confirmed",
             UserStatus::KeyInstalled => "SSH key installed",
+            UserStatus::IncomingKey => "incoming key",
         }
     }
 }
@@ -621,8 +659,10 @@ pub enum Question {
     /// Install the 'regroup-cd' shell function (key 'c') into `file`
     /// (~/.zshrc or ~/.bashrc), replacing any existing definition.
     SetupCd(QuestionDef, String), // file
-    /// Type the name of a temporary user for `device` (Users panel, key 'a').
-    /// The input is handled like the rename question.
+    /// Type the name of a user to add on `device` (key 'a' on the
+    /// device row). The user is temporary (tmp/ overlay) until a sync
+    /// or a successful key install confirms it. The input is handled
+    /// like the rename question.
     AddTempUser(QuestionDef, String), // device
 }
 
@@ -698,8 +738,18 @@ pub enum Action {
     TempUserName(String),
     /// Cancel typing a temporary user name.
     CancelTempUser,
-    /// Remove the selected temporary user (key 'x').
-    RemoveTempUser,
+    /// Remove the selected user (key 'x' in the Users pane of an added
+    /// device): delete its user file — tmp/ overlay for a temporary
+    /// user, git layer (committed, so the removal propagates) for a
+    /// confirmed one. There is no special "remove temporary user"
+    /// action: temporary is just the not-yet-confirmed state of a user.
+    RemoveUser,
+    /// Revoke the incoming connection of the selected external row
+    /// (key 'r' in the localhost Users pane's `── external ──` group):
+    /// remove the key from the current user's authorized_keys and delete
+    /// the connection file on this device (local operation, committed so
+    /// the revocation propagates on git sync).
+    RevokeIncomingKey,
     /// Set the selected user as the default user of the selected device
     /// (key 'd' in the Users panel), replacing the current default:
     /// exactly one default per device.
@@ -787,7 +837,7 @@ pub static TRUST_KEY_QUESTION: QuestionDef = QuestionDef {
 };
 
 pub static ADD_TEMP_USER_QUESTION: QuestionDef = QuestionDef {
-    title: "Add temporary user",
+    title: "Add user",
     bindings: &[
         KeyBinding::new(KeyCode::Enter, "Enter", "confirm", Effect::SubmitInput),
         KeyBinding::new(KeyCode::Esc, "Esc", "cancel", Effect::Action(Action::CancelTempUser)),

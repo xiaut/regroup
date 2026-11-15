@@ -94,7 +94,7 @@ impl PlainUi {
                 format!("Install 'regroup-cd' in ~/{file}? [{}]:", hints.join("/"))
             }
             Question::AddTempUser(_, device) => {
-                format!("Temporary user on {device} (empty = cancel):")
+                format!("Add user on {device} (empty = cancel):")
             }
         }
     }

@@ -16,6 +16,9 @@ use crate::cli::key_management::{
     get_current_user, get_local_device_name,
 };
 use crate::config::connection::{Connection, save_connection};
+use crate::config::users::ensure_local_user_file;
+use crate::config::USERS_DIR;
+use crate::git::sync::git_add_and_commit_file;
 
 /// Arguments for receive-install-key command
 #[derive(Debug)]
@@ -129,7 +132,25 @@ pub fn handle_receive_install_key() -> Result<(), String> {
         &connection,
         &current_user,
     ).map_err(|e| format!("Failed to save connection: {}", e))?;
-    
+
+    // A successful installation confirms the target user: this device
+    // records its own user in its own directory (storage ownership rule),
+    // so the next git sync propagates the declared user file to peers —
+    // which is what turns a temporary user into a confirmed one there.
+    if ensure_local_user_file(&config_dir, &to_device, &current_user)
+        .map_err(|e| format!("Failed to record the local user file: {}", e))?
+    {
+        let users_dir = config_dir
+            .join("devices")
+            .join(&to_device)
+            .join(USERS_DIR);
+        git_add_and_commit_file(
+            &config_dir,
+            &users_dir,
+            &format!("Add user: {current_user} on {to_device} (confirmed by key install)"),
+        ).map_err(|e| format!("Failed to commit the user file: {}", e))?;
+    }
+
     // Install the public key in authorized_keys
     install_authorized_key(&args.public_key, &args.connection_id)
         .map_err(|e| format!("Failed to install authorized key: {}", e))?;

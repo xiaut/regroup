@@ -255,8 +255,9 @@ pub struct QuestionCtx<'a> {
     pub active_pane: super::types::ActivePane,
     /// Current navigation state (focus + depth), drives the hint line.
     pub navigation: super::types::Navigation,
-    /// Whether the selected user is confirmed (drives Users-pane hints).
-    pub confirmed_user: bool,
+    /// Whether the selected Users row is an external row (an incoming
+    /// connection of the localhost device) — drives the revoke key.
+    pub selected_user_external: bool,
     /// Section of the selected row in the Devices pane (drives the
     /// Devices-pane hints: which action keys are offered).
     pub selected_section: Option<DeviceSection>,
@@ -503,9 +504,12 @@ pub fn render_users_panel(
         Pinned,
         Added,
         NotAdded,
+        External,
     }
     let group_of = |u: &super::types::UiUser| {
-        if u.is_default {
+        if u.incoming.is_some() {
+            Group::External
+        } else if u.is_default {
             Group::Default
         } else if u.pinned {
             Group::Pinned
@@ -528,6 +532,9 @@ pub fn render_users_panel(
                 ),
                 Group::Added => "added".to_string(),
                 Group::NotAdded => "not added".to_string(),
+                // Incoming connections of this device (localhost only),
+                // targeting the current user — see users_view.
+                Group::External => "external".to_string(),
             };
             rows.push(divider_row(&label, 2));
         }
@@ -536,6 +543,7 @@ pub fn render_users_panel(
             UserStatus::Temporary => Style::new().fg(Color::Yellow),
             UserStatus::Confirmed => Style::new().fg(Color::Green),
             UserStatus::KeyInstalled => Style::new().fg(Color::Cyan),
+            UserStatus::IncomingKey => Style::new().fg(Color::Magenta),
         };
         if selected == Some(i) {
             style = Style::new().add_modifier(Modifier::REVERSED);
@@ -706,9 +714,9 @@ pub fn render_question(
                     focus: ctx.navigation.focus,
                     depth: ctx.navigation.depth,
                     keys_ctx: PaneKeyCtx {
-                        confirmed_user: ctx.confirmed_user,
                         selected_section: ctx.selected_section,
                         local_in_config: ctx.local_in_config,
+                        user_external: ctx.selected_user_external,
                     },
                 });
                 (
@@ -745,7 +753,7 @@ pub fn render_question(
                 def.title,
                 Color::Cyan,
                 format!(
-                    "Temporary user on {device} (kept in tmp/) — {}",
+                    "Add user on {device} (kept in tmp/ until a sync or a key install confirms it) — {}",
                     bindings_hint_text(def.bindings)
                 ),
                 Line::from(format!("> {}", ctx.input)),
@@ -833,7 +841,7 @@ mod tests {
                 focus: NavFocus::Center,
                 depth: None,
             },
-            confirmed_user: false,
+            selected_user_external: false,
             selected_section: None,
             local_in_config: false,
             key_flash: None,
@@ -1157,9 +1165,9 @@ mod tests {
         let backend = TestBackend::new(60, 12);
         let mut terminal = Terminal::new(backend).unwrap();
         let users = vec![
-            UiUser { name: "matthias".to_string(), status: UserStatus::KeyInstalled, added: true, pinned: true, is_default: false },
-            UiUser { name: "alice".to_string(), status: UserStatus::Confirmed, added: true, pinned: false, is_default: false },
-            UiUser { name: "bob".to_string(), status: UserStatus::Temporary, added: false, pinned: false, is_default: false },
+            UiUser { name: "matthias".to_string(), status: UserStatus::KeyInstalled, added: true, pinned: true, is_default: false, incoming: None },
+            UiUser { name: "alice".to_string(), status: UserStatus::Confirmed, added: true, pinned: false, is_default: false, incoming: None },
+            UiUser { name: "bob".to_string(), status: UserStatus::Temporary, added: false, pinned: false, is_default: false, incoming: None },
         ];
         terminal
             .draw(|frame| {
@@ -1214,9 +1222,9 @@ mod tests {
         let backend = TestBackend::new(60, 12);
         let mut terminal = Terminal::new(backend).unwrap();
         let users = vec![
-            UiUser { name: "alice".to_string(), status: UserStatus::Confirmed, added: true, pinned: false, is_default: true },
-            UiUser { name: "matthias".to_string(), status: UserStatus::Confirmed, added: true, pinned: true, is_default: false },
-            UiUser { name: "bob".to_string(), status: UserStatus::Temporary, added: false, pinned: false, is_default: false },
+            UiUser { name: "alice".to_string(), status: UserStatus::Confirmed, added: true, pinned: false, is_default: true, incoming: None },
+            UiUser { name: "matthias".to_string(), status: UserStatus::Confirmed, added: true, pinned: true, is_default: false, incoming: None },
+            UiUser { name: "bob".to_string(), status: UserStatus::Temporary, added: false, pinned: false, is_default: false, incoming: None },
         ];
         terminal
             .draw(|frame| {
