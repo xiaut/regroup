@@ -221,7 +221,12 @@ pub fn load_config() -> Conf {
         }
     }
 
-    // Check if current device's config exists, if not create it
+    // Check if current device's config exists, if not create it — but
+    // only on first run, i.e. when the repository has no commit yet (the
+    // auto-created device file is the repository's initial commit). A
+    // deliberate removal of the local device from the shared
+    // configuration leaves commits behind and must not be undone on the
+    // next load.
     let local_hostname = host_name();
     let local_ssh_public_key = get_ssh_server_public_key();
 
@@ -229,7 +234,7 @@ pub fn load_config() -> Conf {
         d.name.as_str() == local_hostname || (local_ssh_public_key.as_ref() == Some(&d.ssh_public_key))
     });
 
-    if !current_device_exists {
+    if !current_device_exists && !crate::git::repo::has_commits(&config_dir) {
         // Auto-create this device's configuration
         match create_device_config(&config_dir) {
             Ok(new_device) => {

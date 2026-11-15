@@ -65,6 +65,12 @@ fn format_name_conflicts(conflicts: &[NameConflict]) -> String {
     }
 }
 
+/// Whether `d` is the local device (the one regroup runs on), identified
+/// by SSH public key — the unique device identifier — or by name.
+fn is_local_device(ctx: &Context, d: &Device) -> bool {
+    &d.ssh_public_key == ctx.local_public_key || d.name.as_str() == ctx.local_name
+}
+
 /// Per-run context shared by every branch of the interactive loop.
 pub struct Context<'a> {
     pub home: &'a str,
@@ -347,18 +353,22 @@ impl InteractiveState {
     fn reload(&mut self, ctx: &Context) {
         let old = std::mem::take(&mut self.key_to_device);
         let conf = load_config();
-        self.known_keys = conf
+        // The local device is never an "added" device: it always has its
+        // own pinned row in the Devices pane (whether or not its
+        // device.json is in the shared configuration — that membership is
+        // what the localhost divider's (added|not added) super-state
+        // shows), so it must not also appear in the added section.
+        let known: Vec<&Device> = conf
             .devices
             .iter()
-            .map(|m| m.ssh_public_key.clone())
+            .filter(|m| !is_local_device(ctx, m))
             .collect();
-        self.key_to_device = conf
-            .devices
+        self.known_keys = known.iter().map(|m| m.ssh_public_key.clone()).collect();
+        self.key_to_device = known
             .iter()
-            .map(|m| (m.ssh_public_key.clone(), m.clone()))
+            .map(|m| (m.ssh_public_key.clone(), (*m).clone()))
             .collect();
-        self.pinned_signing_keys = conf
-            .devices
+        self.pinned_signing_keys = known
             .iter()
             .map(|m| (m.ssh_public_key.clone(), m.signing_public_key.clone()))
             .collect();
@@ -1728,6 +1738,30 @@ mod tests {
         std::fs::write(&dev_file, "{}").unwrap();
         let devices = state.devices_view(&ctx);
         assert!(devices[0].in_shared_config);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn local_device_is_recognized_by_key_or_name() {
+        use crate::config::DeviceName;
+        let local_key = SshPublicKey::from("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeLocal");
+        let other_key = SshPublicKey::from("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeOther");
+        let (dir, home) = test_home("is-local");
+        let ssh_config = dir.join("ssh_config");
+        let ctx = test_ctx(&home, &local_key, &ssh_config);
+        let mk = |name: &str, key: &SshPublicKey| Device {
+            name: DeviceName::new(name.to_string()).unwrap(),
+            ssh_public_key: key.clone(),
+            signing_public_key: SigningPublicKeyB64::from("AAAA"),
+            port: 22,
+            port_explicit: false,
+        };
+        // Same name, different key (hostname match).
+        assert!(is_local_device(&ctx, &mk("testhost", &other_key)));
+        // Same key, different name (SSH key match).
+        assert!(is_local_device(&ctx, &mk("laptop", &local_key)));
+        // Neither.
+        assert!(!is_local_device(&ctx, &mk("laptop", &other_key)));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
