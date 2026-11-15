@@ -21,9 +21,9 @@
 //! message is printed to the CLI and recorded for the Logs pane, and
 //! external-command output is forwarded live to the CLI by
 //! [`run_logged`] while being recorded the same way. Actions that need no
-//! live terminal run as logged actions ([`Ui::logged_action`]): delimited
-//! by the same `TUI -> CLI` / `CLI -> TUI` markers in the stream, but the
-//! TUI stays on screen and nothing is printed to the CLI.
+//! live terminal run in place, unwrapped: their log lines land in the
+//! Logs pane like any other, with no transition markers — the TUI never
+//! left, so there is no transition to mark.
 
 pub mod interface;
 pub mod keys;

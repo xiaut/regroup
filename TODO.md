@@ -58,13 +58,12 @@ lines.
 
 ## 3. CLI -> TUI / TUI -> CLI markers at app start and stop (quit, wipe)
 
-Today the transition markers exist only inside `with_clean_terminal` /
-`logged_action`, so the CLI-visible log stream has no record of when the
-TUI took the terminal at **start**, nor when it handed it back on
-**quit**:
+Today the transition markers exist only inside `with_clean_terminal`, so
+the CLI-visible log stream has no record of when the TUI took the
+terminal at **start**, nor when it handed it back on **quit**:
 `Action::Quit` (`src/interactive/state.rs`, `handle_action`) just returns
-`true` and the process restores the terminal silently. Wipe goes through
-a `logged_action("wipe")` (so it is marked), but quit is not.
+`true` and the process restores the terminal silently. Wipe runs in place
+without a pass (so it is not marked), and quit is not marked either.
 
 To do:
 
@@ -72,8 +71,8 @@ To do:
   / at the top of `interactive::run`, after `ratatui::init()`), so the
   stream shows where the TUI session begins.
 - Log `TUI -> CLI (quit)` on the quit path (before `run` returns /
-  before the terminal is restored), and make sure wipe ends with
-  `TUI -> CLI (wipe)` as the last marker before exit.
+  before the terminal is restored) — wipe quits too, so its exit is
+  marked the same way, as the last marker before exit.
 - Question: in plain (CLI) mode there is no screen switch — should the
   markers still be logged for stream symmetry, or skipped?
 

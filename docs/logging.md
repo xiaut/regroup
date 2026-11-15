@@ -64,24 +64,19 @@ branch.
 ## Rule 3 — One log stream; the CLI shows only the CLI passes
 
 There is a **single log stream**. The **Logs pane of the full-screen TUI
-always shows it in full**. Every action is delimited in the stream by two
-markers: `TUI -> CLI (<action>)` when the action starts and
-`CLI -> TUI (<action>)` when it ends. Two kinds of action delimitation
-exist:
-
-- A **temporary CLI pass** (`Ui::with_clean_terminal`) additionally
-  switches the screen: it is the only time the stream is also printed to
-  the CLI — so **the CLI shows exactly the lines emitted during passes**,
-  and **everything shown in the CLI during a pass appears in the Logs
-  pane** when the TUI resumes. Reserve it for actions that run a
-  subprocess needing the live terminal — git sync, signing-key trust
-  (pulls from the device), SSH key install/remove — because git pull/push
-  and ssh may prompt for a password, which only works with the screen
-  switched away.
-- A **logged action** (`Ui::logged_action`: device add/remove, wipe) only
-  writes the two markers: the TUI stays on screen, nothing is printed to
-  the CLI, there is no "press Enter to return" pause — these actions only
-  log through the stream and run no live-output subprocess.
+always shows it in full**. A **temporary CLI pass** (`Ui::with_clean_terminal`)
+is the only time the stream is also printed to the CLI — so **the CLI shows
+exactly the lines emitted during passes**, and **everything shown in the CLI
+during a pass appears in the Logs pane** when the TUI resumes. Each pass is
+delimited in the stream by two markers: `TUI -> CLI (<action>)` when the pass
+starts and `CLI -> TUI (<action>)` when the TUI resumes. Reserve the pass
+for actions that run a subprocess needing the live terminal — git sync,
+signing-key trust (pulls from the device), SSH key install/remove — because
+git pull/push and ssh may prompt for a password, which only works with the
+screen switched away. All other actions (device add/remove, wipe, setup-cd)
+run in place, unwrapped: their log lines land in the Logs pane like any
+other, with no markers — the TUI never left, so there is no transition to
+mark.
 
 Mechanics:
 
@@ -94,8 +89,8 @@ Mechanics:
   `ui::run_logged` (git, ssh, ...): in direct output mode their stdin is
   inherited and their stdout/stderr are forwarded live to the CLI —
   interactive prompts work, the output appears in the CLI — and recorded
-  into the UI channel; outside a pass (TUI on screen, or a logged
-  action) their output is captured and logged line by line.
+  into the UI channel; outside a pass their output is captured and logged
+  line by line.
 
 Consequences for new code:
 

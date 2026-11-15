@@ -693,9 +693,9 @@ impl InteractiveState {
                     });
                 }
             }
-            Action::Add => self.accept_selected(ctx, tui),
+            Action::Add => self.accept_selected(ctx),
             Action::Ignore => self.ignore_selected(),
-            Action::AddCurrent => self.accept_front(ctx, tui),
+            Action::AddCurrent => self.accept_front(ctx),
             Action::SkipCurrent => {
                 if let Some(device) = self.pending_devices.pop_front() {
                     self.pending_keys.remove(&device.ssh_public_key);
@@ -744,7 +744,7 @@ impl InteractiveState {
                     );
                 }
             }
-            Action::Rename(name) => self.rename(ctx, tui, name),
+            Action::Rename(name) => self.rename(ctx, name),
             Action::SkipRename => {
                 if let Some((device, _)) = self.rename_state.take() {
                     ui::log(&format!("  Skipped {}.", device.name));
@@ -798,7 +798,7 @@ impl InteractiveState {
             Action::RemoveTempUser => {
                 self.remove_temp_user(ctx);
             }
-            Action::DeleteConfirm => self.delete_selected(ctx, tui),
+            Action::DeleteConfirm => self.delete_selected(ctx),
             Action::DeleteCancel => self.delete_selection = None,
             Action::WipeMode => {
                 if ctx.dry_run {
@@ -811,9 +811,7 @@ impl InteractiveState {
             Action::WipeConfirm => {
                 self.wipe_pending = false;
                 let devices: Vec<Device> = self.key_to_device.values().cloned().collect();
-                tui.logged_action("wipe", || {
-                    wipe_config(ctx.home, ctx.ssh_config, &devices);
-                });
+                wipe_config(ctx.home, ctx.ssh_config, &devices);
                 // wipe itself leaves known_hosts alone (see its doc
                 // comment); the last known IP of each device is recorded
                 // only in memory, so clean those entries here, before
@@ -853,7 +851,7 @@ impl InteractiveState {
             Action::Help => usage(),
             Action::InstallKeyToSelected => self.install_key_to_selected(ctx, tui),
             Action::RemoveKeyFromSelected => self.remove_key_from_selected(ctx, tui),
-            Action::DeleteSelected => self.delete_selected_device(ctx, tui),
+            Action::DeleteSelected => self.delete_selected_device(ctx),
             Action::ConnectionsMode => {
                 // Connections management is notified only: the connections
                 // browser (crate::tui::connections) is not wired into the
@@ -950,7 +948,7 @@ impl InteractiveState {
     /// the removal propagates on git sync), its ~/.ssh/config block, its
     /// known_hosts entries (last known IP) and its git remote, then drop
     /// it from the in-memory maps.
-    fn delete_selected(&mut self, ctx: &Context, tui: &mut ui::Ui) {
+    fn delete_selected(&mut self, ctx: &Context) {
         let Some(name) = self.delete_selection.take() else {
             return;
         };
@@ -964,9 +962,7 @@ impl InteractiveState {
         };
         let key = device.ssh_public_key.clone();
         let last_ip = self.known_ip.get(&key).cloned();
-        if tui.logged_action("remove device", || {
-            remove_device(ctx.home, ctx.ssh_config, &device, last_ip.as_deref())
-        }) {
+        if remove_device(ctx.home, ctx.ssh_config, &device, last_ip.as_deref()) {
             ui::log(&format!(
                 "  - Removed {} (device file, ~/.ssh/config block, git remote)",
                 device.name
@@ -986,7 +982,7 @@ impl InteractiveState {
     /// Add the detected device selected in the Devices panel (falls back
     /// to the front of the pending queue). A name collision redirects to
     /// the rename question instead.
-    fn accept_selected(&mut self, ctx: &Context, tui: &mut ui::Ui) {
+    fn accept_selected(&mut self, ctx: &Context) {
         let Some(key) = (match &self.device_selected {
             Some(DeviceRow::Detected(k)) => Some(k.clone()),
             _ => self.pending_devices.front().map(|d| d.ssh_public_key.clone()),
@@ -1003,22 +999,22 @@ impl InteractiveState {
         let device = self.pending_devices.remove(pos).unwrap();
         self.pending_keys.remove(&device.ssh_public_key);
         self.after_selection_change();
-        self.accept_device(ctx, tui, device);
+        self.accept_device(ctx, device);
     }
 
     /// Add the front of the pending queue (plain mode). A name collision
     /// redirects to the rename question instead.
-    fn accept_front(&mut self, ctx: &Context, tui: &mut ui::Ui) {
+    fn accept_front(&mut self, ctx: &Context) {
         let Some(device) = self.pending_devices.pop_front() else {
             return;
         };
         self.pending_keys.remove(&device.ssh_public_key);
         self.after_selection_change();
-        self.accept_device(ctx, tui, device);
+        self.accept_device(ctx, device);
     }
 
     /// Accept `device`: a name collision redirects to the rename question.
-    fn accept_device(&mut self, ctx: &Context, tui: &mut ui::Ui, device: BeaconDevice) {
+    fn accept_device(&mut self, ctx: &Context, device: BeaconDevice) {
         // If the name is already used by another device,
         // ask the user to pick a new one.
         if device_name_taken(&device.name, ctx.home, ctx.ssh_config) {
@@ -1033,7 +1029,7 @@ impl InteractiveState {
             return;
         }
         let name = device.name.clone();
-        self.add_device(ctx, tui, device, name);
+        self.add_device(ctx, device, name);
     }
 
     /// Ignore the detected device selected in the Devices panel (falls
@@ -1066,7 +1062,7 @@ impl InteractiveState {
 
     /// The user picked a new name for the pending rename. A name that is
     /// taken as well re-asks with a fresh suggestion.
-    fn rename(&mut self, ctx: &Context, tui: &mut ui::Ui, name: String) {
+    fn rename(&mut self, ctx: &Context, name: String) {
         let Some((device, _)) = self.rename_state.take() else {
             return;
         };
@@ -1081,21 +1077,19 @@ impl InteractiveState {
             self.rename_state = Some((device, suggested));
             return;
         }
-        self.add_device(ctx, tui, device, name);
+        self.add_device(ctx, device, name);
     }
 
     /// Add `device` under `name`: write to disk and update the in-memory
     /// maps so future beacons for it are treated as a known device.
-    fn add_device(&mut self, ctx: &Context, tui: &mut ui::Ui, beacon_device: BeaconDevice, name: String) {
-        if let Some(device) = tui.logged_action("add device", || {
-            add_device_to_config(
-                ctx.home,
-                ctx.ssh_config,
-                &beacon_device,
-                &name,
-                &mut self.new_count,
-            )
-        }) {
+    fn add_device(&mut self, ctx: &Context, beacon_device: BeaconDevice, name: String) {
+        if let Some(device) = add_device_to_config(
+            ctx.home,
+            ctx.ssh_config,
+            &beacon_device,
+            &name,
+            &mut self.new_count,
+        ) {
             // Pin the signing key the device used when accepted
             self.pinned_signing_keys.insert(
                 beacon_device.ssh_public_key.clone(),
@@ -1418,7 +1412,7 @@ impl InteractiveState {
     }
 
     /// Delete the currently selected added device in the Devices pane
-    fn delete_selected_device(&mut self, ctx: &Context, tui: &mut ui::Ui) {
+    fn delete_selected_device(&mut self, ctx: &Context) {
         let Some(name) = self.selected_added_device() else {
             ui::log("No added device selected in the Devices pane");
             return;
@@ -1432,9 +1426,7 @@ impl InteractiveState {
         let key = device.ssh_public_key.clone();
         let last_ip = self.known_ip.get(&key).cloned();
         
-        if tui.logged_action("remove device", || {
-            remove_device(ctx.home, ctx.ssh_config, &device, last_ip.as_deref())
-        }) {
+        if remove_device(ctx.home, ctx.ssh_config, &device, last_ip.as_deref()) {
             ui::log(&format!("  - Removed {} (device file, ~/.ssh/config block, git remote)", device.name));
         } else {
             ui::log(&format!("  - Could not fully remove {} — see warnings", device.name));
