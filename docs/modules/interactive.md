@@ -177,7 +177,7 @@ renders a divider row between sections.
 | Action | Behavior |
 |--------|----------|
 | `Quit` | Return true to exit loop |
-| `Sync` | Run `ops::sync::sync_git()` and reload state |
+| `Sync` | Run `ops::sync::sync_git()` with the scope derived from the current pane and selections (main menu: `All`; Devices pane, added row: `Device`; Users pane: `User`), then reload state |
 | `Add` | Accept the detected device selected in the Devices panel |
 | `Ignore` | Reject the detected device selected in the Devices panel |
 | `DevicesSelectPrev/Next` | Move the selection in the Devices panel (local → added → detected rows) |
@@ -283,11 +283,22 @@ renders a divider row between sections.
 
 ## Git Sync
 
-`ops::sync::sync_git()`:
-- Pulls from all configured remotes
-- Pushes to all configured remotes
-- Logs the result of each pull/push (see [Logging policy](../logging.md))
-- Reloads state after pull to include new devices
+`ops::sync::sync_git(home, temp_users, scope)` — the scope comes from
+`InteractiveState::sync_scope()`:
+
+- Main menu (and plain mode): `SyncScope::All` — every device, every user
+- Devices pane, added row selected: `SyncScope::Device(name)` — every user
+  of that device
+- Users pane of an added device: `SyncScope::User { device, user }` —
+  every device and user, except the selected device, synced as the
+  selected user only. Not offered on the local device's Users pane: the
+  local device has no remote, so sync is unavailable on the current user
+
+Each in-scope `user@device` pair is pulled from and pushed to through its
+own git URL, so each may prompt for its own password. The named remotes
+(one per device, primary user) are still configured for housekeeping. The
+result of each pull/push is logged (see [Logging policy](../logging.md)),
+and the state is reloaded after the pull to include new devices.
 
 ## Dry Run Mode
 

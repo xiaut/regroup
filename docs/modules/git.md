@@ -88,35 +88,33 @@ pub fn sync_remotes(home: &str, devices: &[Device]) -> Result<(), GitError>
 
 The `sync.rs` module provides synchronization functions:
 
-### `pull_all()`
+### `git_pull_remote()` / `git_push_remote()`
 
-Pulls from all configured remotes:
-
-```rust
-pub fn pull_all(home: &str) -> Result<usize, GitError>
-```
-
-Returns the number of successful pulls.
-
-### `push_all()`
-
-Pushes to all configured remotes:
+Pull from / push to one remote. The target may be a remote name **or a
+URL** — git accepts a URL wherever a remote name is expected — which is how
+per-user sync targets (no named remote) are reached:
 
 ```rust
-pub fn push_all(home: &str) -> Result<usize, GitError>
+pub fn git_pull_remote(repo_path: &Path, remote_name: &str) -> io::Result<()>
+pub fn git_push_remote(repo_path: &Path, remote_name: &str) -> io::Result<()>
 ```
 
-Returns the number of successful pushes.
+### `sync_with_targets()`
 
-### `sync_git()`
-
-Performs a full sync (pull then push):
+Performs a scoped sync (pull from all targets, then push to all targets):
 
 ```rust
-pub fn sync_git(home: &str, temp_users: &HashMap<String, String>)
+pub struct SyncTarget { pub label: String, pub target: String }
+pub fn sync_with_targets(repo_path: &Path, targets: &[SyncTarget]) -> Vec<String>
 ```
 
-This is the main function called when the user presses 's' in interactive mode.
+Each target is one `user@device` pair: `target` is the git URL
+(`user@device:~/.regroup-config/git`, see `remote::remote_url`), `label` is
+how it appears in the logs. This is what `ops::sync::sync_git()` calls when
+the user presses 's' in interactive mode, with the targets derived from the
+sync scope: every device × every user on the main menu, one device × every
+user on a selected device row, and every device × every user except the
+selected device pinned to the selected user in the Users pane.
 
 ### `commit_helper()`
 
@@ -165,23 +163,24 @@ Git-related errors:
 ## Usage Example
 
 ```rust
-use crate::git::{sync_git, list_remotes};
+use crate::git::{sync_git, SyncScope};
+use std::collections::HashMap;
 
-// Sync with all peers
-sync_git("/home/user", &temp_users);
+// Sync with all peers, every user
+sync_git("/home/user", &HashMap::new(), &SyncScope::All);
 
-// List configured remotes
-let remotes = list_remotes().unwrap();
-println!("Remotes: {:?}", remotes);
+// Sync one device, every user of it
+sync_git("/home/user", &HashMap::new(), &SyncScope::Device("laptop".into()));
 ```
 
 ## Logging
 
 There is no verbose mode: sync operations always log their progress (see the
 [Logging policy](../logging.md)):
-- "Syncing git..."
+- "Syncing git (<scope>)..." — the scope (every device/every user, one
+  device, or a pinned user@device) is stated up front
 - A line before each pull/push explaining that a password prompt may appear
-- "  - pulled from <remote>" / "  - pushed to <remote>" for every remote
+- "  - pulled from <user@device>" / "  - pushed to <user@device>" for every target
 - "Git sync complete."
 
 ## Testing

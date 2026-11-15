@@ -19,7 +19,7 @@ use std::time::Duration;
 use crate::cli::{NameConflict,
     add_device_to_config, add_local_device_to_config, device_name_taken, die, find_name_conflicts,
     remove_device, remove_local_device_from_config, remove_local_traces, setup_cd,
-    shell_rc_file, sync_git, trust_new_signing_key, unique_device_name, usage,
+    shell_rc_file, sync_git, SyncScope, trust_new_signing_key, unique_device_name, usage,
     wipe as wipe_config,
 };
 use crate::config::{device_file_path, root_config_dir, GIT_DIR, Device, load_config};
@@ -727,8 +727,9 @@ impl InteractiveState {
                 if ctx.dry_run {
                     ui::log("  - (dry run - git sync skipped)");
                 } else {
+                    let scope = self.sync_scope(ctx);
                     tui.with_clean_terminal("git sync", || {
-                        sync_git(ctx.home, &self.temp_users);
+                        sync_git(ctx.home, &self.temp_users, &scope);
                         // A pull may have brought new device configs and
                         // the device-declared users: reload
                         self.reload(ctx);
@@ -1194,6 +1195,32 @@ impl InteractiveState {
             Some(DeviceRow::Local) => Some(ctx.local_name.to_string()),
             Some(DeviceRow::Added(name)) => Some(name.clone()),
             _ => None,
+        }
+    }
+
+    /// The scope of a sync triggered now, from where the user is in the TUI:
+    /// in the Users pane the selected user pins the selected device (sync is
+    /// not offered on the local device's Users pane — the local device has
+    /// no remote, so there is no user@device to sync as; the `All` fallback
+    /// below only covers the unreachable case); in the Devices pane an
+    /// added row scopes the sync to that device; anywhere else (main menu,
+    /// plain mode) every device and every user is synced.
+    fn sync_scope(&self, ctx: &Context) -> SyncScope {
+        match self.active_pane {
+            ActivePane::Users(_) => {
+                match (self.selected_device(ctx), self.users_selected.as_ref()) {
+                    (Some(device), Some(user)) if device != ctx.local_name => SyncScope::User {
+                        device,
+                        user: user.clone(),
+                    },
+                    _ => SyncScope::All,
+                }
+            }
+            ActivePane::Devices(_) => match &self.device_selected {
+                Some(DeviceRow::Added(name)) => SyncScope::Device(name.clone()),
+                _ => SyncScope::All,
+            },
+            _ => SyncScope::All,
         }
     }
 
@@ -2265,6 +2292,48 @@ mod tests {
         let loaded = crate::config::device::load_device_file(&device_file_path(&git, "laptop")).unwrap();
         assert_eq!(loaded.default_user, None, "nothing must be written for an added device");
         assert!(state.users_view(&ctx).iter().all(|u| !u.is_default));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn sync_scope_follows_the_pane_and_selection() {
+        let (dir, home) = test_home("sync-scope");
+        let key = SshPublicKey::from("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFake");
+        let ssh_config = dir.join("ssh_config");
+        let ctx = test_ctx(&home, &key, &ssh_config);
+        let mut state = test_state("laptop", "alice");
+
+        // Main menu (and plain mode): unscoped — every device, every user.
+        state.active_pane = ActivePane::main_menu();
+        assert_eq!(state.sync_scope(&ctx), SyncScope::All);
+
+        // Devices pane with an added row selected: that device only.
+        state.active_pane = ActivePane::devices();
+        state.device_selected = Some(DeviceRow::Added("laptop".to_string()));
+        assert_eq!(state.sync_scope(&ctx), SyncScope::Device("laptop".to_string()));
+
+        // Devices pane with the local row selected: unscoped (no self-remote).
+        state.device_selected = Some(DeviceRow::Local);
+        assert_eq!(state.sync_scope(&ctx), SyncScope::All);
+
+        // Users pane on an added device: the selected user pins that device.
+        state.active_pane = ActivePane::users();
+        state.device_selected = Some(DeviceRow::Added("laptop".to_string()));
+        state.users_selected = Some("alice".to_string());
+        assert_eq!(
+            state.sync_scope(&ctx),
+            SyncScope::User {
+                device: "laptop".to_string(),
+                user: "alice".to_string()
+            }
+        );
+
+        // Users pane on the local device: the 's' key is not offered there
+        // (no remote on the local device), but if a sync were triggered the
+        // scope would fall back to unscoped.
+        state.device_selected = Some(DeviceRow::Local);
+        assert_eq!(state.sync_scope(&ctx), SyncScope::All);
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

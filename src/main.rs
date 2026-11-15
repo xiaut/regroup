@@ -10,7 +10,10 @@
 // source of truth. Devices identify themselves via their public key (SSH fingerprint).
 //
 // Continuous interactive mode: listens for UDP beacons in background, prompts user
-// for each new device. User can press 's' to sync with git, 'q' to quit.
+// for each new device. User can press 's' to sync with git (scoped: main menu =
+// every device × every user, selected device = every user of it, selected user of
+// an added device = every device but that user on the selected device; not offered
+// on the local device), 'q' to quit.
 // Each device only writes inside its own directory (connection and user
 // files); device.json holds the latest known state of the device.
 //
@@ -28,7 +31,10 @@
 //
 // Interactive commands:
 //   y/N             - add or skip current device
-//   s               - sync git (pull from remotes, push to remotes)
+//   s               - sync git, scoped by where it is pressed (main menu: every
+//                     device × every user; selected device: every user of it;
+//                     selected user: every device, but that user on the
+//                     selected device)
 //   d               - delete a known device (panel selection, Enter confirms)
 //   w               - wipe the whole configuration and quit (Enter confirms)
 //   i               - install SSH key to a device (first known device)

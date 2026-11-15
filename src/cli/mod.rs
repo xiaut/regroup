@@ -136,7 +136,7 @@ pub fn run_selftest() -> ! {
 /// The full help text, shared by `regroup -h` and the interactive help
 /// panel (key '?' in the full-screen ui, 'h' in plain mode).
 pub fn usage_text() -> &'static str {
-"Up / Right / Down - from the overview, focus a pane: Devices (Up/Right, one list:\n                    localhost, added, detected rows) or Logs (Down)\n  Up/Down         - in the focused Devices/Users pane: select a row\n  Right/Enter     - in the Devices pane with the local or an added device\n                    selected, open its Users panel (device+user actions\n                    need a selected user); not offered when the device\n                    has no users — the Users panel is not reachable then\n  Left / Esc      - back (Users -> Devices -> overview)\n  Down/Enter      - in the focused Logs pane: fullscreen logs (Esc leaves)\n  a / n           - (detected row selected) add / ignore the device\n                    (ignored beacons are skipped for this run)\n  a / r           - (localhost row) add / remove the local device to/from\n                    the shared configuration (recoverable, unlike delete)\n  d               - (added row selected) delete the selected device\n  a               - (added row selected) add a user for the device (device-\n                    specific: no user needs to be selected). The user is\n                    temporary (tmp/) until confirmed — by a git sync, or by\n                    a successful key install\n  d               - (Users) set the selected user as the device's default user\n  i / r           - (Users, added device) install / remove an SSH key to\n                    user@device — works on a temporary user too, and a\n                    successful install confirms it (the outgoing connection\n                    is recorded as a connection file in your connections/)\n  r               - (localhost Users, 'external' row) revoke an incoming key:\n                    remove it from your authorized_keys and delete the\n                    connection file, locally (the '── external ──' group lists\n                    the incoming connections targeting the current user)\n  x               - (Users, added device) remove the selected user (tmp/ entry,\n                    or declared user file — committed so it propagates)\n  s               - (main menu) sync git (pull from remotes, push to remotes)\n  w               - (main menu) wipe the whole configuration and quit (y confirms, n cancels)\n  c               - (main menu) install the 'regroup-cd' shell function (y confirms, n cancels)\n  Enter/y         - confirm (delete, wipe, rename); in plain mode, add the device\n                    at the front of the queue\n  n               - cancel a confirmation\n  PgUp/PgDn       - scroll the activity log\n  ?               - show this help panel (Esc closes it)\n  q               - quit (from the main menu)\n\nConfiguration layout (~/.regroup-config/):\n  settings.json                     (local only: udp_port, wait_secs — never synced)\n  git/                              (source of truth, synced with peers)\n    devices/\n      <hostname>/                   (one directory per device)\n        device.json                 (latest known state: name, ssh_public_key, port)\n        users/<user>.json           (known users of the device, written by the device itself)\n        connections/<conn>.json     (connections of the device, owner-scoped)\n  tmp/                              (temporary overlay — never committed or synced)\n\nExit codes:\n  0  normal exit\n  1  selftest failure\n  2  configuration or environment error"}
+"Up / Right / Down - from the overview, focus a pane: Devices (Up/Right, one list:\n                    localhost, added, detected rows) or Logs (Down)\n  Up/Down         - in the focused Devices/Users pane: select a row\n  Right/Enter     - in the Devices pane with the local or an added device\n                    selected, open its Users panel (device+user actions\n                    need a selected user); not offered when the device\n                    has no users — the Users panel is not reachable then\n  Left / Esc      - back (Users -> Devices -> overview)\n  Down/Enter      - in the focused Logs pane: fullscreen logs (Esc leaves)\n  a / n           - (detected row selected) add / ignore the device\n                    (ignored beacons are skipped for this run)\n  a / r           - (localhost row) add / remove the local device to/from\n                    the shared configuration (recoverable, unlike delete)\n  d               - (added row selected) delete the selected device\n  a               - (added row selected) add a user for the device (device-\n                    specific: no user needs to be selected). The user is\n                    temporary (tmp/) until confirmed — by a git sync, or by\n                    a successful key install\n  d               - (Users) set the selected user as the device's default user\n  i / r           - (Users, added device) install / remove an SSH key to\n                    user@device — works on a temporary user too, and a\n                    successful install confirms it (the outgoing connection\n                    is recorded as a connection file in your connections/)\n  r               - (localhost Users, 'external' row) revoke an incoming key:\n                    remove it from your authorized_keys and delete the\n                    connection file, locally (the '── external ──' group lists\n                    the incoming connections targeting the current user)\n  x               - (Users, added device) remove the selected user (tmp/ entry,\n                    or declared user file — committed so it propagates)\n  s               - sync git (pull then push), scoped where you press it:\n                    main menu: every device, every user; on a selected\n                    device row: every user of that device; on a selected\n                    user of an added device: every device, but that user\n                    on the selected device (a password may be asked for\n                    each user@device) — not offered on the local device\n  w               - (main menu) wipe the whole configuration and quit (y confirms, n cancels)\n  c               - (main menu) install the 'regroup-cd' shell function (y confirms, n cancels)\n  Enter/y         - confirm (delete, wipe, rename); in plain mode, add the device\n                    at the front of the queue\n  n               - cancel a confirmation\n  PgUp/PgDn       - scroll the activity log\n  ?               - show this help panel (Esc closes it)\n  q               - quit (from the main menu)\n\nConfiguration layout (~/.regroup-config/):\n  settings.json                     (local only: udp_port, wait_secs — never synced)\n  git/                              (source of truth, synced with peers)\n    devices/\n      <hostname>/                   (one directory per device)\n        device.json                 (latest known state: name, ssh_public_key, port)\n        users/<user>.json           (known users of the device, written by the device itself)\n        connections/<conn>.json     (connections of the device, owner-scoped)\n  tmp/                              (temporary overlay — never committed or synced)\n\nExit codes:\n  0  normal exit\n  1  selftest failure\n  2  configuration or environment error"}
 
 /// Print usage information
 pub fn usage() {
@@ -561,10 +561,41 @@ pub fn trust_new_signing_key(home: &str, device: &BeaconDevice) {
 // Git operations
 // ============================================================
 
-/// Sync the git configuration repository: configure remotes for all known
-/// devices (except self), then pull from all remotes and push to all remotes.
-/// The per-remote pull/push results are always logged.
-pub fn sync_git(home: &str, temp_users: &HashMap<String, String>) {
+/// The scope of a git sync, set by where in the TUI the sync action was
+/// triggered: the main menu syncs everything, a selected device row only
+/// that device, a selected user pins that user on the selected device.
+/// Syncing per user@device matters because each one may prompt for its own
+/// password.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SyncScope {
+    /// Every known device, every known user of each device.
+    All,
+    /// One device, every known user of it.
+    Device(String),
+    /// Every known device and every user, except `device`, synced as `user`
+    /// only.
+    User { device: String, user: String },
+}
+
+impl SyncScope {
+    /// Human-readable scope, shown in the sync log line.
+    pub fn describe(&self) -> String {
+        match self {
+            SyncScope::All => "every device, every user".to_string(),
+            SyncScope::Device(name) => format!("device {name}, every user of it"),
+            SyncScope::User { device, user } => {
+                format!("every device and user, except {device} as {user} only")
+            }
+        }
+    }
+}
+
+/// Sync the git configuration repository, scoped (see [`SyncScope`]):
+/// configure remotes for all known devices (except self), then pull from
+/// and push to each in-scope user@device — every user of every device in
+/// scope, each reached through its own URL so it can prompt for its own
+/// password. The per-target pull/push results are always logged.
+pub fn sync_git(home: &str, temp_users: &HashMap<String, String>, scope: &SyncScope) {
     // The root holds the git repository in git/ and the tmp/ overlay
     let root = root_config_dir(home);
     // The git repository lives in ~/.regroup-config/git (not the root directory)
@@ -575,7 +606,7 @@ pub fn sync_git(home: &str, temp_users: &HashMap<String, String>) {
         return;
     }
 
-    crate::ui::log("Syncing git...");
+    crate::ui::log(&format!("Syncing git ({})...", scope.describe()));
     crate::ui::log(
         "Note: If any remote repository requires authentication, you may be prompted for credentials."
     );
@@ -593,9 +624,26 @@ pub fn sync_git(home: &str, temp_users: &HashMap<String, String>) {
         crate::ui::log(&format!("  - sync: remotes: {}", remotes.join(", ")));
     }
 
-    // Sync with remotes (pull then push)
-    let sync_errors = git::sync_with_remotes(&config_dir);
-    for error in &sync_errors {
+    // The (device, user) pairs to sync, per the scope. Each pair is synced
+    // through its own URL (git accepts a URL where a remote name is
+    // expected), so every user@device is reached independently of the named
+    // remotes — which stay configured for the primary user of each device.
+    let devices = syncable_devices();
+    let (pairs, target_errors) = sync_targets(&root, &devices, temp_users, scope);
+    let targets: Vec<git::sync::SyncTarget> = pairs
+        .iter()
+        .map(|(device, user)| git::sync::SyncTarget {
+            label: format!("{user}@{device}"),
+            target: git::remote::remote_url(user, device),
+        })
+        .collect();
+    if targets.is_empty() {
+        crate::ui::log("  - sync: no user@device to sync with");
+    }
+
+    // Sync with the targets (pull then push)
+    let sync_errors = git::sync_with_targets(&config_dir, &targets);
+    for error in target_errors.iter().chain(&sync_errors) {
         warn(&format!("[sync] {}", error));
     }
 
@@ -618,6 +666,54 @@ pub fn sync_git(home: &str, temp_users: &HashMap<String, String>) {
     }
 
     crate::ui::log("Git sync complete.");
+}
+
+/// The (device, user) pairs a scoped sync must reach, plus an error line
+/// for each in-scope device with no known user. "Every user" of a device is
+/// its merged user list (declared in `users/` plus the `tmp/` overlay),
+/// with the session's temporary user (`temp_users`) added when missing. A
+/// `User` scope pins its device to the selected user only.
+fn sync_targets(
+    root: &Path,
+    devices: &[Device],
+    temp_users: &HashMap<String, String>,
+    scope: &SyncScope,
+) -> (Vec<(String, String)>, Vec<String>) {
+    let mut pairs = Vec::new();
+    let mut errors = Vec::new();
+    for device in devices {
+        let name = device.name.as_str();
+        if let SyncScope::Device(scoped) = scope
+            && scoped != name
+        {
+            continue;
+        }
+        let users: Vec<String> = match scope {
+            SyncScope::User { device, user } if device == name => vec![user.clone()],
+            _ => {
+                let mut users: Vec<String> =
+                    crate::config::users::load_device_users_merged(root, name)
+                        .map(|known| known.iter().map(|u| u.user.name.clone()).collect())
+                        .unwrap_or_default();
+                if let Some(temp) = temp_users.get(name)
+                    && !users.contains(temp)
+                {
+                    users.push(temp.clone());
+                }
+                users.sort();
+                users.dedup();
+                users
+            }
+        };
+        if users.is_empty() {
+            errors.push(format!(
+                "no user known on {name} — add a temporary user (Users panel) to sync with it"
+            ));
+            continue;
+        }
+        pairs.extend(users.into_iter().map(|user| (name.to_string(), user)));
+    }
+    (pairs, errors)
 }
 
 // ============================================================
@@ -822,13 +918,9 @@ pub fn wipe(home: &str, ssh_config: &Path, devices: &[Device]) {
     ));
 }
 
-/// Configure git remotes for all known devices except this device.
-///
-/// Self-detection uses both the hostname and the SSH public key: a stale
-/// device file written under an old hostname (hostnames can change, e.g.
-/// Termux) must not come back as a remote pointing at ourselves.
-/// The SSH user used for a device's git remote URL, resolved through the
-/// config proxy: a temporary user added this run (Users panel, persisted at
+/// The SSH user used for a device's git remote URL (one per device, the
+/// remote's "primary" user), resolved through the config proxy: a temporary
+/// user added this run (Users panel, persisted at
 /// `tmp/devices/<name>/users/<user>.json`) wins; otherwise the first user
 /// the device declared in its configuration (`users/` in `git/`, arrived
 /// through git sync); otherwise a leftover temporary user from a previous
@@ -848,17 +940,26 @@ fn resolve_ssh_users(root: &Path, devices: &[Device], temp_users: &HashMap<Strin
     users
 }
 
-fn configure_remotes(root: &Path, temp_users: &HashMap<String, String>) -> Vec<String> {
+/// All known devices except the local one — the devices a sync can reach.
+///
+/// Self-detection uses both the hostname and the SSH public key: a stale
+/// device file written under an old hostname (hostnames can change, e.g.
+/// Termux) must not come back as a remote pointing at ourselves.
+fn syncable_devices() -> Vec<Device> {
     let conf = load_config();
     let local_name = host_name();
     let local_ssh_public_key = public_key::get_ssh_server_public_key();
-    let devices: Vec<Device> = conf
-        .devices
+    conf.devices
         .into_iter()
         .filter(|m| {
             m.name.as_str() != local_name && local_ssh_public_key.as_ref() != Some(&m.ssh_public_key)
         })
-        .collect();
+        .collect()
+}
+
+fn configure_remotes(root: &Path, temp_users: &HashMap<String, String>) -> Vec<String> {
+    let local_name = host_name();
+    let devices = syncable_devices();
     let config_dir = root.join(GIT_DIR);
     let ssh_users = resolve_ssh_users(root, &devices, temp_users);
     git::sync_git_remotes(&config_dir, &devices, &local_name, &ssh_users)
@@ -911,5 +1012,71 @@ mod tests {
         assert!(!name_taken("free", ssh, &dir, &devices), "free name");
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn sync_targets_are_scoped_and_cover_every_user_of_a_device() {
+        let dir = std::env::temp_dir().join(format!("regroup-sync-targets-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("create temp dir");
+        let root = dir; // plays the role of ~/.regroup-config
+        let git = root.join(GIT_DIR);
+        // laptop: alice declared in the git layer, bob temporary in tmp/.
+        crate::config::users::ensure_local_user_file(&git, "laptop", "alice").unwrap();
+        crate::config::proxy::write_tmp_user_file(&root, "laptop", "bob").unwrap();
+        // phone: no user known at all.
+
+        let mk = |name: &str| Device {
+            name: crate::config::DeviceName::new(name.to_string()).unwrap(),
+            ssh_public_key: crate::ssh::keys::SshPublicKey::from("ssh-rsa AAAA"),
+            signing_public_key: crate::ssh::keys::SigningPublicKeyB64::from("MCowBQYDK2VwAyEA=="),
+            port: 22,
+            port_explicit: false,
+            default_user: None,
+        };
+        let devices = vec![mk("laptop"), mk("phone")];
+        let temp_users: HashMap<String, String> =
+            HashMap::from([("laptop".to_string(), "carol".to_string())]);
+
+        // All: every device, every user (declared + temporary + session temp user).
+        let (pairs, errors) = sync_targets(&root, &devices, &temp_users, &SyncScope::All);
+        assert_eq!(
+            pairs,
+            vec![
+                ("laptop".to_string(), "alice".to_string()),
+                ("laptop".to_string(), "bob".to_string()),
+                ("laptop".to_string(), "carol".to_string()),
+            ]
+        );
+        assert_eq!(errors.len(), 1, "phone has no user: one error line");
+        assert!(errors[0].contains("phone"));
+
+        // Device scope: only that device, still every user of it.
+        let (pairs, errors) =
+            sync_targets(&root, &devices, &temp_users, &SyncScope::Device("laptop".to_string()));
+        assert_eq!(pairs.len(), 3);
+        assert!(pairs.iter().all(|(d, _)| d == "laptop"));
+        assert!(errors.is_empty());
+
+        // Device scope on a device with no known user: no pair, one error.
+        let (pairs, errors) =
+            sync_targets(&root, &devices, &temp_users, &SyncScope::Device("phone".to_string()));
+        assert!(pairs.is_empty());
+        assert_eq!(errors.len(), 1);
+
+        // User scope: every device, but the pinned device as that user only.
+        let (pairs, errors) = sync_targets(
+            &root,
+            &devices,
+            &temp_users,
+            &SyncScope::User {
+                device: "laptop".to_string(),
+                user: "bob".to_string(),
+            },
+        );
+        assert_eq!(pairs, vec![("laptop".to_string(), "bob".to_string())]);
+        assert_eq!(errors.len(), 1, "phone still reported");
+
+        let _ = fs::remove_dir_all(&root);
     }
 }

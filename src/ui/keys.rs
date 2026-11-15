@@ -282,9 +282,11 @@ mod tests {
             keys_ctx: PaneKeyCtx { selected_section: None, local_in_config: false, user_external: false, has_users: false },
         };
         // The global actions (not specific to a device or a user) are
-        // advertised and handled on the main menu (overview).
+        // advertised and handled on the main menu (overview). Sync is the
+        // exception: it is also context-scoped on a selected device row
+        // and a selected user row (see scoped_sync_keys), so it is checked
+        // separately below.
         let globals = [
-            (KeyCode::Char('s'), Action::Sync),
             (KeyCode::Char('w'), Action::WipeMode),
             (KeyCode::Char('c'), Action::SetupCdMode),
             (KeyCode::Char('q'), Action::Quit),
@@ -300,9 +302,19 @@ mod tests {
                 "{key:?} does not resolve on the main menu"
             );
         }
-        // ... and nowhere else: with a device row or a user selected, only
-        // the device-/user-specific actions (plus navigation and help) are
-        // advertised — never the global ones.
+        // The main-menu sync is unscoped (every device, every user — the
+        // handler derives the scope from the pane and selections).
+        assert!(
+            bindings(main_menu).iter().any(|b| b.key == KeyCode::Char('s')),
+            "s not advertised on the main menu"
+        );
+        assert_eq!(
+            resolve(main_menu, KeyCode::Char('s')),
+            Some(KeyResolution::Action(Action::Sync))
+        );
+        // ... and the strict globals are advertised nowhere else: with a
+        // device row or a user selected, only the device-/user-specific
+        // actions (plus navigation and help) are advertised — never w/c/q.
         for ctx in all_pane_contexts() {
             let Context::Pane { focus, depth, .. } = ctx else { continue };
             if matches!(focus, NavFocus::Center) && depth.is_none() {
@@ -335,12 +347,72 @@ mod tests {
     fn unadvertised_key_is_not_handled() {
         use crate::ui::types::DeviceSection;
         let keys_ctx = |selected_section| PaneKeyCtx { selected_section, local_in_config: false, user_external: false, has_users: false };
-        // 's' syncs from the main menu, not from any Devices pane row:
-        // a selected device offers only device-specific actions.
-        for section in [Some(DeviceSection::Added), Some(DeviceSection::Detected), Some(DeviceSection::Local), None] {
+        // 's' syncs from the main menu and, context-scoped, from an added
+        // device row — but not from a detected or local row: those offer
+        // only their own specific actions.
+        for section in [Some(DeviceSection::Detected), Some(DeviceSection::Local), None] {
             let ctx = Context::Pane { focus: NavFocus::Devices, depth: Some(NavDepth::Selected), keys_ctx: keys_ctx(section) };
             assert!(!bindings(ctx).iter().any(|b| b.key == KeyCode::Char('s')), "s advertised for section {section:?}");
             assert_eq!(resolve(ctx, KeyCode::Char('s')), None);
+        }
+    }
+
+    #[test]
+    fn scoped_sync_keys() {
+        use crate::ui::types::DeviceSection;
+        // On an added device row, 's' syncs that device (every user of
+        // it); in the Users pane, 's' syncs every device but pins the
+        // selected user on the selected device; on the main menu it syncs
+        // everything. The key layer only produces Action::Sync — the scope
+        // is derived by the handler from the pane and selections.
+        let added_row = Context::Pane {
+            focus: NavFocus::Devices,
+            depth: Some(NavDepth::Selected),
+            keys_ctx: PaneKeyCtx {
+                selected_section: Some(DeviceSection::Added),
+                local_in_config: true,
+                user_external: false,
+                has_users: true,
+            },
+        };
+        assert_eq!(
+            resolve(added_row, KeyCode::Char('s')),
+            Some(KeyResolution::Action(Action::Sync))
+        );
+        // Same on the no-users variant of the added row (the sync then
+        // reports that no user is known on the device yet).
+        let added_row_no_users = Context::Pane {
+            focus: NavFocus::Devices,
+            depth: Some(NavDepth::Selected),
+            keys_ctx: PaneKeyCtx {
+                selected_section: Some(DeviceSection::Added),
+                local_in_config: true,
+                user_external: false,
+                has_users: false,
+            },
+        };
+        assert_eq!(
+            resolve(added_row_no_users, KeyCode::Char('s')),
+            Some(KeyResolution::Action(Action::Sync))
+        );
+        for ctx in all_pane_contexts() {
+            let Context::Pane { focus, depth, keys_ctx } = ctx else { continue };
+            // An external row (incoming connection) offers only revoke,
+            // and the localhost Users pane offers no sync: the local
+            // device has no remote, so there is no user@device to sync
+            // as — sync is not available on the current user.
+            if focus != NavFocus::Users
+                || depth != Some(NavDepth::Selected)
+                || keys_ctx.user_external
+                || keys_ctx.selected_section != Some(DeviceSection::Added)
+            {
+                continue;
+            }
+            assert_eq!(
+                resolve(ctx, KeyCode::Char('s')),
+                Some(KeyResolution::Action(Action::Sync)),
+                "s not handled in Users pane ctx {keys_ctx:?}"
+            );
         }
     }
 
@@ -413,7 +485,12 @@ mod tests {
             Some(KeyResolution::Action(Action::AddTempUser))
         );
         assert_eq!(resolve(added_row, KeyCode::Char('u')), None);
-        assert_eq!(resolve(added_row, KeyCode::Char('s')), None);
+        // 's' is context-scoped, not a strict global: on the added row it
+        // syncs this device (every user of it).
+        assert_eq!(
+            resolve(added_row, KeyCode::Char('s')),
+            Some(KeyResolution::Action(Action::Sync))
+        );
         assert_eq!(resolve(added_row, KeyCode::Char('w')), None);
         assert_eq!(resolve(added_row, KeyCode::Char('c')), None);
     }
@@ -432,9 +509,10 @@ mod tests {
             },
         };
         // No install/remove key (connecting to the current device is
-        // nonsense) and no remove-user (on localhost you only edit your
-        // own data) — only set default, the exception living in the
-        // device-owned device.json.
+        // nonsense), no remove-user (on localhost you only edit your own
+        // data) and no sync (the local device has no remote, so sync is
+        // not available on the current user) — only set default, the
+        // exception living in the device-owned device.json.
         for key in ['i', 'r', 'x', 'a', 'u', 's', 'w', 'c'] {
             assert_eq!(resolve(ctx, KeyCode::Char(key)), None, "{key} handled on a localhost user row");
             assert!(!bindings(ctx).iter().any(|b| b.key == KeyCode::Char(key)), "{key} advertised on a localhost user row");
@@ -465,6 +543,7 @@ mod tests {
         };
         let expected = [
             (KeyCode::Char('d'), Action::SetDefaultUser),
+            (KeyCode::Char('s'), Action::Sync),
             (KeyCode::Char('i'), Action::InstallKeyToSelected),
             (KeyCode::Char('r'), Action::RemoveKeyFromSelected),
             (KeyCode::Char('x'), Action::RemoveUser),
@@ -473,8 +552,8 @@ mod tests {
             assert_eq!(resolve(ctx, *key), Some(KeyResolution::Action(action.clone())));
             assert!(bindings(ctx).iter().any(|b| b.key == *key));
         }
-        // No globals, no device-level add-user in the Users pane.
-        for key in ['s', 'w', 'c', 'a', 'u'] {
+        // No strict globals, no device-level add-user in the Users pane.
+        for key in ['w', 'c', 'a', 'u'] {
             assert_eq!(resolve(ctx, KeyCode::Char(key)), None, "{key} handled in Users");
             assert!(!bindings(ctx).iter().any(|b| b.key == KeyCode::Char(key)), "{key} advertised in Users");
         }
