@@ -81,27 +81,7 @@ markers but skipping the screen switch and the pause? Also note the
 inconsistency: `SetupCdConfirm` is *not* wrapped in a pass at all, even
 though it writes to the shell rc file.
 
-## 4. CLI -> TUI / TUI -> CLI markers at app start and stop (quit, wipe)
-
-Today the transition markers exist only inside `with_clean_terminal`, so
-the CLI-visible log stream has no record of when the TUI took the
-terminal at **start**, nor when it handed it back on **quit**:
-`Action::Quit` (`src/interactive/state.rs`, `handle_action`) just returns
-`true` and the process restores the terminal silently. Wipe goes through
-a `with_clean_terminal("wipe")` pass (so it is marked), but quit is not.
-
-To do:
-
-- Log `CLI -> TUI (start)` once when the TTY UI starts (in `Ui::start`
-  / at the top of `interactive::run`, after `ratatui::init()`), so the
-  stream shows where the TUI session begins.
-- Log `TUI -> CLI (quit)` on the quit path (before `run` returns /
-  before the terminal is restored), and make sure wipe ends with
-  `TUI -> CLI (wipe)` as the last marker before exit.
-- Question: in plain (CLI) mode there is no screen switch — should the
-  markers still be logged for stream symmetry, or skipped?
-
-## 5. Default user per device
+## 4. Default user per device
 
 New concept: each device has **one default user**.
 

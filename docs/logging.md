@@ -73,6 +73,16 @@ Logs pane** when the TUI resumes. Each pass is delimited in the stream by
 two markers: `TUI -> CLI (<action>)` when the pass starts and
 `CLI -> TUI (<action>)` when the TUI resumes.
 
+The full-screen session itself is delimited the same way: `CLI -> TUI
+(start)` is logged when the TUI takes the terminal (printed to the CLI
+before the alternate screen opens, so it stays in the scrollback, and
+recorded in the stream), and `TUI -> CLI (quit)` — or `TUI -> CLI (wipe)`
+when the session ends by wiping the configuration — is logged when the
+interactive loop exits. `TtyUi`'s `Drop` restores the terminal and then
+prints the remaining stream to stdout, so the closing marker is the last
+line in the CLI as well. In plain (CLI) mode there is no screen switch,
+so no markers are logged: the whole output is already the CLI stream.
+
 Mechanics:
 
 - The pass window (the operation itself and the "press Enter to return"
