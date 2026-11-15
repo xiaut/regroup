@@ -264,6 +264,9 @@ pub struct QuestionCtx<'a> {
     /// Whether the local device is in the shared configuration (drives
     /// the localhost row's add/remove key).
     pub local_in_config: bool,
+    /// Whether the device selected in the Devices pane has at least one
+    /// user (drives the Right/Enter entry keys into the Users pane).
+    pub has_users: bool,
     /// Last key press, highlighted in the hint line while recent.
     pub key_flash: Option<&'a KeyFlash>,
 }
@@ -717,6 +720,7 @@ pub fn render_question(
                         selected_section: ctx.selected_section,
                         local_in_config: ctx.local_in_config,
                         user_external: ctx.selected_user_external,
+                        has_users: ctx.has_users,
                     },
                 });
                 (
@@ -844,6 +848,7 @@ mod tests {
             selected_user_external: false,
             selected_section: None,
             local_in_config: false,
+            has_users: false,
             key_flash: None,
         }
     }

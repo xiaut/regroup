@@ -253,7 +253,9 @@ The TUI interface uses **ratatui** (formerly tui-rs) with **crossterm** for term
   confirm / confirmed / SSH key installed). It is a sub-context of the
   device, not a device, not a sibling panel: `Right`/`Enter` from the
   Devices pane with an added row selected enters the sub-panel (first
-  user selected), and `Left`/`Esc` returns to the Devices pane. Device+user actions (install/remove SSH key) live there and only
+  user selected) — only when the device has at least one user, otherwise
+  the sub-panel is not reachable and the keys are not offered; `Left`/`Esc`
+  returns to the Devices pane. Device+user actions (install/remove SSH key) live there and only
   appear for a confirmed user on a non-local device; a temporary user
   only offers its own user-specific action (`x` remove) — the git sync
   that brings the device's declared users is a global action on the main
@@ -322,14 +324,14 @@ Only device-specific actions (the global ones stay on the main menu):
 |-----|--------|
 | `d` | Delete selected device |
 | `a` | Add a user for the device (`a` is free on this row; adding a user is device-specific — no user needs to be selected). The user is temporary until a sync or a successful key install confirms it |
-| `Right` or `Enter` | Open the Users sub-panel of the selected device |
+| `Right` or `Enter` | Open the Users sub-panel of the selected device (only when the device has at least one user — with no users the pane is not reachable) |
 
 ### In Devices Panel (localhost row selected)
 
 | Key | Action |
 |-----|--------|
 | `a` or `r` | Add / remove the local device to/from the shared configuration (depending on its membership) |
-| `Right` or `Enter` | Open the Users sub-panel of the local device |
+| `Right` or `Enter` | Open the Users sub-panel of the local device (only when the device has at least one user) |
 
 No add-user key on the localhost row: a temporary user configures an
 outgoing connection, and connecting to the current device is nonsense.

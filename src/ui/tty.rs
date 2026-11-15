@@ -58,6 +58,7 @@ fn calculate_question_height(question: &Question, ctx: &QuestionCtx, width: u16)
                     selected_section: ctx.selected_section,
                     local_in_config: ctx.local_in_config,
                     user_external: ctx.selected_user_external,
+                    has_users: ctx.has_users,
                 },
             }))
         }
@@ -331,6 +332,9 @@ impl TtyUi {
                         selected_section,
                         local_in_config,
                         user_external,
+                        // The Users entry keys are only offered when the
+                        // selected device has at least one user.
+                        has_users: !self.users.is_empty(),
                     },
                 }
             } else {
@@ -403,12 +407,14 @@ impl TtyUi {
 
         // Navigation state machine (arrows, Enter, Esc). The selected
         // Devices row's section decides whether Right/Enter from the
-        // fullscreen Devices pane open the Users sub-panel.
+        // fullscreen Devices pane open the Users sub-panel — and with no
+        // users on the selected device, the Users pane is not reachable.
         let selected_section = self
             .devices_selected
             .and_then(|i| self.devices.get(i))
             .map(|d| d.section);
-        let new_nav = self.navigation.handle_key(code, selected_section);
+        let has_users = !self.users.is_empty();
+        let new_nav = self.navigation.handle_key(code, selected_section, has_users);
         if new_nav != self.navigation {
             let old_focus = self.navigation.focus;
             self.navigation = new_nav;
@@ -525,6 +531,7 @@ impl TtyUi {
                 selected_user_external,
                 selected_section,
                 local_in_config,
+                has_users: !users.is_empty(),
                 key_flash: key_flash.as_ref(),
             };
             let question_height = calculate_question_height(question, &question_ctx, frame.area().width);
@@ -609,6 +616,7 @@ mod tests {
             selected_user_external: false,
             selected_section: None,
             local_in_config: false,
+            has_users: false,
             key_flash: None,
         }
     }
