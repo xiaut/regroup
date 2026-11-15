@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# T5 — AGENTS.md §6: post-merge cleanup, in the mandated order.
+# S5 — AGENTS.md §6: post-merge cleanup, in the mandated order.
 # Usage: scripts/merged-cleanup.sh <worktree-name> <branch>   (run from anywhere in the repo)
 set -euo pipefail
 name=${1:?usage: merged-cleanup.sh <worktree-name> <branch>}

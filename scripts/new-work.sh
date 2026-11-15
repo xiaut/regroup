@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# T2 — AGENTS.md §4: create the worktree inside .worktrees/, create/reuse the
+# S2 — AGENTS.md §4: create the worktree inside .worktrees/, create/reuse the
 # branch, and push it so it is backed by a remote branch from the start.
 # The draft PR is opened on the first commit — see scripts/first-commit.sh.
 # Usage: scripts/new-work.sh <worktree-name> <branch> [base-ref=main]

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# T3 — AGENTS.md §4: stage everything, commit with the required trailer, push,
+# S3 — AGENTS.md §4: stage everything, commit with the required trailer, push,
 # and open the draft PR if the branch does not have one yet.
 # Usage: scripts/first-commit.sh "<commit message>"   (run inside the worktree)
 set -euo pipefail

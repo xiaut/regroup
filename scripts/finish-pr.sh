@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# T4 — AGENTS.md §4: mark the PR ready for review (the agent decides, do not
+# S4 — AGENTS.md §4: mark the PR ready for review (the agent decides, do not
 # leave it in draft) and print the two copy-paste test reminders.
 # Usage: scripts/finish-pr.sh   (run inside the .worktrees/<name> worktree)
 set -euo pipefail
