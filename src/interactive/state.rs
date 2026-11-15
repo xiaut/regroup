@@ -19,13 +19,13 @@ use std::time::Duration;
 use crate::cli::{NameConflict,
     add_device_to_config, add_local_device_to_config, device_name_taken, die, find_name_conflicts,
     remove_device, remove_local_device_from_config, remove_local_traces, setup_cd,
-    shell_rc_file, sync_git, SyncScope, trust_new_signing_key, unique_device_name, usage,
+    shell_rc_file, sync_git, SyncScope, trust_new_signing_key, unique_device_name,
+    update_device_ssh_block, usage,
     wipe as wipe_config,
 };
 use crate::config::{device_file_path, root_config_dir, GIT_DIR, Device, load_config};
 use crate::config::users::load_device_users_merged;
 use crate::discovery::beacon::BeaconDevice;
-use crate::ssh::config::update_block;
 use crate::ssh::keys::{SigningPublicKeyB64, SshPublicKey};
 use crate::ssh::public_key;
 use crate::ui::{self, Action, Level, Question};
@@ -638,12 +638,15 @@ impl InteractiveState {
                 };
                 if verified {
                     let old_ip = self.known_ip.get(&device.ssh_public_key).cloned();
-                    let _ = update_block(
+                    // Credential-aware rewrite: the block keeps the
+                    // User/IdentityFile lines of the local user's outgoing
+                    // connections to this device.
+                    let _ = update_device_ssh_block(
+                        ctx.home,
                         ctx.ssh_config,
                         stored_device.name.as_str(),
                         &device.ip,
-                        stored_device.port,
-                        stored_device.port_explicit,
+                        &stored_device,
                     );
                     // Clean the known_hosts entries of the old IP so stale
                     // addresses do not linger — unless another known device

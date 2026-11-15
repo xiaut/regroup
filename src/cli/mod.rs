@@ -426,7 +426,7 @@ pub fn add_device_to_config(
     if let Some(device_path) = crate::config::proxy::device_file(&root, name) {
         if let Ok(existing_device) = crate::config::device::load_device_file(&device_path) {
             if existing_device.ssh_public_key == device.ssh_public_key {
-                if update_ssh_config(ssh_config, name, &device.ip, &existing_device) {
+                if update_ssh_config(home, ssh_config, name, &device.ip, &existing_device) {
                     *new_count += 1;
                     return Some(existing_device);
                 }
@@ -461,7 +461,7 @@ pub fn add_device_to_config(
         ));
     }
 
-    if update_ssh_config(ssh_config, name, &device.ip, &placeholder_device) {
+    if update_ssh_config(home, ssh_config, name, &device.ip, &placeholder_device) {
         crate::ui::log(&format!(
             "  - Added {} with placeholder data — will update from device on next sync",
             name
@@ -476,17 +476,91 @@ pub fn add_device_to_config(
     }
 }
 
-/// Helper to update SSH config and log success/failure
-fn update_ssh_config(ssh_config: &Path, name: &str, ip: &str, device: &Device) -> bool {
-    match update_block(ssh_config, name, ip, device.port, device.port_explicit) {
+/// The credentials a device's `Host` block in ~/.ssh/config should carry,
+/// derived from the local device's outgoing connections to it: the `User`
+/// line is the target user of the first such connection (sorted, so the
+/// result is deterministic; ssh uses the first `User` value it finds), and
+/// one `IdentityFile` line per connection (ssh offers ALL IdentityFile
+/// keys, so every user@device pair gets its dedicated key tried — this is
+/// what keeps git sync over `user@device` from prompting for a password
+/// once a key was installed).
+///
+/// Only connections of the CURRENT local user are considered: their private
+/// keys live in this user's ~/.ssh, which is whose config file is written.
+/// Incoming connections point at the peer's key path and are never local
+/// credentials.
+pub fn ssh_block_credentials(
+    config_dir: &Path,
+    local_device: &str,
+    local_user: &str,
+    device_name: &str,
+) -> (Option<String>, Vec<String>) {
+    let Ok(connections) =
+        crate::config::connection::load_device_connections(config_dir, local_device)
+    else {
+        return (None, Vec::new());
+    };
+    let mut outgoing: Vec<&crate::config::connection::Connection> = connections
+        .outgoing
+        .iter()
+        .filter(|c| c.to_device == device_name && c.from_user == local_user)
+        .collect();
+    outgoing.sort_by(|a, b| {
+        a.to_user
+            .cmp(&b.to_user)
+            .then_with(|| a.private_key_path.cmp(&b.private_key_path))
+    });
+    let user = outgoing.first().map(|c| c.to_user.clone());
+    let mut identity_files: Vec<String> = outgoing
+        .iter()
+        .map(|c| c.private_key_path.clone())
+        .collect();
+    identity_files.sort();
+    identity_files.dedup();
+    (user, identity_files)
+}
+
+/// Rewrite the `Host <name>` block in ~/.ssh/config for a device: the given
+/// address/port plus the `User`/`IdentityFile` lines derived from the local
+/// user's outgoing connections to the device (see [`ssh_block_credentials`]).
+/// Returns false (with a warning) when the write fails.
+pub fn update_device_ssh_block(
+    home: &str,
+    ssh_config: &Path,
+    name: &str,
+    ip: &str,
+    device: &Device,
+) -> bool {
+    let config_dir = config_dir_of(home);
+    let (user, identity_files) =
+        ssh_block_credentials(&config_dir, &host_name(), &local_user(), name);
+    match update_block(
+        ssh_config,
+        name,
+        ip,
+        device.port,
+        device.port_explicit,
+        user.as_deref(),
+        &identity_files,
+    ) {
         Ok(_) => {
-            crate::ui::log(&format!("  - Added {} -> {} (~/.ssh/config updated)", name, ip));
+            crate::ui::log(&format!("  - ~/.ssh/config: Host {} -> {} updated", name, ip));
             true
         }
         Err(e) => {
             warn(&format!("could not update SSH config for {}: {}", name, e));
             false
         }
+    }
+}
+
+/// Helper to update SSH config and log success/failure
+fn update_ssh_config(home: &str, ssh_config: &Path, name: &str, ip: &str, device: &Device) -> bool {
+    if update_device_ssh_block(home, ssh_config, name, ip, device) {
+        crate::ui::log(&format!("  - Added {} -> {} (~/.ssh/config updated)", name, ip));
+        true
+    } else {
+        false
     }
 }
 
@@ -973,6 +1047,60 @@ fn configure_remotes(root: &Path, temp_users: &HashMap<String, String>) -> Vec<S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ssh_block_credentials_come_from_the_local_users_outgoing_connections() {
+        let dir = std::env::temp_dir().join(format!("regroup-creds-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("create temp dir");
+        let git = dir.join(GIT_DIR); // the config dir (git layer) the helper reads
+        use crate::config::connection::{Connection, save_connection};
+
+        let conn = |from_user: &str, from_dev: &str, to_user: &str, to_dev: &str, key: &str| {
+            Connection::new(
+                from_user,
+                from_dev,
+                to_user,
+                to_dev,
+                "ssh-ed25519 AAAA",
+                key,
+                "2026-01-01T00:00:00Z",
+            )
+        };
+        // Outgoing from the local device, current user alice, to laptop.
+        save_connection(&git, "testhost", &conn("alice", "testhost", "bob", "laptop", "/home/alice/.ssh/id_regroup_alice@laptop"), "alice").unwrap();
+        // Outgoing to another device — not for laptop's block.
+        save_connection(&git, "testhost", &conn("alice", "testhost", "carol", "phone", "/home/alice/.ssh/id_regroup_alice@phone"), "alice").unwrap();
+        // Outgoing to laptop but from ANOTHER local user — her key is not in alice's ~/.ssh.
+        save_connection(&git, "testhost", &conn("root", "testhost", "dave", "laptop", "/root/.ssh/id_regroup_root@laptop"), "root").unwrap();
+        // Incoming on the local device — the key path is the PEER's, never a local credential.
+        save_connection(&git, "testhost", &conn("eve", "ordi", "alice", "testhost", "/home/eve/.ssh/id_regroup_eve@testhost"), "alice").unwrap();
+
+        let (user, keys) = ssh_block_credentials(&git, "testhost", "alice", "laptop");
+        assert_eq!(user.as_deref(), Some("bob"));
+        assert_eq!(keys, vec!["/home/alice/.ssh/id_regroup_alice@laptop".to_string()]);
+
+        let (user, keys) = ssh_block_credentials(&git, "testhost", "alice", "phone");
+        assert_eq!(user.as_deref(), Some("carol"));
+        assert_eq!(keys, vec!["/home/alice/.ssh/id_regroup_alice@phone".to_string()]);
+
+        // A device with only an incoming connection gets no credentials.
+        let (user, keys) = ssh_block_credentials(&git, "testhost", "alice", "ordi");
+        assert_eq!(user, None);
+        assert!(keys.is_empty());
+
+        // Another local user sees only its own connections.
+        let (user, keys) = ssh_block_credentials(&git, "testhost", "root", "laptop");
+        assert_eq!(user.as_deref(), Some("dave"));
+        assert_eq!(keys, vec!["/root/.ssh/id_regroup_root@laptop".to_string()]);
+
+        // Unknown device: no credentials.
+        let (user, keys) = ssh_block_credentials(&git, "testhost", "alice", "unknown");
+        assert_eq!(user, None);
+        assert!(keys.is_empty());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn ssh_config_has_host_matches_exact_blocks() {

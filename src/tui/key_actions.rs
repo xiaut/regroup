@@ -8,13 +8,14 @@
 //! These are implemented as standalone functions that can be called from
 //! the connections screen.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use chrono;
 
 use crate::cli::key_management::{generate_key_pair, get_public_key, is_reachable, build_connection_id, get_config_dir};
 use crate::config::connection::{Connection, save_connection};
+use crate::config::Device;
 use crate::git::sync::git_add_and_commit_file;
 
 /// Result of a key action
@@ -28,6 +29,40 @@ pub enum KeyActionResult {
     Error(String),
 }
 
+/// The device record of `name` through the config proxy (git layer, then
+/// tmp/ overlay); falls back to a minimal record built from the beacon data
+/// when no device file exists.
+fn device_record(root: &Path, name: &str, beacon_port: u16) -> Device {
+    crate::config::proxy::device_file(root, name)
+        .and_then(|p| crate::config::device::load_device_file(&p).ok())
+        .unwrap_or_else(|| Device {
+            name: crate::config::DeviceName::from_str(name)
+                .expect("device name is valid — it passed device_name_taken"),
+            ssh_public_key: crate::ssh::keys::SshPublicKey::from(""),
+            signing_public_key: crate::ssh::keys::SigningPublicKeyB64::from(""),
+            port: beacon_port,
+            port_explicit: true,
+            default_user: None,
+        })
+}
+
+/// Rewrite the target device's `Host` block in ~/.ssh/config so it carries
+/// the `User`/`IdentityFile` lines of the local user's outgoing connections
+/// to it. Called after a key install adds a connection and after a removal
+/// deletes one: ssh (and git over ssh, e.g. `user@device` sync targets)
+/// then offers the per-connection key instead of prompting for a password.
+fn refresh_host_block(home: &str, to_device: &str, to_ip: &str, to_port: u16) {
+    let root = crate::config::root_config_dir(home);
+    let ssh_config = PathBuf::from(home).join(".ssh").join("config");
+    let device = device_record(&root, to_device, to_port);
+    if crate::cli::update_device_ssh_block(home, &ssh_config, to_device, to_ip, &device) {
+        crate::ui::log(&format!(
+            "  - ~/.ssh/config: Host {} updated with User/IdentityFile of the connection — ssh to it no longer prompts for a password",
+            to_device
+        ));
+    }
+}
+
 /// Install a key on a remote device
 ///
 /// `to_device` is the logical device name (used in the connection ID and
@@ -35,7 +70,7 @@ pub enum KeyActionResult {
 /// used as the actual SSH transport target — the name is never resolved
 /// (no DNS, no ~/.ssh/config alias, which regroup writes itself).
 pub fn install_key_action(
-    _home: &str,
+    home: &str,
     config_dir: &Path,
     local_device: &str,
     current_user: &str,
@@ -67,8 +102,7 @@ pub fn install_key_action(
     }
     
     // Check if key already exists
-    let home = std::env::var("HOME").map_err(|_| "HOME not set".to_string())?;
-    let key_path = std::path::PathBuf::from(&home).join(".ssh").join(format!("id_regroup_{}@{}", current_user, to_device));
+    let key_path = PathBuf::from(home).join(".ssh").join(format!("id_regroup_{}@{}", current_user, to_device));
     
     if key_path.exists() {
         return Ok(KeyActionResult::Error(format!(
@@ -143,7 +177,13 @@ pub fn install_key_action(
                     &connection,
                     current_user,
                 ).map_err(|e| format!("Failed to save connection: {}", e))?;
-                
+
+                // The Host block must now offer this connection's key:
+                // add User + IdentityFile so the next ssh/git sync to this
+                // device authenticates with id_regroup_<user>@<device>
+                // instead of prompting for a password.
+                refresh_host_block(home, to_device, to_ip, to_port);
+
                 // Commit on source device
                 let connections_dir = config_dir.join("devices").join(local_device).join("connections");
                 let config_dir_path = get_config_dir();
@@ -168,7 +208,7 @@ pub fn install_key_action(
 /// `to_device` is the logical device name; `to_ip` is the beacon-advertised
 /// address used as the actual SSH transport target (see install_key_action).
 pub fn remove_key_action(
-    _home: &str,
+    home: &str,
     config_dir: &Path,
     local_device: &str,
     current_user: &str,
@@ -240,7 +280,12 @@ pub fn remove_key_action(
                     std::fs::remove_file(&connection_path)
                         .map_err(|e| format!("Failed to remove connection file: {}", e))?;
                 }
-                
+
+                // Drop the removed connection's IdentityFile from the
+                // device's Host block (recomputed from the remaining
+                // connections; with none left, the User line goes too).
+                refresh_host_block(home, to_device, to_ip, to_port);
+
                 // Commit on source device
                 let config_dir_path = get_config_dir();
                 
