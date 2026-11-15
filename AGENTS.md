@@ -23,7 +23,13 @@ cat Cargo.toml
 
 These commands give you the complete project structure and configuration that you need for every task — without them, you lack essential context. For additional documentation, see the `docs/` directory.
 
-## 3. Worktrees, Branches, and PRs — Always Inside This Directory
+## 3. Specification Before Implementation
+
+Unless the task is a well-defined TODO, do not start implementing right away: loop with the developer to understand the need and settle the specification, and wait for an **explicit approval** of that specification before starting to implement.
+
+Working on a new (worktree, branch, PR) is **implicit**: once the specification is approved — or immediately when the task is a well-defined TODO — create the worktree, push the branch, and open the draft PR without asking again.
+
+## 4. Worktrees, Branches, and PRs — Always Inside This Directory
 
 Any work that is not on `main` in the main checkout implies a **worktree** + a dedicated **branch** + a **pull request opened on the first commit** — as a **draft** if the work is not ready yet. Create the worktree **inside this repository directory** — never next to it or anywhere else outside it:
 
@@ -42,7 +48,7 @@ Rules:
 - One (worktree, branch, PR) tuple per session: if more work is requested in the same session, reuse the same worktree and branch — and if that PR has already been merged, open a **new PR on the same branch**, never a second worktree/branch
 - Keep the worktree in place while the PR is open so the developer can test
 
-## 4. When the PR Is Merged
+## 5. When the PR Is Merged
 
 When the PR is merged — or when the developer explicitly asks — and the branch is no longer needed in this session, clean up in this order:
 
