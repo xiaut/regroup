@@ -18,7 +18,9 @@ Reads merge the layers as `git/ ∪ (tmp/ − git/)`: on overlap `git/` wins and
 ```
 config/
 ├── mod.rs          # Device/Conf types, storage constants, path helpers
-├── loading.rs      # load_config(): ensure repo, scan devices/, auto-create local device
+├── loading.rs      # load_config(): ensure repo, scan devices/, auto-create the local
+│                   #   device on first run only (repo without commits); a removal
+│                   #   of the local device from the shared config is respected
 ├── device.rs       # device file (device.json) load/save + validation tests
 ├── connection.rs   # connection files: naming rule, ownership enforcement, loader
 ├── users.rs        # users/<user>.json: one file per known user

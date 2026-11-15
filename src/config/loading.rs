@@ -246,9 +246,10 @@ pub fn load_config() -> Conf {
         }
     }
 
-    // Record the current user on the local device (first run only):
-    // `devices/<self>/users/<user>.json` is written once and committed,
-    // so other devices learn who this device's users are through git.
+    // Record the current user on the local device when it is in the
+    // shared configuration: `devices/<self>/users/<user>.json` is written
+    // once and committed, so other devices learn who this device's users
+    // are through git.
     if devices.iter().any(|d| d.name.as_str() == local_hostname) {
         let current_user = local_user();
         if !current_user.is_empty() && current_user != "unknown" {
@@ -281,7 +282,7 @@ pub fn load_config() -> Conf {
 
     if devices.is_empty() {
         warn(&format!(
-            "no devices configured in {} — first device will be auto-created on first run",
+            "no devices in the shared configuration ({}) — the local device is not added; use 'a' on the localhost row to add it",
             config_dir.display()
         ));
     }
