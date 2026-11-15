@@ -30,6 +30,12 @@ pub struct Device {
     pub signing_public_key: crate::ssh::keys::SigningPublicKeyB64,
     pub port: u16,
     pub port_explicit: bool,
+    /// The device's default user (its main/preferred user), declared by the
+    /// device itself in its own `device.json` and synced to every peer like
+    /// the rest of the file. `None` when the device has not declared one —
+    /// a device with exactly one known user has that user as its default
+    /// implicitly (computed at display time, not stored).
+    pub default_user: Option<String>,
 }
 
 /// Global discovery settings (udp_port, wait_secs)

@@ -10,7 +10,7 @@ The configuration repository `~/.regroup-config/git/` is shared decentralized st
 ├── git/                       # Shared repo: ONLY per-device directories
 │   └── devices/
 │       └── <name>/
-│           ├── device.json         # Latest known state
+│           ├── device.json         # Latest known state (incl. default_user)
 │           ├── users/
 │           │   └── <user>.json    # One file per known user
 │           └── connections/
@@ -41,17 +41,34 @@ Each device file contains:
 - `ssh_public_key`: SSH server host key (unique identifier)
 - `signing_public_key`: Ed25519 signing key (pinned at first acceptance)
 - `port`: SSH port (default: 22)
+- `default_user` (optional): the device's **default user** — see below
 
 ## Write Ownership
 
 **Critical rule**: A device only writes inside `devices/<its own name>/`.
 
 - `users/` and `connections/` files are **never** written by peers
-- `device.json` in `git/` is **only** written by the device itself
+- `device.json` in `git/` is **only** written by the device itself (this
+  includes its `default_user` field)
 - This rule prevents concurrent modification conflicts and ensures data consistency
 - Data about *other* devices that this device is not authoritative for (e.g. the
   beacon-derived placeholder created at acceptance time) never enters `git/` —
   it goes to the `tmp/` overlay (see below) and is never synced
+
+## Default User (`default_user` in device.json)
+
+Each device has **one default user** — its main/preferred user, the account to
+use on that device by default. It is a single value, so per the
+"lists as directories" rule it lives in the owning record, not in its own
+file: the optional `default_user` field of `devices/<name>/device.json`
+(`"default_user": "alice"`) in the git layer, written only by the device
+itself (write ownership rule above), committed and synced to every peer like
+the rest of the file. Radio semantics: the field holds one name, so declaring
+another default replaces the current one. A device with exactly one known user
+has that user as its default implicitly (computed at display time, not
+written). Peers only read the field — they never write another device's
+`device.json`. tmp/ beacon placeholders simply have no `default_user` until
+the device's real `device.json` syncs in (git/ wins).
 
 ## Configuration Proxy: the `tmp/` Overlay
 

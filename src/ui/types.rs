@@ -450,6 +450,7 @@ static USERS_CONFIRMED_KEYS: &[KeyBinding] = &[
     KeyBinding::internal(Left, "Left", "devices"),
     KeyBinding::internal(Up, "Up", "select"),
     KeyBinding::internal(Down, "Down", "select"),
+    KeyBinding::new(Char('d'), "d", "set default", Effect::Action(Action::SetDefaultUser)),
     KeyBinding::new(Char('s'), "s", "sync", Effect::Action(Action::Sync)),
     KeyBinding::new(Char('i'), "i", "install key", Effect::Action(Action::InstallKeyToSelected)),
     KeyBinding::new(Char('r'), "r", "remove key", Effect::Action(Action::RemoveKeyFromSelected)),
@@ -464,6 +465,7 @@ static USERS_LOCAL_CONFIRMED_KEYS: &[KeyBinding] = &[
     KeyBinding::internal(Left, "Left", "devices"),
     KeyBinding::internal(Up, "Up", "select"),
     KeyBinding::internal(Down, "Down", "select"),
+    KeyBinding::new(Char('d'), "d", "set default", Effect::Action(Action::SetDefaultUser)),
     KeyBinding::new(Char('s'), "s", "sync", Effect::Action(Action::Sync)),
     KeyBinding::new(Char('a'), "a", "add temp user", Effect::Action(Action::AddTempUser)),
 ];
@@ -473,6 +475,7 @@ static USERS_TEMP_KEYS: &[KeyBinding] = &[
     KeyBinding::internal(Left, "Left", "devices"),
     KeyBinding::internal(Up, "Up", "select"),
     KeyBinding::internal(Down, "Down", "select"),
+    KeyBinding::new(Char('d'), "d", "set default", Effect::Action(Action::SetDefaultUser)),
     KeyBinding::new(Char('s'), "s", "sync", Effect::Action(Action::Sync)),
     KeyBinding::new(Char('a'), "a", "add temp user", Effect::Action(Action::AddTempUser)),
     KeyBinding::new(Char('x'), "x", "remove temp user", Effect::Action(Action::RemoveTempUser)),
@@ -583,6 +586,10 @@ pub struct UiUser {
     /// localhost device, always shown under its own
     /// `── current user (added|not added) ──` divider.
     pub pinned: bool,
+    /// The device's default user (at most one per device, declared as
+    /// `default_user` in the device's `device.json`): pinned as the very
+    /// first row of the Users pane, under its own `── default ──` divider.
+    pub is_default: bool,
 }
 
 impl UiUser {
@@ -693,6 +700,10 @@ pub enum Action {
     CancelTempUser,
     /// Remove the selected temporary user (key 'x').
     RemoveTempUser,
+    /// Set the selected user as the default user of the selected device
+    /// (key 'd' in the Users panel), replacing the current default:
+    /// exactly one default per device.
+    SetDefaultUser,
     /// Add the local device to the shared configuration (key 'a' on the
     /// localhost row when it is not added): create its device file and
     /// the current user's file in the git layer and commit them.

@@ -28,5 +28,15 @@ pub fn validate_device(device: &Device) -> Result<(), String> {
         ));
     }
 
+    // The default user, when declared, must be a non-empty name
+    if let Some(default_user) = &device.default_user
+        && default_user.trim().is_empty()
+    {
+        return Err(format!(
+            "Device '{}' has an empty default_user",
+            device.name.as_str()
+        ));
+    }
+
     Ok(())
 }

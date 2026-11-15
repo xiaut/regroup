@@ -84,12 +84,22 @@ pub fn load_device_file(path: &Path) -> Result<Device, String> {
         }
     };
 
+    let default_user = match obj.get("default_user") {
+        None => None,
+        Some(v) => match v.as_str() {
+            Some(s) if !s.trim().is_empty() => Some(s.to_string()),
+            Some(_) => return Err("\"default_user\" must be a non-empty string".to_string()),
+            None => return Err("\"default_user\" must be a string".to_string()),
+        },
+    };
+
     let device = Device {
         name,
         ssh_public_key,
         signing_public_key,
         port,
         port_explicit,
+        default_user,
     };
 
     // Validate the device configuration
@@ -118,6 +128,13 @@ pub fn save_device_file(path: &Path, device: &Device) -> io::Result<()> {
         obj.insert(
             "port".to_string(),
             serde_json::Value::Number(device.port.into()),
+        );
+    }
+
+    if let Some(default_user) = &device.default_user {
+        obj.insert(
+            "default_user".to_string(),
+            serde_json::Value::String(default_user.clone()),
         );
     }
 
@@ -173,6 +190,7 @@ mod tests {
         assert_eq!(m.name.as_str(), "laptop");
         assert_eq!(m.port, 8022);
         assert!(m.port_explicit);
+        assert_eq!(m.default_user, None, "absent default_user loads as None");
         assert_eq!(
             m.ssh_public_key.as_str(),
             "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeKeyForTests"
@@ -231,6 +249,20 @@ mod tests {
     }
 
     #[test]
+    fn load_device_file_rejects_empty_default_user() {
+        let dir = TempDir::new("empty-default");
+        let path = dir.path("d.json");
+        fs::write(
+            &path,
+            r#"{"name": "d", "ssh_public_key": "ssh-rsa AAAA",
+                "signing_public_key": "MCowBQYDK2VwAyEA==", "default_user": "  "}"#,
+        )
+        .unwrap();
+        let err = load_device_file(&path).unwrap_err();
+        assert!(err.contains("default_user"), "unexpected error: {err}");
+    }
+
+    #[test]
     fn load_device_file_falls_back_to_filename_for_name() {
         let dir = TempDir::new("filename");
         let path = dir.path("from-filename.json");
@@ -276,6 +308,7 @@ mod tests {
             signing_public_key: SigningPublicKeyB64::from("MCowBQYDK2VwAyEA=="),
             port: 2222,
             port_explicit: true,
+            default_user: Some("alice".to_string()),
         };
 
         save_device_file(&path, &device).expect("save must succeed");
@@ -283,6 +316,7 @@ mod tests {
         assert_eq!(loaded.name.as_str(), device.name.as_str());
         assert_eq!(loaded.port, device.port);
         assert!(loaded.port_explicit);
+        assert_eq!(loaded.default_user.as_deref(), Some("alice"));
         assert_eq!(
             loaded.ssh_public_key.as_str(),
             device.ssh_public_key.as_str()

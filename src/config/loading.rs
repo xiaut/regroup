@@ -80,6 +80,7 @@ pub fn create_device_config(config_dir: &Path) -> Result<Device, String> {
         signing_public_key,
         port: 22,
         port_explicit: false,
+        default_user: None,
     };
 
     // Validate the device configuration
