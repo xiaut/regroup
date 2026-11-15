@@ -21,7 +21,7 @@ config/
 ├── loading.rs      # load_config(): ensure repo, scan devices/, auto-create the local
 │                   #   device on first run only (repo without commits); a removal
 │                   #   of the local device from the shared config is respected
-├── device.rs       # device file (device.json) load/save + validation tests
+├── device.rs       # device file (device.json) load/save, incl. the optional default_user field + validation tests
 ├── connection.rs   # connection files: naming rule, ownership enforcement, loader
 ├── users.rs        # users/<user>.json: one file per known user
 ├── settings.rs     # local settings.json at ~/.regroup-config/ (udp_port, wait_secs; not synced)

@@ -447,6 +447,7 @@ pub fn add_device_to_config(
         signing_public_key: device.signing_public_key.clone(),
         port: device.port,
         port_explicit: true,
+        default_user: None,
     };
 
     // Save the placeholder into the tmp/ overlay so the device persists
@@ -890,6 +891,7 @@ mod tests {
             signing_public_key: crate::ssh::keys::SigningPublicKeyB64::from("MCowBQYDK2VwAyEA=="),
             port: 22,
             port_explicit: false,
+            default_user: None,
         };
         let devices = vec![device];
         // `dir` plays the role of the root config dir: the device file lives

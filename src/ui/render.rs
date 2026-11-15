@@ -476,8 +476,9 @@ pub fn log_style(msg: &str) -> Style {
 }
 
 /// Users sub-panel of the Devices pane: the users of the selected device
-/// (local or added), grouped by super-state with divider rows: the pinned
-/// row first on the localhost device (`── current user (added) ──` /
+/// (local or added), grouped with divider rows: the device's default user
+/// first under `── default ──` (at most one per device), then the pinned
+/// row on the localhost device (`── current user (added) ──` /
 /// `── current user (not added) ──`), then `── added ──` (users in the
 /// shared configuration), then `── not added ──`. Each user row keeps the
 /// sub-status column (temporary / confirmed / SSH key installed).
@@ -493,17 +494,20 @@ pub fn render_users_panel(
     use super::types::UserStatus;
     let border = if active { Color::Magenta } else { Color::DarkGray };
     let border_type = if active { BorderType::Double } else { BorderType::Plain };
-    // The super-state of each user, in display order: the pinned row
-    // first, then added, then not added (users_view returns them in
-    // this order).
+    // The super-state of each user, in display order: the default user
+    // first, then the pinned row, then added, then not added (users_view
+    // returns them in this order).
     #[derive(Clone, Copy, PartialEq, Eq)]
     enum Group {
+        Default,
         Pinned,
         Added,
         NotAdded,
     }
     let group_of = |u: &super::types::UiUser| {
-        if u.pinned {
+        if u.is_default {
+            Group::Default
+        } else if u.pinned {
             Group::Pinned
         } else if u.added {
             Group::Added
@@ -517,6 +521,7 @@ pub fn render_users_panel(
         let group = group_of(u);
         if last_group != Some(group) {
             let label = match group {
+                Group::Default => "default".to_string(),
                 Group::Pinned => format!(
                     "current user ({})",
                     if u.added { "added" } else { "not added" }
@@ -1152,9 +1157,9 @@ mod tests {
         let backend = TestBackend::new(60, 12);
         let mut terminal = Terminal::new(backend).unwrap();
         let users = vec![
-            UiUser { name: "matthias".to_string(), status: UserStatus::KeyInstalled, added: true, pinned: true },
-            UiUser { name: "alice".to_string(), status: UserStatus::Confirmed, added: true, pinned: false },
-            UiUser { name: "bob".to_string(), status: UserStatus::Temporary, added: false, pinned: false },
+            UiUser { name: "matthias".to_string(), status: UserStatus::KeyInstalled, added: true, pinned: true, is_default: false },
+            UiUser { name: "alice".to_string(), status: UserStatus::Confirmed, added: true, pinned: false, is_default: false },
+            UiUser { name: "bob".to_string(), status: UserStatus::Temporary, added: false, pinned: false, is_default: false },
         ];
         terminal
             .draw(|frame| {
@@ -1197,5 +1202,61 @@ mod tests {
         assert!(!buf[(0, p_matthias as u16)]
             .modifier
             .contains(Modifier::REVERSED));
+    }
+
+    /// The device's default user is the pinned first row, under its own
+    /// `── default ──` divider, ahead of the membership groups; the divider
+    /// alone marks the row (the status column keeps its plain label). The
+    /// selection index addresses the user rows, not the dividers.
+    #[test]
+    fn users_pane_pins_default_user_under_its_own_divider() {
+        use crate::ui::types::{UiUser, UserStatus};
+        let backend = TestBackend::new(60, 12);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let users = vec![
+            UiUser { name: "alice".to_string(), status: UserStatus::Confirmed, added: true, pinned: false, is_default: true },
+            UiUser { name: "matthias".to_string(), status: UserStatus::Confirmed, added: true, pinned: true, is_default: false },
+            UiUser { name: "bob".to_string(), status: UserStatus::Temporary, added: false, pinned: false, is_default: false },
+        ];
+        terminal
+            .draw(|frame| {
+                render_users_panel(frame, frame.area(), &users, Some(1), true);
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer();
+        let lines: Vec<String> = (0..buf.area.height)
+            .map(|y| {
+                (0..buf.area.width)
+                    .map(|x| buf[(x, y)].symbol().chars().next().unwrap_or(' '))
+                    .collect()
+            })
+            .collect();
+        let pos = |needle: &str| {
+            lines
+                .iter()
+                .position(|l| l.contains(needle))
+                .unwrap_or_else(|| panic!("{needle} not rendered"))
+        };
+        let p_def_div = pos("── default ──");
+        let p_alice = pos("alice");
+        let p_cur_div = pos("── current user (added) ──");
+        let p_matthias = pos("matthias");
+        let p_bob = pos("bob");
+        assert!(
+            p_def_div < p_alice
+                && p_alice < p_cur_div
+                && p_cur_div < p_matthias
+                && p_matthias < p_bob,
+            "users out of order: {p_def_div} {p_alice} {p_cur_div} {p_matthias} {p_bob}"
+        );
+        // The divider marks the default row; the status column does not repeat it.
+        assert!(lines[p_alice].contains("confirmed"), "alice row: {}", lines[p_alice]);
+        assert!(!lines[p_alice].contains("default"), "alice row: {}", lines[p_alice]);
+        // Selection index 1 addresses "matthias" even with two divider rows above.
+        let matthias_row = (0..buf.area.width)
+            .any(|x| buf[(x, p_matthias as u16)].modifier.contains(Modifier::REVERSED));
+        assert!(matthias_row, "selected user row must be highlighted");
+        assert!(!buf[(0, p_alice as u16)].modifier.contains(Modifier::REVERSED));
+        assert!(!buf[(0, p_def_div as u16)].modifier.contains(Modifier::REVERSED));
     }
 }

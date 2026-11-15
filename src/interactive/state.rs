@@ -22,7 +22,7 @@ use crate::cli::{NameConflict,
     shell_rc_file, sync_git, trust_new_signing_key, unique_device_name, usage,
     wipe as wipe_config,
 };
-use crate::config::{root_config_dir, GIT_DIR, Device, load_config};
+use crate::config::{device_file_path, root_config_dir, GIT_DIR, Device, load_config};
 use crate::config::users::load_device_users_merged;
 use crate::discovery::beacon::BeaconDevice;
 use crate::ssh::config::update_block;
@@ -840,6 +840,9 @@ impl InteractiveState {
             Action::RemoveTempUser => {
                 self.remove_temp_user(ctx);
             }
+            Action::SetDefaultUser => {
+                self.set_default_user(ctx);
+            }
             Action::DeleteConfirm => self.delete_selected(ctx),
             Action::DeleteCancel => self.delete_selection = None,
             Action::WipeMode => {
@@ -1200,11 +1203,13 @@ impl InteractiveState {
     /// name yet. A confirmed user the local user has an outgoing
     /// connection to shows as "SSH key installed".
     ///
-    /// The pane is grouped by super-state: on the localhost device the
-    /// current user is the pinned first row (always shown, whether or not
-    /// its file is in the shared configuration), then come the added
-    /// users, then the not-added ones; on other devices, added first,
-    /// then not-added.
+    /// The pane is grouped by super-state: the device's default user (the
+    /// `default_user` declared in its device.json, or the only user when
+    /// there is exactly one) is the pinned first row under its own
+    /// `── default ──` divider; on the localhost device the current user
+    /// is pinned next (always shown, whether or not its file is in the
+    /// shared configuration), then come the added users, then the
+    /// not-added ones; on other devices, added first, then not-added.
     fn users_view(&self, ctx: &Context) -> Vec<UiUser> {
         let Some(name) = self.selected_device(ctx) else {
             return Vec::new();
@@ -1246,6 +1251,7 @@ impl InteractiveState {
                     status,
                     added: !entry.temporary,
                     pinned: false,
+                    is_default: false,
                 });
             }
         }
@@ -1266,15 +1272,34 @@ impl InteractiveState {
                         status: UserStatus::Confirmed,
                         added: false,
                         pinned: true,
+                        is_default: false,
                     },
                 ),
             }
         }
-        // Display order: pinned row first, then added, then not added;
-        // name order within each group.
+        // The device's default user: the `default_user` declared in the
+        // device's own device.json (shared configuration, read through the
+        // proxy) when it is still among the device's users, otherwise —
+        // with no declared choice — the only user when there is exactly
+        // one. It is pinned as the very first row, ahead of the pinned
+        // current user.
+        let declared = crate::config::proxy::device_file(&root, &name)
+            .and_then(|path| crate::config::device::load_device_file(&path).ok())
+            .and_then(|d| d.default_user);
+        let default = declared
+            .filter(|d| users.iter().any(|u| u.name == *d))
+            .or_else(|| (users.len() == 1).then(|| users[0].name.clone()));
+        if let Some(d) = default
+            && let Some(u) = users.iter_mut().find(|u| u.name == d)
+        {
+            u.is_default = true;
+        }
+        // Display order: the default user first, then the pinned row, then
+        // added, then not added; name order within each group.
         users.sort_by(|a, b| {
             let key = |u: &UiUser| {
                 (
+                    if u.is_default { 0 } else { 1 },
                     if u.pinned { 0 } else { 1 },
                     if u.added { 0 } else { 1 },
                     u.name.clone(),
@@ -1381,6 +1406,70 @@ impl InteractiveState {
         }
         self.users_selected = None;
         ui::log(&format!("  - Temporary user {user} on {device} removed"));
+    }
+
+    /// Declare the user selected in the Users panel as the default user of
+    /// the selected device (key 'd'). The default user is the `default_user`
+    /// field of the device's own `device.json` in the git layer — part of
+    /// the shared configuration, synced to every peer — so only the device
+    /// itself can declare it; on any other device the key only reports
+    /// that. Radio semantics: the field holds one name, so declaring
+    /// another user replaces the current default.
+    fn set_default_user(&mut self, ctx: &Context) {
+        let (Some(device), Some(user)) =
+            (self.selected_device(ctx), self.users_selected.clone())
+        else {
+            ui::log("Select a device, then one of its users (Right) first");
+            return;
+        };
+        if device != ctx.local_name {
+            ui::log(&format!(
+                "  - The default user of {device} is declared by {device} itself as 'default_user' \
+                 in its device.json (shared configuration) — set it from that device"
+            ));
+            return;
+        }
+        if self.is_temporary_user(ctx, &device, &user) {
+            ui::log(&format!(
+                "  - {user} on {device} is temporary — sync git ('s') so the device declares its users first"
+            ));
+            return;
+        }
+        if ctx.dry_run {
+            ui::log("  - (dry run - default user not changed)");
+            return;
+        }
+        let root = root_config_dir(ctx.home);
+        let config_dir = root.join(GIT_DIR);
+        // The declaration lives in the device's own device.json in the git
+        // layer: the device must already be in the shared configuration.
+        let path = device_file_path(&config_dir, &device);
+        if !path.exists() {
+            ui::log(&format!(
+                "  - {device} is not in the shared configuration yet — add it first ('a' on its row)"
+            ));
+            return;
+        }
+        // Load-modify-save, so the rest of the file (keys, port) is kept.
+        let mut target = match crate::config::device::load_device_file(&path) {
+            Ok(d) => d,
+            Err(e) => die(&format!("cannot load {}: {e}", path.display())),
+        };
+        target.default_user = Some(user.clone());
+        if let Err(e) = crate::config::device::save_device_file(&path, &target) {
+            die(&format!("cannot write {}: {e}", path.display()));
+        }
+        // Commit the declaration so it propagates on the next git sync.
+        if let Err(e) = crate::git::sync::git_add_and_commit_file(
+            &config_dir,
+            &path,
+            &format!("Set default user {user} on {device}"),
+        ) {
+            ui::log(&format!("  - could not commit the default user: {e}"));
+        }
+        ui::log(&format!(
+            "  - Default user of {device} is now {user} (default_user in devices/{device}/device.json, shared via git)"
+        ));
     }
 
     /// Install the local user's SSH key towards the user selected in the
@@ -1573,6 +1662,7 @@ mod tests {
     use super::*;
     use crate::config::proxy;
     use crate::config::users::ensure_local_user_file;
+    use crate::config::DeviceName;
 
     fn test_home(tag: &str) -> (std::path::PathBuf, String) {
         let dir = std::env::temp_dir().join(format!("regroup-state-test-{tag}-{}", std::process::id()));
@@ -1759,6 +1849,7 @@ mod tests {
             signing_public_key: SigningPublicKeyB64::from("AAAA"),
             port: 22,
             port_explicit: false,
+            default_user: None,
         };
         // Same name, different key (hostname match).
         assert!(is_local_device(&ctx, &mk("testhost", &other_key)));
@@ -1841,6 +1932,138 @@ mod tests {
             state.temp_users.get("laptop").is_some_and(|u| u == "alice"),
             "the in-memory entry for another temp user must be kept"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Write a device.json (git layer) for `device`, with the given
+    /// declared default user.
+    fn write_device_json(git: &std::path::Path, device: &str, key: &SshPublicKey, default_user: Option<&str>) {
+        let dev = Device {
+            name: DeviceName::new(device.to_string()).unwrap(),
+            ssh_public_key: key.clone(),
+            signing_public_key: SigningPublicKeyB64::from("AAAA"),
+            port: 22,
+            port_explicit: false,
+            default_user: default_user.map(|s| s.to_string()),
+        };
+        let path = device_file_path(git, device);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        crate::config::device::save_device_file(&path, &dev).unwrap();
+    }
+
+    #[test]
+    fn users_view_pins_the_declared_default_first() {
+        let (dir, home) = test_home("declared-default");
+        let root = root_config_dir(&home);
+        let git = root.join(GIT_DIR);
+        let key = SshPublicKey::from("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFake");
+        ensure_local_user_file(&git, "laptop", "alice").unwrap();
+        ensure_local_user_file(&git, "laptop", "bob").unwrap();
+        // The device declares bob as its default user in its device.json.
+        write_device_json(&git, "laptop", &key, Some("bob"));
+
+        let ssh_config = dir.join("ssh_config");
+        let ctx = test_ctx(&home, &key, &ssh_config);
+        let state = test_state("laptop", "alice");
+
+        let users = state.users_view(&ctx);
+        assert_eq!(users.len(), 2);
+        assert_eq!(users[0].name, "bob");
+        assert!(users[0].is_default, "the declared default is pinned first");
+        assert_eq!(users[1].name, "alice");
+        assert!(!users[1].is_default);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn users_view_single_user_is_the_implicit_default() {
+        let (dir, home) = test_home("implicit-default");
+        let root = root_config_dir(&home);
+        let git = root.join(GIT_DIR);
+        let key = SshPublicKey::from("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFake");
+        ensure_local_user_file(&git, "laptop", "alice").unwrap();
+        // No device.json at all: nothing declared.
+        let ssh_config = dir.join("ssh_config");
+        let ctx = test_ctx(&home, &key, &ssh_config);
+        let state = test_state("laptop", "alice");
+
+        let users = state.users_view(&ctx);
+        assert_eq!(users.len(), 1);
+        assert!(users[0].is_default, "the only user is the default, computed on the fly");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn users_view_ignores_a_default_not_among_the_users() {
+        let (dir, home) = test_home("stale-default");
+        let root = root_config_dir(&home);
+        let git = root.join(GIT_DIR);
+        let key = SshPublicKey::from("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFake");
+        ensure_local_user_file(&git, "laptop", "alice").unwrap();
+        ensure_local_user_file(&git, "laptop", "bob").unwrap();
+        write_device_json(&git, "laptop", &key, Some("ghost"));
+
+        let ssh_config = dir.join("ssh_config");
+        let ctx = test_ctx(&home, &key, &ssh_config);
+        let state = test_state("laptop", "alice");
+
+        let users = state.users_view(&ctx);
+        assert!(users.iter().all(|u| !u.is_default), "stale default must not pin anything");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn set_default_user_on_the_local_device_declares_it_in_device_json() {
+        let (dir, home) = test_home("set-default-local");
+        let root = root_config_dir(&home);
+        let git = root.join(GIT_DIR);
+        let key = SshPublicKey::from("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeLocal");
+        // The local device is in the shared configuration, with two users.
+        write_device_json(&git, "testhost", &key, None);
+        ensure_local_user_file(&git, "testhost", "alice").unwrap();
+        ensure_local_user_file(&git, "testhost", "bob").unwrap();
+
+        let ssh_config = dir.join("ssh_config");
+        let mut ctx = test_ctx(&home, &key, &ssh_config);
+        ctx.dry_run = false;
+        let mut state = test_state("testhost", "bob");
+        state.device_selected = Some(DeviceRow::Local);
+
+        state.set_default_user(&ctx);
+        // The declaration is written into the local device's own
+        // device.json in the git layer (radio semantics: one field).
+        let path = device_file_path(&git, "testhost");
+        let loaded = crate::config::device::load_device_file(&path).unwrap();
+        assert_eq!(loaded.default_user.as_deref(), Some("bob"));
+        // ... and the Users pane pins it first.
+        let users = state.users_view(&ctx);
+        assert_eq!(users[0].name, "bob");
+        assert!(users[0].is_default);
+        assert_eq!(users.iter().filter(|u| u.is_default).count(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn set_default_user_on_an_added_device_is_refused() {
+        let (dir, home) = test_home("set-default-refused");
+        let root = root_config_dir(&home);
+        let git = root.join(GIT_DIR);
+        let key = SshPublicKey::from("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFake");
+        write_device_json(&git, "laptop", &key, None);
+        ensure_local_user_file(&git, "laptop", "alice").unwrap();
+        ensure_local_user_file(&git, "laptop", "bob").unwrap();
+
+        let ssh_config = dir.join("ssh_config");
+        let mut ctx = test_ctx(&home, &key, &ssh_config);
+        ctx.dry_run = false;
+        let mut state = test_state("laptop", "bob");
+
+        // The Users pane is on an added device ("laptop"), not on the local
+        // device ("testhost"): only the device itself declares its default.
+        state.set_default_user(&ctx);
+        let loaded = crate::config::device::load_device_file(&device_file_path(&git, "laptop")).unwrap();
+        assert_eq!(loaded.default_user, None, "nothing must be written for an added device");
+        assert!(state.users_view(&ctx).iter().all(|u| !u.is_default));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

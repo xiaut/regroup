@@ -56,7 +56,8 @@ Main screen (overview: Devices pane big, Logs strip at the bottom)
 │       → ── added ── → added devices → ── detected ── → detected devices
 │       (Up/Down select, wrapping)
 │       └── Users sub-panel   ← nested INSIDE the Devices panel
-│           └── ── current user (added|not added) ── → pinned row (localhost only)
+│           └── ── default ── → the device's default user (at most one)
+│               → ── current user (added|not added) ── → pinned row (localhost only)
 │               → ── added ── → added users → ── not added ── → not-added users
 │               (Up/Down select, wrapping)
 └── Logs strip (bottom, always visible)
@@ -89,14 +90,21 @@ entering the mode from the local or an added row always works. Entering
 the mode is what unlocks the associated user actions; it is never skipped
 because the list is short or empty.
 
-The **Users sub-panel is grouped by super-state**, like the Devices pane:
-on the localhost device the current user is the pinned first row under
-`── current user (added|not added) ──` (always shown, one line), then
+The **Users sub-panel is grouped by super-state**, like the Devices pane.
+Each device has **one default user** — its main/preferred user, declared by
+the device itself as `default_user` in its own `device.json` (shared
+configuration, synced; a device with exactly one user has that user as the
+default implicitly). The default user is the pinned first row under
+`── default ──`; then, on the localhost device, the current user is pinned
+under `── current user (added|not added) ──` (always shown, one line); then
 `── added ──` (users in the shared configuration) and `── not added ──`
 (users only in the local tmp/ overlay). The status column is the
-sub-status (confirmed / temporary / SSH key installed). On the localhost
-device no install/remove-key action is offered: connecting to the current
-device is nonsense.
+sub-status (confirmed / temporary / SSH key installed). Key `d` in the
+Users pane declares the selected user as the device's default (radio
+semantics — it replaces the current one), but only on the device itself:
+on the localhost row; on an added device the pane shows the device-declared
+default read-only. On the localhost device no install/remove-key action is
+offered: connecting to the current device is nonsense.
 
 ## Scenarios
 
@@ -157,5 +165,6 @@ pane state (see `pane_keys` in `src/ui/types.rs`): `s` sync, `d` delete,
 **localhost** row (plain add/remove — the local data stays recoverable,
 unlike `d` delete), `a`/`n` on a **detected** row, and `Enter`/`Right`
 into Users when the **local or an added** row is selected in the Devices
-panel, and so on. `q` quit is only offered on the main menu (overview);
+panel, and so on. In the Users pane, `d` sets the selected user as the
+device's default user. `q` quit is only offered on the main menu (overview);
 `?` help is the single key that works in every pane state.

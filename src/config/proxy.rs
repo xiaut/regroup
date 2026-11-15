@@ -375,6 +375,7 @@ mod tests {
             signing_public_key: SigningPublicKeyB64::from("MCowBQYDK2VwAyEA=="),
             port: 22,
             port_explicit: false,
+            default_user: None,
         }
     }
 
