@@ -18,9 +18,10 @@ fi
 # 3. Remove the worktree.
 git -C "$root" worktree remove "$root/.worktrees/$name"
 git -C "$root" worktree prune
-# 4. Delete the remote branch only if fully merged (squash merges are not ancestors).
-if git -C "$root" cherry origin/main "$branch" | grep -q '^+'; then
-  echo "branch $branch still has unmerged commits; keeping it (§6)" >&2
+# 4. Delete the remote branch only if its content is fully in origin/main.
+#    git cherry shows '+' after a squash merge, so gate on an empty diff instead (§6).
+if [ -n "$(git -C "$root" diff origin/main "$branch")" ]; then
+  echo "branch $branch still differs from origin/main; keeping it (§6)" >&2
   exit 1
 fi
 git -C "$root" push origin --delete "$branch"
