@@ -33,7 +33,7 @@ For additional documentation, see the `docs/` directory.
 
 ## Worktrees, Branches, and PRs — Always Inside This Directory
 
-When the developer asks you to work in a **worktree**, on a **branch**, or on a **pull request**, you must create the git worktree **inside this repository directory** — never next to it or anywhere else outside it:
+Any work that is not on `main` in the main checkout implies a **worktree** + a dedicated **branch** + a **pull request opened on the first commit** — as a **draft** if the work is not ready yet. The worktree must be created **inside this repository directory** — never next to it or anywhere else outside it:
 
 ```bash
 git worktree add .worktrees/<name> <branch>
@@ -46,4 +46,5 @@ Rules:
 - Use a descriptive worktree name — the branch name or the PR number (e.g. `.worktrees/pr-42`)
 - `.worktrees/` is ignored via the committed `.gitignore`, so the main worktree's `git status` stays clean
 - Do all work for that branch/PR inside its worktree; do not check out branches in the main worktree
+- Push the branch and open the PR on the **first commit** — as a **draft** while the work is not ready — so every branch is backed by an open PR from the start
 - Do not remove the worktree when the work is done — keep it in place so the developer can test while the PR is open; clean up with `git worktree remove .worktrees/<name>` followed by `git worktree prune` only after the PR is merged or when the developer explicitly asks
