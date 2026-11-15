@@ -47,7 +47,8 @@ Rules:
 When the PR is merged — or when the developer explicitly asks — and the branch is no longer needed in this session, clean up in this order:
 
 1. Fetch so the local refs reflect the merge: `git fetch --all --prune`
-2. Remove the worktree: `git worktree remove .worktrees/<name>`, then `git worktree prune`
-3. Delete the remote branch — but only after checking that its actual content has been merged into `main`: `git cherry origin/main <branch>` must show no `+` commits (equivalently, `git diff origin/main <branch>` must be empty). Do not rely on `git branch --merged` alone — a squash merge does not make the branch an ancestor of `main`. If anything on the branch is not merged, keep the branch and report what is missing. Only then: `git push origin --delete <branch>`
+2. Update the local `main` branch if possible: in the main checkout run `git merge --ff-only origin/main`. Fast-forward only — never reset, never force; if that is not possible (diverged local `main`, conflicting uncommitted changes), leave `main` as is and report it.
+3. Remove the worktree: `git worktree remove .worktrees/<name>`, then `git worktree prune`
+4. Delete the remote branch — but only after checking that its actual content has been merged into `main`: `git cherry origin/main <branch>` must show no `+` commits (equivalently, `git diff origin/main <branch>` must be empty). Do not rely on `git branch --merged` alone — a squash merge does not make the branch an ancestor of `main`. If anything on the branch is not merged, keep the branch and report what is missing. Only then: `git push origin --delete <branch>`
 
-Do not check out or update `main` in the main checkout — that is the developer's call.
+Do not check out another branch in the main checkout — that stays the developer's call.
