@@ -45,6 +45,7 @@ Rules:
 - `.worktrees/` is ignored via the committed `.gitignore`, so the main worktree's `git status` stays clean
 - Do all work for that branch/PR inside its worktree; do not check out branches in the main worktree
 - Push the branch and open the PR on the **first commit** — as a **draft** while the work is not ready — so every branch is backed by an open PR from the start
+- When the agent thinks the PR is ready, mark it **ready for review** — the PR must no longer be in a draft state
 - One (worktree, branch, PR) tuple per session: if more work is requested in the same session, reuse the same worktree and branch — and if that PR has already been merged, open a **new PR on the same branch**, never a second worktree/branch
 - Keep the worktree in place while the PR is open so the developer can test
 
