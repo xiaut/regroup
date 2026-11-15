@@ -153,7 +153,9 @@ arrows are consumed by the list, so leaving the pane is done with
 
 Character shortcuts act as commands, not navigation, and are listed per
 pane state (see `pane_keys` in `src/ui/types.rs`): `s` sync, `d` delete,
-`w` wipe, `c` setup-cd and `Enter`/`Right` into Users when the **local or
-an added** row is selected in the Devices panel, `a`/`n` when a
-**detected** row is selected, and so on. `q` quit is only offered on the main menu (overview);
+`w` wipe, `c` setup-cd on an **added** row, `a`/`r` add/remove on the
+**localhost** row (plain add/remove — the local data stays recoverable,
+unlike `d` delete), `a`/`n` on a **detected** row, and `Enter`/`Right`
+into Users when the **local or an added** row is selected in the Devices
+panel, and so on. `q` quit is only offered on the main menu (overview);
 `?` help is the single key that works in every pane state.

@@ -1535,6 +1535,10 @@ impl InteractiveState {
 
     /// Delete the currently selected added device in the Devices pane
     fn delete_selected_device(&mut self, ctx: &Context) {
+        if ctx.dry_run {
+            ui::log("  - (dry run - device removal skipped)");
+            return;
+        }
         let Some(name) = self.selected_device(ctx) else {
             ui::log("No added device selected in the Devices pane");
             return;
