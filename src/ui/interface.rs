@@ -149,6 +149,12 @@ impl Ui {
     /// while still being recorded in the stream, so the full pass reappears
     /// in the Logs pane when the TUI resumes. The guard restores the
     /// previous mode when the pass ends, even on panic.
+    ///
+    /// Reserve this full pass (screen switch + pause) for actions that run
+    /// a subprocess needing the live terminal — git pull/push and ssh may
+    /// prompt for a password, which only works with the screen switched
+    /// away. Actions that only log through the stream use
+    /// [`Ui::logged_action`] instead.
     pub fn with_clean_terminal<F, R>(&mut self, action: &str, f: F) -> R
     where
         F: FnOnce() -> R,
@@ -196,5 +202,51 @@ impl Ui {
                 f()
             }
         }
+    }
+
+    /// Run `f` as a logged action without a CLI pass: the action is still
+    /// delimited in the one log stream by `TUI -> CLI (<action>)` and
+    /// `CLI -> TUI (<action>)` markers, but the TUI stays on screen — no
+    /// screen switch, no direct output, no "press Enter to return" pause.
+    /// Use this for actions that only log through the stream and run no
+    /// live-output subprocess (device add/remove, wipe): their log lines
+    /// land in the Logs pane like any other, and any subprocess they run
+    /// goes through `run_logged` in captured mode (output logged line by
+    /// line). In plain mode there is no screen to keep: just execute the
+    /// function.
+    pub fn logged_action<F, R>(&mut self, action: &str, f: F) -> R
+    where
+        F: FnOnce() -> R,
+    {
+        match self {
+            Ui::Tty(_) => {
+                crate::ui::log(&format!("TUI -> CLI ({action})"));
+                let result = f();
+                crate::ui::log(&format!("CLI -> TUI ({action})"));
+                result
+            }
+            Ui::Plain(_) => f(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Plain mode has no screen to switch away from: both action wrappers
+    // just run the function and return its value.
+    #[test]
+    fn logged_action_runs_the_function_in_plain_mode() {
+        let mut ui = Ui::Plain(PlainUi::new());
+        let result = ui.logged_action("add device", || 42);
+        assert_eq!(result, 42);
+    }
+
+    #[test]
+    fn with_clean_terminal_runs_the_function_in_plain_mode() {
+        let mut ui = Ui::Plain(PlainUi::new());
+        let result = ui.with_clean_terminal("git sync", || "done");
+        assert_eq!(result, "done");
     }
 }

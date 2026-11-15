@@ -56,39 +56,15 @@ should `bindings_hint_text` merge like `merge_hints`? Either would make
 the triplication impossible by construction instead of by deleting two
 lines.
 
-## 3. Question: is the temporary CLI pass useless on some actions?
+## 3. CLI -> TUI / TUI -> CLI markers at app start and stop (quit, wipe)
 
-`Ui::with_clean_terminal` (`src/ui/interface.rs:152`) leaves the
-alternate screen, enables direct output, logs `TUI -> CLI (<action>)` /
-`CLI -> TUI (<action>)`, and pauses with "Press Enter to return" on
-**every** call. Call sites (`src/interactive/state.rs`):
-
-| action label        | line | runs a subprocess whose output must be seen live? |
-|---------------------|------|----------------------------------------------------|
-| `git sync`          | 688  | yes (git pull/push/commit)                         |
-| `trust new signing key` | 714 | probably only file writes + `ui::log`          |
-| `wipe`              | 814  | question — mostly deletions                        |
-| `remove device`     | 967, 1435 | question — file/ssh-config edits, maybe git  |
-| `add device`        | 1090 | question — file writes, maybe git commit           |
-| `install SSH key`   | 1316 | yes (ssh / receive-install-key)                    |
-| `remove SSH key`    | 1389 | yes (ssh / receive-remove-key)                     |
-
-Question: for actions that only log through `ui::log` and spawn no
-subprocess, the whole pass — leaving the TUI, the Enter pause,
-re-entering — is pure friction. Should the pass be reserved for actions
-with real direct output (sync, key install/remove), keeping the log
-markers but skipping the screen switch and the pause? Also note the
-inconsistency: `SetupCdConfirm` is *not* wrapped in a pass at all, even
-though it writes to the shell rc file.
-
-## 4. CLI -> TUI / TUI -> CLI markers at app start and stop (quit, wipe)
-
-Today the transition markers exist only inside `with_clean_terminal`, so
-the CLI-visible log stream has no record of when the TUI took the
-terminal at **start**, nor when it handed it back on **quit**:
+Today the transition markers exist only inside `with_clean_terminal` /
+`logged_action`, so the CLI-visible log stream has no record of when the
+TUI took the terminal at **start**, nor when it handed it back on
+**quit**:
 `Action::Quit` (`src/interactive/state.rs`, `handle_action`) just returns
 `true` and the process restores the terminal silently. Wipe goes through
-a `with_clean_terminal("wipe")` pass (so it is marked), but quit is not.
+a `logged_action("wipe")` (so it is marked), but quit is not.
 
 To do:
 
@@ -101,7 +77,7 @@ To do:
 - Question: in plain (CLI) mode there is no screen switch — should the
   markers still be logged for stream symmetry, or skipped?
 
-## 5. Default user per device
+## 4. Default user per device
 
 New concept: each device has **one default user**.
 

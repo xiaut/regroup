@@ -20,7 +20,10 @@
 //! see [`DirectOutputGuard`]) the stream is shown in both places: every
 //! message is printed to the CLI and recorded for the Logs pane, and
 //! external-command output is forwarded live to the CLI by
-//! [`run_logged`] while being recorded the same way.
+//! [`run_logged`] while being recorded the same way. Actions that need no
+//! live terminal run as logged actions ([`Ui::logged_action`]): delimited
+//! by the same `TUI -> CLI` / `CLI -> TUI` markers in the stream, but the
+//! TUI stays on screen and nothing is printed to the CLI.
 
 pub mod interface;
 pub mod keys;

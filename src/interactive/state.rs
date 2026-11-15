@@ -811,7 +811,7 @@ impl InteractiveState {
             Action::WipeConfirm => {
                 self.wipe_pending = false;
                 let devices: Vec<Device> = self.key_to_device.values().cloned().collect();
-                tui.with_clean_terminal("wipe", || {
+                tui.logged_action("wipe", || {
                     wipe_config(ctx.home, ctx.ssh_config, &devices);
                 });
                 // wipe itself leaves known_hosts alone (see its doc
@@ -964,7 +964,7 @@ impl InteractiveState {
         };
         let key = device.ssh_public_key.clone();
         let last_ip = self.known_ip.get(&key).cloned();
-        if tui.with_clean_terminal("remove device", || {
+        if tui.logged_action("remove device", || {
             remove_device(ctx.home, ctx.ssh_config, &device, last_ip.as_deref())
         }) {
             ui::log(&format!(
@@ -1087,7 +1087,7 @@ impl InteractiveState {
     /// Add `device` under `name`: write to disk and update the in-memory
     /// maps so future beacons for it are treated as a known device.
     fn add_device(&mut self, ctx: &Context, tui: &mut ui::Ui, beacon_device: BeaconDevice, name: String) {
-        if let Some(device) = tui.with_clean_terminal("add device", || {
+        if let Some(device) = tui.logged_action("add device", || {
             add_device_to_config(
                 ctx.home,
                 ctx.ssh_config,
@@ -1432,7 +1432,7 @@ impl InteractiveState {
         let key = device.ssh_public_key.clone();
         let last_ip = self.known_ip.get(&key).cloned();
         
-        if tui.with_clean_terminal("remove device", || {
+        if tui.logged_action("remove device", || {
             remove_device(ctx.home, ctx.ssh_config, &device, last_ip.as_deref())
         }) {
             ui::log(&format!("  - Removed {} (device file, ~/.ssh/config block, git remote)", device.name));
