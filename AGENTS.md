@@ -12,7 +12,7 @@ git fetch --all --prune
 
 Do not create branches, worktrees, or PRs from stale local refs. After fetching, base your work on the up-to-date remote-tracking refs (e.g. `origin/<branch>`).
 
-Template T1 (`scripts/bootstrap.sh`, §8) bundles this fetch with §2.
+Script T1 — `scripts/bootstrap.sh` (§8) — bundles this fetch with §2.
 
 ## 2. Load Project Context
 
@@ -25,7 +25,7 @@ cat Cargo.toml
 
 These commands give you the complete project structure and configuration that you need for every task — without them, you lack essential context. For additional documentation, see the `docs/` directory.
 
-Template T1 (`scripts/bootstrap.sh`, §8) runs §1 + §2 in one step.
+Script T1 — `scripts/bootstrap.sh` (§8) — runs §1 + §2 in one step.
 
 ## 3. Specification Before Implementation
 
@@ -43,15 +43,15 @@ git worktree add .worktrees/<name> -b <branch> origin/<branch>
 
 Working outside the approved working directory triggers an "outside workdir" approval prompt to the developer; a worktree under `.worktrees/` stays inside the repo, so that approval is never asked.
 
-Template T2 (`scripts/new-work.sh <name> <branch> [base-ref]`, §8): worktree + branch + push in one step.
+Script T2 — `scripts/new-work.sh <name> <branch> [base-ref]` (§8) — worktree + branch + push in one step.
 
 Rules:
 
 - Use a descriptive worktree name — the branch name or the PR number (e.g. `.worktrees/pr-42`)
 - `.worktrees/` is ignored via the committed `.gitignore`, so the main worktree's `git status` stays clean
 - Do all work for that branch/PR inside its worktree; do not check out branches in the main worktree
-- Push the branch and open the PR on the **first commit** — as a **draft** while the work is not ready — so every branch is backed by an open PR from the start. Template T3 (`scripts/first-commit.sh "<msg>"`, §8): commit with the required trailer + push + `gh pr create --draft` if missing
-- You — the agent — decide when the PR is ready for review: as soon as your work is done, mark the PR **ready for review** yourself (it must no longer be in a draft state) — do not leave it in draft and do not ask the developer to flip it for you. Template T4 (`scripts/finish-pr.sh`, §8): `gh pr ready` + prints the two test reminders below
+- Push the branch and open the PR on the **first commit** — as a **draft** while the work is not ready — so every branch is backed by an open PR from the start. Script T3 — `scripts/first-commit.sh "<msg>"` (§8) — commit with the required trailer + push + `gh pr create --draft` if missing
+- You — the agent — decide when the PR is ready for review: as soon as your work is done, mark the PR **ready for review** yourself (it must no longer be in a draft state) — do not leave it in draft and do not ask the developer to flip it for you. Script T4 — `scripts/finish-pr.sh` (§8) — `gh pr ready` + prints the two test reminders below
 - One (worktree, branch, PR) tuple per session: if more work is requested in the same session, reuse the same worktree and branch — and if that PR has already been merged, open a **new PR on the same branch**, never a second worktree/branch
 - Keep the worktree in place while the PR is open so the developer can test
 
@@ -91,17 +91,17 @@ When the PR is merged — or when the developer explicitly asks — and the bran
 
 Do not check out another branch in the main checkout — that stays the developer's call.
 
-Template T5 (`scripts/merged-cleanup.sh <name> <branch>`, §8) runs steps 1–4 in this order.
+Script T5 — `scripts/merged-cleanup.sh <name> <branch>` (§8) — runs steps 1–4 in this order.
 
 ## 7. Reporting — Short Citations Only
 
 The developer is considered to be aware of AGENTS.md. When you execute a rule, report it to the user only as a short citation of the rule — section number plus a few words (e.g. "§ 4: worktree under `.worktrees/`") — never as a full re-explanation of the rule.
 
-## 8. Script Templates
+## 8. Scripts
 
 The recurring processes above are scripted under `scripts/` — run the script instead of re-deriving the commands. All scripts fail fast (`set -euo pipefail`) and stay inside the workdir.
 
-| Template | Script | Covers | Usage |
+| ID | Script | Covers | Usage |
 |---|---|---|---|
 | T1 | `scripts/bootstrap.sh` | §1 + §2 | `scripts/bootstrap.sh` (anywhere in the repo) |
 | T2 | `scripts/new-work.sh` | §4 worktree + branch + push | `scripts/new-work.sh <worktree-name> <branch> [base-ref=main]` |
