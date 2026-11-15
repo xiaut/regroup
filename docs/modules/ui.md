@@ -257,8 +257,11 @@ The TUI interface uses **ratatui** (formerly tui-rs) with **crossterm** for term
   appear for a confirmed user on a non-local device; a temporary user
   only offers its own user-specific action (`x` remove) — the git sync
   that brings the device's declared users is a global action on the main
-  menu (`s`). Adding a user (`u`) is device-specific and lives on the
-  device row, not here. See [navigation.md](../navigation.md).
+  menu (`s`). Adding a user (`a`) is device-specific and lives on the
+  added device row, not here. On the localhost device the pane also ends
+  with an `── external ──` group listing the incoming connections
+  targeting the current user (revoke with `r`). See
+  [navigation.md](../navigation.md).
 - **Logs strip** (bottom of the main area, always visible): tail of the
   general log
 - **Question block** (bottom): Current question and available actions
@@ -306,7 +309,6 @@ a device or a user — plus navigation:
 | `s` | Sync git (pull/push) |
 | `w` | Wipe configuration |
 | `c` | Setup regroup-cd shell function |
-| `k` | Connections management |
 | `q` | Quit (only offered here) |
 | `Up`/`Right` | Focus the Devices panel |
 | `Down` | Focus the Logs strip |
@@ -319,7 +321,7 @@ Only device-specific actions (the global ones stay on the main menu):
 | Key | Action |
 |-----|--------|
 | `d` | Delete selected device |
-| `u` | Add a temporary user for the device (device-specific: no user needs to be selected) |
+| `a` | Add a temporary user for the device (`a` is free on this row; adding a user is device-specific — no user needs to be selected) |
 | `Right` or `Enter` | Open the Users sub-panel of the selected device |
 
 ### In Devices Panel (localhost row selected)
@@ -327,8 +329,10 @@ Only device-specific actions (the global ones stay on the main menu):
 | Key | Action |
 |-----|--------|
 | `a` or `r` | Add / remove the local device to/from the shared configuration (depending on its membership) |
-| `u` | Add a temporary user for the device |
 | `Right` or `Enter` | Open the Users sub-panel of the local device |
+
+No add-user key on the localhost row: a temporary user configures an
+outgoing connection, and connecting to the current device is nonsense.
 
 ### In Devices Panel (detected row selected)
 
@@ -339,14 +343,20 @@ Only device-specific actions (the global ones stay on the main menu):
 
 ### In Users Panel (a user selected)
 
-Only user-specific actions:
+Only user-specific actions, in two layers — the user layer and, on top of
+it for a confirmed user of an added device, the key layer:
 
 | Key | Action |
 |-----|--------|
-| `d` | Set the selected user as the device's default user |
-| `i` / `r` | Install / remove SSH key (confirmed user, not on localhost) |
+| `d` | Set the selected user as the device's default user (device-owned data — the one exception to "on localhost you only edit your own data") |
 | `x` | Remove the selected temporary user |
+| `i` / `r` | Install / remove SSH key (confirmed user of an added device; recorded as an outgoing connection file) |
+| `r` | Revoke — **only on an `── external ──` row of the localhost device**: remove the incoming key from your `authorized_keys` and delete the connection file, locally |
 | `Left` or `Esc` | Back to the Devices panel |
+
+On the localhost device the Users pane ends with an **`── external ──`
+group** (always shown, even when empty): one row per incoming connection
+targeting the current user, labelled by the source `user@device`.
 
 ### Navigation keys (every pane state)
 

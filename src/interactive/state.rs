@@ -840,6 +840,9 @@ impl InteractiveState {
             Action::RemoveTempUser => {
                 self.remove_temp_user(ctx);
             }
+            Action::RevokeIncomingKey => {
+                self.revoke_incoming(ctx);
+            }
             Action::SetDefaultUser => {
                 self.set_default_user(ctx);
             }
@@ -1252,6 +1255,7 @@ impl InteractiveState {
                     added: !entry.temporary,
                     pinned: false,
                     is_default: false,
+                    incoming: None,
                 });
             }
         }
@@ -1268,11 +1272,12 @@ impl InteractiveState {
                 None => users.insert(
                     0,
                     UiUser {
-                        name: current_user,
+                        name: current_user.clone(),
                         status: UserStatus::Confirmed,
                         added: false,
                         pinned: true,
                         is_default: false,
+                        incoming: None,
                     },
                 ),
             }
@@ -1294,14 +1299,39 @@ impl InteractiveState {
         {
             u.is_default = true;
         }
+        // On the localhost device, the external group: the incoming
+        // connections targeting the current user — the only ones the
+        // current user may modify (Connection::can_modify) and revoke
+        // (its own authorized_keys). One row per connection, labelled by
+        // the source user@device; the target is implicitly the current
+        // user. Always present on localhost (the divider shows even when
+        // the group is empty, so the feature stays discoverable).
+        if matches!(self.device_selected, Some(DeviceRow::Local))
+            && let Ok(loaded) = crate::config::connection::load_device_connections(&config_dir, &name)
+        {
+            for c in loaded.incoming {
+                if c.can_modify(&name, &current_user) {
+                    users.push(UiUser {
+                        name: format!("{}@{}", c.from_user, c.from_device),
+                        status: UserStatus::IncomingKey,
+                        added: true,
+                        pinned: false,
+                        is_default: false,
+                        incoming: Some(c),
+                    });
+                }
+            }
+        }
         // Display order: the default user first, then the pinned row, then
-        // added, then not added; name order within each group.
+        // added, then not added, then the external rows; name order within
+        // each group.
         users.sort_by(|a, b| {
             let key = |u: &UiUser| {
                 (
                     if u.is_default { 0 } else { 1 },
                     if u.pinned { 0 } else { 1 },
                     if u.added { 0 } else { 1 },
+                    if u.incoming.is_some() { 1 } else { 0 },
                     u.name.clone(),
                 )
             };
@@ -1406,6 +1436,92 @@ impl InteractiveState {
         }
         self.users_selected = None;
         ui::log(&format!("  - Temporary user {user} on {device} removed"));
+    }
+
+    /// Revoke the incoming connection of the selected external row
+    /// (localhost Users pane, key 'r'). A local operation on this
+    /// device — no SSH, connecting to the current device is nonsense:
+    /// remove the key from the current user's authorized_keys, delete the
+    /// connection file (the current user's own data on this device, so
+    /// `can_modify` passes) and commit, so the revocation propagates on
+    /// the next git sync. The peer's outgoing record and private key
+    /// remain on the peer; the key simply stops working here.
+    fn revoke_incoming(&mut self, ctx: &Context) {
+        let (Some(device), Some(row)) =
+            (self.selected_device(ctx), self.users_selected.clone())
+        else {
+            ui::log("Select a device, then one of its external rows (Right) first");
+            return;
+        };
+        if device != ctx.local_name {
+            ui::log("Incoming connections can only be revoked on the localhost device");
+            return;
+        }
+        let root = root_config_dir(ctx.home);
+        let config_dir = root.join(GIT_DIR);
+        let current_user = crate::discovery::local_user();
+        let loaded = match crate::config::connection::load_device_connections(&config_dir, &device) {
+            Ok(l) => l,
+            Err(e) => {
+                ui::log(&format!(
+                    "  - cannot read the connections of {device}: {e}"
+                ));
+                return;
+            }
+        };
+        // The row label is the source "user@device"; the target is
+        // implicitly the current user.
+        let Some(conn) = loaded
+            .incoming
+            .iter()
+            .find(|c| {
+                c.can_modify(&device, &current_user)
+                    && format!("{}@{}", c.from_user, c.from_device) == row
+            })
+            .cloned()
+        else {
+            ui::log(&format!(
+                "  - no incoming connection {row} targeting {current_user} on {device}"
+            ));
+            return;
+        };
+        let connection_id = format!("{}->{}@{}", conn.from_user, conn.to_user, conn.to_device);
+        if ctx.dry_run {
+            ui::log(&format!("  - (dry run - revoking {connection_id} skipped)"));
+            return;
+        }
+        // Remove the key from the current user's authorized_keys.
+        if let Err(e) = crate::cli::key_management::remove_authorized_key(&conn.public_key) {
+            ui::log(&format!(
+                "  - could not remove the key from ~/{current_user}'s authorized_keys: {e}"
+            ));
+        }
+        // Delete the connection file (own data: can_modify passes).
+        match crate::config::connection::delete_connection(&config_dir, &device, &conn, &current_user) {
+            Ok(true) => {}
+            Ok(false) => {
+                ui::log(&format!("  - the connection file of {connection_id} was already gone"));
+            }
+            Err(e) => {
+                ui::log(&format!(
+                    "  - could not delete the connection file of {connection_id}: {e}"
+                ));
+                return;
+            }
+        }
+        // Commit the deletion so it propagates on the next git sync.
+        let dir = crate::config::connection::connections_dir(&config_dir, &device);
+        if let Err(e) = crate::git::sync::git_add_and_commit_file(
+            &config_dir,
+            &dir,
+            &format!("Remove connection: {connection_id}"),
+        ) {
+            ui::log(&format!("  - could not commit the removal: {e}"));
+        }
+        ui::log(&format!(
+            "  - Revoked {connection_id}: key removed from the authorized_keys of {current_user}, connection file deleted and committed"
+        ));
+        self.users_selected = None;
     }
 
     /// Declare the user selected in the Users panel as the default user of
@@ -1731,6 +1847,58 @@ mod tests {
         assert_eq!(users.len(), 1);
         assert_eq!(users[0].name, current);
         assert_eq!(users[0].status, UserStatus::Confirmed);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn users_view_lists_incoming_connections_as_external_rows_on_localhost() {
+        let (dir, home) = test_home("local-external");
+        let root = root_config_dir(&home);
+        let git = root.join(GIT_DIR);
+        let current = crate::discovery::local_user();
+        ensure_local_user_file(&git, "testhost", &current).unwrap();
+        // An incoming connection targeting the current user (eve@ordi -> current@testhost).
+        let incoming = crate::config::connection::Connection::new(
+            "eve",
+            "ordi",
+            &current,
+            "testhost",
+            "ssh-ed25519 AAAAevekey",
+            "/home/eve/.ssh/id_regroup_eve@testhost",
+            "2026-01-01T00:00:00Z",
+        );
+        crate::config::connection::save_connection(&git, "testhost", &incoming, &current).unwrap();
+        // An incoming connection targeting ANOTHER local user: not listed
+        // (the current user can only modify/revoke its own connections).
+        let other = crate::config::connection::Connection::new(
+            "mallory",
+            "phone",
+            "alice",
+            "testhost",
+            "ssh-ed25519 AAAAmalkey",
+            "/home/mallory/.ssh/id",
+            "2026-01-01T00:00:00Z",
+        );
+        crate::config::connection::save_connection(&git, "testhost", &other, "alice").unwrap();
+
+        let key = SshPublicKey::from("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFake");
+        let ssh_config = dir.join("ssh_config");
+        let ctx = test_ctx(&home, &key, &ssh_config);
+        let mut state = test_state("laptop", "alice");
+        state.device_selected = Some(DeviceRow::Local);
+
+        let users = state.users_view(&ctx);
+        let external: Vec<&UiUser> = users.iter().filter(|u| u.incoming.is_some()).collect();
+        assert_eq!(external.len(), 1, "only the current user's incoming connections are listed");
+        assert_eq!(external[0].name, "eve@ordi");
+        assert_eq!(external[0].status, UserStatus::IncomingKey);
+        assert_eq!(external[0].status_label(), "incoming key");
+        assert!(external[0].incoming.as_ref().unwrap().can_modify("testhost", &current));
+        // External rows sort last, after the normal user rows.
+        assert!(users.last().unwrap().incoming.is_some());
+        // On an added device row, no external rows are listed.
+        state.device_selected = Some(DeviceRow::Added("laptop".to_string()));
+        assert!(state.users_view(&ctx).iter().all(|u| u.incoming.is_none()));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

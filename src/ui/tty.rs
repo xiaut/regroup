@@ -58,6 +58,7 @@ fn calculate_question_height(question: &Question, ctx: &QuestionCtx, width: u16)
                     confirmed_user: ctx.confirmed_user,
                     selected_section: ctx.selected_section,
                     local_in_config: ctx.local_in_config,
+                    user_external: ctx.selected_user_external,
                 },
             }))
         }
@@ -305,6 +306,12 @@ impl TtyUi {
             .users_selected
             .and_then(|i| self.users.get(i))
             .is_some_and(|u| u.status != UserStatus::Temporary);
+        // Whether the selected Users row is an external row (an incoming
+        // connection of the localhost device) drives the revoke key.
+        let user_external = self
+            .users_selected
+            .and_then(|i| self.users.get(i))
+            .is_some_and(|u| u.incoming.is_some());
         // The section of the selected Devices row drives which action
         // keys the fullscreen Devices pane offers; for the local row its
         // shared-config membership drives add vs remove.
@@ -329,6 +336,7 @@ impl TtyUi {
                         confirmed_user,
                         selected_section,
                         local_in_config,
+                        user_external,
                     },
                 }
             } else {
@@ -505,6 +513,9 @@ impl TtyUi {
             let confirmed_user = users_selected
                 .and_then(|i| users.get(i))
                 .is_some_and(|u| u.status != UserStatus::Temporary);
+            let selected_user_external = users_selected
+                .and_then(|i| users.get(i))
+                .is_some_and(|u| u.incoming.is_some());
             let selected_device = devices_selected
                 .and_then(|i| devices.get(i));
             let selected_section = selected_device.map(|d| d.section);
@@ -521,6 +532,7 @@ impl TtyUi {
                 active_pane: *active_pane,
                 navigation: *navigation,
                 confirmed_user,
+                selected_user_external,
                 selected_section,
                 local_in_config,
                 key_flash: key_flash.as_ref(),
@@ -605,6 +617,7 @@ mod tests {
                 depth: None,
             },
             confirmed_user: false,
+            selected_user_external: false,
             selected_section: None,
             local_in_config: false,
             key_flash: None,

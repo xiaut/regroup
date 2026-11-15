@@ -98,13 +98,19 @@ default implicitly). The default user is the pinned first row under
 `── default ──`; then, on the localhost device, the current user is pinned
 under `── current user (added|not added) ──` (always shown, one line); then
 `── added ──` (users in the shared configuration) and `── not added ──`
-(users only in the local tmp/ overlay). The status column is the
-sub-status (confirmed / temporary / SSH key installed). Key `d` in the
+(users only in the local tmp/ overlay); then, on the localhost device only,
+`── external ──` (always shown, even when empty): one row per incoming
+connection targeting the current user, labelled by the source
+`user@device` — the target is implicitly the current user, the only one
+whose `authorized_keys` (and connection files) it may edit. The status
+column is the sub-status (confirmed / temporary / SSH key installed /
+incoming key). Key `d` in the
 Users pane declares the selected user as the device's default (radio
 semantics — it replaces the current one), but only on the device itself:
 on the localhost row; on an added device the pane shows the device-declared
 default read-only. On the localhost device no install/remove-key action is
-offered: connecting to the current device is nonsense.
+offered on user rows (connecting to the current device is nonsense), but
+key `r` on an `── external ──` row revokes the incoming connection locally.
 
 ## Scenarios
 
@@ -165,17 +171,29 @@ the selected context:
 
 - The **main menu (overview)** offers the **global actions** — everything
   not specific to a device or a user: `s` sync, `w` wipe, `c` setup-cd,
-  `k` connections, and `q` quit (quit is only offered here).
+  and `q` quit (quit is only offered here).
 - A **selected device row** offers only device-specific actions:
   `a`/`r` add/remove on the **localhost** row (plain add/remove — the
-  local data stays recoverable, unlike `d` delete), `d` delete on an
-  **added** row, `a`/`n` add/ignore on a **detected** row, and `u` add a
-  temporary user on the **localhost or an added** row — adding a user is
-  device-specific, no user needs to be selected. `Enter`/`Right` open the
+  local data stays recoverable, unlike `d` delete), `d` delete plus `a`
+  add a temporary user on an **added** row (`a` is free there; adding a
+  user is device-specific, no user needs to be selected), and `a`/`n`
+  add/ignore on a **detected** row. The localhost row gets no add-user
+  key: a temporary user configures an outgoing connection, and
+  connecting to the current device is nonsense. `Enter`/`Right` open the
   Users sub-panel when the **local or an added** row is selected.
-- A **selected user** in the Users pane offers only user-specific actions:
-  `d` set the default user, `i`/`r` install/remove an SSH key (confirmed
-  user, not on localhost), `x` remove a temporary user.
+- A **selected user** in the Users pane offers only user-specific actions,
+  in two layers: the user layer (`d` set the default user, `x` remove a
+  temporary user) and, on top of it for a confirmed user of an added
+  device, the key layer (`i`/`r` install/remove an SSH key — the outgoing
+  connection, recorded as a connection file). On the localhost device
+  the Users pane also shows an **`── external ──` group** (always present,
+  even when empty, so it stays discoverable): one row per incoming
+  connection targeting the current user, labelled by the source
+  `user@device`; `r` on such a row revokes it locally (remove the key
+  from your own `authorized_keys`, delete the connection file, commit).
+  On localhost the user can otherwise only edit its own data; the one
+  exception is the default user (`d`), which lives in the device-owned
+  `device.json`.
 
 In every pane state the navigation keys and `?` help are available.
 `?` help is the single key that works in every pane state.

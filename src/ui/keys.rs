@@ -140,11 +140,13 @@ mod tests {
                 for confirmed_user in [false, true] {
                     for selected_section in [None, Some(DeviceSection::Local), Some(DeviceSection::Added), Some(DeviceSection::Detected)] {
                         for local_in_config in [false, true] {
-                            contexts.push(Context::Pane {
-                                focus,
-                                depth,
-                                keys_ctx: PaneKeyCtx { confirmed_user, selected_section, local_in_config },
-                            });
+                            for user_external in [false, true] {
+                                contexts.push(Context::Pane {
+                                    focus,
+                                    depth,
+                                    keys_ctx: PaneKeyCtx { confirmed_user, selected_section, local_in_config, user_external },
+                                });
+                            }
                         }
                     }
                 }
@@ -171,7 +173,7 @@ mod tests {
             Question::Idle(_) => Context::Pane {
                 focus,
                 depth,
-                keys_ctx: PaneKeyCtx { confirmed_user: true, selected_section: None, local_in_config: false },
+                keys_ctx: PaneKeyCtx { confirmed_user: true, selected_section: None, local_in_config: false, user_external: false },
             },
             q if matches!(q, Question::Rename(..) | Question::AddTempUser(..)) => Context::TextInput(q.def()),
             q => Context::Modal(q.def()),
@@ -208,7 +210,7 @@ mod tests {
         let overview = Context::Pane {
             focus: NavFocus::Center,
             depth: None,
-            keys_ctx: PaneKeyCtx { confirmed_user: false, selected_section: None, local_in_config: false },
+            keys_ctx: PaneKeyCtx { confirmed_user: false, selected_section: None, local_in_config: false, user_external: false },
         };
         assert!(
             bindings(overview)
@@ -277,7 +279,7 @@ mod tests {
         let main_menu = Context::Pane {
             focus: NavFocus::Center,
             depth: None,
-            keys_ctx: PaneKeyCtx { confirmed_user: false, selected_section: None, local_in_config: false },
+            keys_ctx: PaneKeyCtx { confirmed_user: false, selected_section: None, local_in_config: false, user_external: false },
         };
         // The global actions (not specific to a device or a user) are
         // advertised and handled on the main menu (overview).
@@ -285,7 +287,6 @@ mod tests {
             (KeyCode::Char('s'), Action::Sync),
             (KeyCode::Char('w'), Action::WipeMode),
             (KeyCode::Char('c'), Action::SetupCdMode),
-            (KeyCode::Char('k'), Action::ConnectionsMode),
             (KeyCode::Char('q'), Action::Quit),
         ];
         for (key, action) in &globals {
@@ -323,15 +324,17 @@ mod tests {
                 confirmed_user: false,
                 selected_section: Some(DeviceSection::Detected),
                 local_in_config: false,
+                user_external: false,
             },
         };
+        assert_eq!(resolve(detected, KeyCode::Char('a')), Some(KeyResolution::Action(Action::Add)));
         assert_eq!(resolve(detected, KeyCode::Char('u')), None);
     }
 
     #[test]
     fn unadvertised_key_is_not_handled() {
         use crate::ui::types::DeviceSection;
-        let keys_ctx = |selected_section| PaneKeyCtx { confirmed_user: false, selected_section, local_in_config: false };
+        let keys_ctx = |selected_section| PaneKeyCtx { confirmed_user: false, selected_section, local_in_config: false, user_external: false };
         // 's' syncs from the main menu, not from any Devices pane row:
         // a selected device offers only device-specific actions.
         for section in [Some(DeviceSection::Added), Some(DeviceSection::Detected), Some(DeviceSection::Local), None] {
@@ -351,6 +354,7 @@ mod tests {
                 confirmed_user: false,
                 selected_section: Some(DeviceSection::Local),
                 local_in_config,
+                user_external: false,
             },
         };
         // Not in the shared configuration: 'a' adds it, 'r' does nothing.
@@ -370,45 +374,48 @@ mod tests {
         );
         assert_eq!(resolve(added, KeyCode::Char('a')), None);
         assert_eq!(resolve(added, KeyCode::Char('d')), None);
-        // Both variants keep the users entry keys and the device-specific
-        // add-user key; the global actions (sync, wipe, setup-cd) and the
-        // added-row delete stay off the local row.
+        // Both variants keep the users entry keys; the global actions
+        // (sync, wipe, setup-cd), the added-row delete and any add-user
+        // key stay off the local row — a temporary user configures an
+        // outgoing connection, and connecting to the current device is
+        // nonsense, so the localhost device gets no temp user.
         for c in [ctx(false), ctx(true)] {
             assert!(
                 bindings(c)
                     .iter()
                     .any(|b| b.key == KeyCode::Enter && b.effect == Effect::Internal)
             );
-            assert_eq!(
-                resolve(c, KeyCode::Char('u')),
-                Some(KeyResolution::Action(Action::AddTempUser))
-            );
+            assert_eq!(resolve(c, KeyCode::Char('u')), None);
             assert_eq!(resolve(c, KeyCode::Char('s')), None);
             assert_eq!(resolve(c, KeyCode::Char('w')), None);
             assert_eq!(resolve(c, KeyCode::Char('c')), None);
             assert_eq!(resolve(c, KeyCode::Char('d')), None);
         }
-        // The added row offers delete and add-user, not the globals.
-        let added = Context::Pane {
+        // The added row offers delete and add-user ('a' is free there: it
+        // adds the device on a detected row and the local device on the
+        // localhost row), not the globals.
+        let added_row = Context::Pane {
             focus: NavFocus::Devices,
             depth: Some(NavDepth::Selected),
             keys_ctx: PaneKeyCtx {
                 confirmed_user: false,
                 selected_section: Some(DeviceSection::Added),
                 local_in_config: true,
+                user_external: false,
             },
         };
         assert_eq!(
-            resolve(added, KeyCode::Char('d')),
+            resolve(added_row, KeyCode::Char('d')),
             Some(KeyResolution::Action(Action::DeleteSelected))
         );
         assert_eq!(
-            resolve(added, KeyCode::Char('u')),
+            resolve(added_row, KeyCode::Char('a')),
             Some(KeyResolution::Action(Action::AddTempUser))
         );
-        assert_eq!(resolve(added, KeyCode::Char('s')), None);
-        assert_eq!(resolve(added, KeyCode::Char('w')), None);
-        assert_eq!(resolve(added, KeyCode::Char('c')), None);
+        assert_eq!(resolve(added_row, KeyCode::Char('u')), None);
+        assert_eq!(resolve(added_row, KeyCode::Char('s')), None);
+        assert_eq!(resolve(added_row, KeyCode::Char('w')), None);
+        assert_eq!(resolve(added_row, KeyCode::Char('c')), None);
     }
 
     #[test]
@@ -422,28 +429,32 @@ mod tests {
                     confirmed_user: confirmed,
                     selected_section: Some(DeviceSection::Local),
                     local_in_config: true,
+                    user_external: false,
                 },
             };
             assert_eq!(resolve(ctx, KeyCode::Char('i')), None, "i handled on localhost (confirmed={confirmed})");
-            assert_eq!(resolve(ctx, KeyCode::Char('r')), None, "r handled on localhost (confirmed={confirmed})");
+            assert_eq!(resolve(ctx, KeyCode::Char('r')), None, "r handled on localhost user row (confirmed={confirmed})");
             assert!(
                 !bindings(ctx)
                     .iter()
                     .any(|b| b.key == KeyCode::Char('i') || b.key == KeyCode::Char('r')),
-                "i/r advertised on localhost (confirmed={confirmed})"
+                "i/r advertised on localhost user row (confirmed={confirmed})"
             );
             // A selected user offers only user-specific actions: the
-            // global sync and the device-specific add-user are not here.
+            // global sync and the device-level add-user are not here.
             assert_eq!(resolve(ctx, KeyCode::Char('s')), None, "s handled in Users (confirmed={confirmed})");
             assert_eq!(resolve(ctx, KeyCode::Char('u')), None, "u handled in Users (confirmed={confirmed})");
             assert!(!bindings(ctx).iter().any(|b| b.key == KeyCode::Char('a')), "a advertised in Users (confirmed={confirmed})");
-            // Set-default stays a user-specific action.
+            // Set-default stays a user-specific action (the one exception
+            // to "on localhost you only edit your own data": the default
+            // user lives in the device-owned device.json).
             assert_eq!(
                 resolve(ctx, KeyCode::Char('d')),
                 Some(KeyResolution::Action(Action::SetDefaultUser))
             );
         }
-        // On an added device the confirmed user still gets i/r, and the
+        // On an added device the confirmed user still gets i/r (the
+        // install/remove key layer on top of the user layer), and the
         // temporary user gets x (remove temp user) — but no globals and
         // no add-user.
         let added = Context::Pane {
@@ -453,6 +464,7 @@ mod tests {
                 confirmed_user: true,
                 selected_section: Some(DeviceSection::Added),
                 local_in_config: true,
+                user_external: false,
             },
         };
         assert_eq!(
@@ -463,9 +475,14 @@ mod tests {
             resolve(added, KeyCode::Char('r')),
             Some(KeyResolution::Action(Action::RemoveKeyFromSelected))
         );
+        assert_eq!(
+            resolve(added, KeyCode::Char('d')),
+            Some(KeyResolution::Action(Action::SetDefaultUser))
+        );
         assert_eq!(resolve(added, KeyCode::Char('s')), None);
         assert_eq!(resolve(added, KeyCode::Char('a')), None);
         assert_eq!(resolve(added, KeyCode::Char('u')), None);
+        assert_eq!(resolve(added, KeyCode::Char('x')), None, "x is temp-user only");
         let temp = Context::Pane {
             focus: NavFocus::Users,
             depth: Some(NavDepth::Selected),
@@ -473,6 +490,7 @@ mod tests {
                 confirmed_user: false,
                 selected_section: Some(DeviceSection::Added),
                 local_in_config: true,
+                user_external: false,
             },
         };
         assert_eq!(
@@ -482,6 +500,37 @@ mod tests {
         assert_eq!(resolve(temp, KeyCode::Char('i')), None);
         assert_eq!(resolve(temp, KeyCode::Char('s')), None);
         assert_eq!(resolve(temp, KeyCode::Char('u')), None);
+    }
+
+    #[test]
+    fn external_row_in_localhost_users_pane_offers_only_revoke() {
+        use crate::ui::types::DeviceSection;
+        let ctx = Context::Pane {
+            focus: NavFocus::Users,
+            depth: Some(NavDepth::Selected),
+            keys_ctx: PaneKeyCtx {
+                confirmed_user: true,
+                selected_section: Some(DeviceSection::Local),
+                local_in_config: true,
+                user_external: true,
+            },
+        };
+        // 'r' revokes the incoming connection (a local operation on this
+        // device); the other user actions (set default, install/remove
+        // key, remove temp user) and the globals are not offered.
+        assert_eq!(
+            resolve(ctx, KeyCode::Char('r')),
+            Some(KeyResolution::Action(Action::RevokeIncomingKey))
+        );
+        assert!(bindings(ctx).iter().any(|b| b.key == KeyCode::Char('r')));
+        for key in ['d', 'i', 'x', 's', 'w', 'c', 'a', 'u'] {
+            assert_eq!(resolve(ctx, KeyCode::Char(key)), None, "{key} handled on external row");
+            assert!(!bindings(ctx).iter().any(|b| b.key == KeyCode::Char(key)), "{key} advertised on external row");
+        }
+        // Navigation still works (Up/Down are internal in the table; the
+        // list-selection action is derived from them by the ui).
+        assert_eq!(resolve(ctx, KeyCode::Esc), Some(KeyResolution::Internal));
+        assert_eq!(resolve(ctx, KeyCode::Up), Some(KeyResolution::Internal));
     }
 
     #[test]
