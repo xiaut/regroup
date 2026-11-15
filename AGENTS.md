@@ -45,11 +45,36 @@ Rules:
 - `.worktrees/` is ignored via the committed `.gitignore`, so the main worktree's `git status` stays clean
 - Do all work for that branch/PR inside its worktree; do not check out branches in the main worktree
 - Push the branch and open the PR on the **first commit** — as a **draft** while the work is not ready — so every branch is backed by an open PR from the start
-- When you think the PR is ready, mark it **ready for review** — the PR must no longer be in a draft state
+- You — the agent — decide when the PR is ready for review: as soon as your work is done, mark the PR **ready for review** yourself (it must no longer be in a draft state) — do not leave it in draft and do not ask the developer to flip it for you
 - One (worktree, branch, PR) tuple per session: if more work is requested in the same session, reuse the same worktree and branch — and if that PR has already been merged, open a **new PR on the same branch**, never a second worktree/branch
 - Keep the worktree in place while the PR is open so the developer can test
 
-## 5. When the PR Is Merged
+When you are done, always end with two copy-paste-ready reminders so the developer can test the PR — fill in the real worktree name and branch name:
+
+```bash
+cd .worktrees/<name> && cargo run
+```
+
+```bash
+git pull && git switch <branch> && cargo run
+```
+
+The first one is run from the repo root and tests the PR in its worktree. The second one is for the main checkout and stays the developer's call — never check out the branch there yourself.
+
+## 5. Never Work Outside the Workdir — Temporary Files in `.vibe/tmp/`
+
+Never create, read, modify, or delete anything outside the workdir — not in `/tmp`, not in `$HOME`, not anywhere else. Working outside the approved working directory triggers an "outside workdir" approval prompt to the developer, so keep every file operation inside the worktree.
+
+When temporary or scratch files are needed (prototypes, fetched data, throwaway scripts, working notes), put them in a tmp folder **inside the worktree**, under `.vibe/tmp/`:
+
+```bash
+mkdir -p .vibe/tmp
+# use .vibe/tmp/<file> instead of /tmp/<file>
+```
+
+`.vibe/` is ignored via the committed `.gitignore`, so nothing under it ever shows up in `git status` or gets committed by accident.
+
+## 6. When the PR Is Merged
 
 When the PR is merged — or when the developer explicitly asks — and the branch is no longer needed in this session, clean up in this order:
 
