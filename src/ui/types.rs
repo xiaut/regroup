@@ -153,7 +153,7 @@ impl DeviceSection {
 /// of the dashboard), Down (Logs, below).
 /// Enter goes deeper, Esc goes back.
 /// Users sub-panel is nested inside Devices (reached by Right/Enter from
-/// Devices fullscreen with an added device selected).
+/// Devices with the local or an added device selected).
 ///
 /// Navigation focus: which direction from center.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -227,9 +227,9 @@ impl Navigation {
     /// Handle a navigation key press, return the new navigation state.
     ///
     /// `selected_section` is the section of the selected row in the
-    /// Devices pane: from the fullscreen Devices pane, only an added
-    /// device row can open the Users sub-panel (a detected row has no
-    /// users yet); on any other row Right/Enter rewind one step.
+    /// Devices pane: from the Devices pane, the local row and an added
+    /// device row open the Users sub-panel (a detected row has no users
+    /// yet); on any other row Right/Enter do nothing.
     pub fn handle_key(self, key: KeyCode, selected_section: Option<DeviceSection>) -> Self {
         use KeyCode::*;
         use NavDepth::*;
@@ -251,12 +251,15 @@ impl Navigation {
             (Logs, Some(Selected), Esc) => Navigation::overview(),
             (Logs, Some(Fullscreen), Esc) => Navigation { focus: Logs, depth: Some(Selected) },
 
-            // Right/Enter open the Users sub-panel when an added device
-            // row is selected. The Devices pane has no fullscreen mode
-            // anymore: the Logs pane is a small always-visible strip, so
-            // the Devices pane is always big.
+            // Right/Enter open the Users sub-panel when the local or an
+            // added device row is selected (a detected row has no users
+            // yet). The Devices pane has no fullscreen mode anymore: the
+            // Logs pane is a small always-visible strip, so the Devices
+            // pane is always big.
             (Devices, Some(Selected), Right | Enter) => match selected_section {
-                Some(DeviceSection::Added) => Navigation { focus: Users, depth: Some(Selected) },
+                Some(DeviceSection::Local | DeviceSection::Added) => {
+                    Navigation { focus: Users, depth: Some(Selected) }
+                }
                 _ => self,
             },
 
@@ -367,13 +370,16 @@ static CENTER_KEYS: &[KeyBinding] = &[
     KeyBinding::new(Char('q'), "q", "quit", Effect::Action(Action::Quit)),
 ];
 
-/// Focused Devices pane with the local device selected: the local
-/// row has no action keys, only navigation and selection.
+/// Focused Devices pane with the local device selected: no device
+/// actions, but the Users sub-panel (Right/Enter) shows the local
+/// device's own users.
 static DEVICES_LOCAL_KEYS: &[KeyBinding] = &[
     KeyBinding::internal(Esc, "Esc", "back"),
     KeyBinding::internal(Left, "Left", "back"),
     KeyBinding::internal(Up, "Up", "select"),
     KeyBinding::internal(Down, "Down", "select"),
+    KeyBinding::internal(Enter, "Enter", "users"),
+    KeyBinding::internal(Right, "Right", "users"),
 ];
 
 /// Focused Devices pane with an added device selected: device
@@ -450,7 +456,8 @@ pub enum ActivePane {
     /// added devices and the detected devices (divider rows between).
     Devices(Pane),
     /// Users sub-panel of the Devices panel: the users of the selected
-    /// added device. Device+user actions live here, not in the device panel.
+    /// device (local or added). Device+user actions live here, not in the
+    /// device panel.
     Users(Pane),
     /// Logs pane (formerly Activity)
     Logs(Pane),
@@ -805,17 +812,20 @@ mod navigation_tests {
     }
 
     #[test]
-    fn users_entry_only_from_an_added_device_row() {
+    fn users_entry_from_local_and_added_rows_only() {
         let focused = nav(NavFocus::Devices, Some(NavDepth::Selected));
-        // An added device row selected: Right/Enter open the Users sub-panel.
-        for key in [Enter, Right] {
-            assert_eq!(
-                focused.handle_key(key, Some(DeviceSection::Added)),
-                nav(NavFocus::Users, Some(NavDepth::Selected))
-            );
+        // The local row and an added device row: Right/Enter open the
+        // Users sub-panel.
+        for section in [Some(DeviceSection::Local), Some(DeviceSection::Added)] {
+            for key in [Enter, Right] {
+                assert_eq!(
+                    focused.handle_key(key, section),
+                    nav(NavFocus::Users, Some(NavDepth::Selected))
+                );
+            }
         }
-        // On a detected or local row Right/Enter do nothing.
-        for section in [Some(DeviceSection::Detected), Some(DeviceSection::Local), None] {
+        // On a detected row (no users yet) or with no selection, Right/Enter do nothing.
+        for section in [Some(DeviceSection::Detected), None] {
             assert_eq!(focused.handle_key(Enter, section), focused);
             assert_eq!(focused.handle_key(Right, section), focused);
         }

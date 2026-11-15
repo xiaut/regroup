@@ -148,7 +148,8 @@ pub struct TtyUi {
     pub devices_selected: Option<usize>,
     /// Row of the Devices panel highlighted in delete mode (passed from state).
     pub delete_selected: Option<usize>,
-    /// Users of the added device selected in the Devices panel (Users panel).
+    /// Users of the device selected in the Devices panel, local or added
+    /// (Users panel).
     pub users: Vec<UiUser>,
     /// Row of the Users panel highlighted by the selection (passed from state).
     pub users_selected: Option<usize>,

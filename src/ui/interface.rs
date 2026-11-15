@@ -97,8 +97,9 @@ impl Ui {
         }
     }
 
-    /// Update the Users panel: the users of the added device selected in
-    /// the Devices panel, and the selected row (ignored in plain mode).
+    /// Update the Users panel: the users of the device selected in the
+    /// Devices panel (local or added), and the selected row (ignored in
+    /// plain mode).
     pub fn set_users(&mut self, users: Vec<UiUser>, selected: Option<usize>) {
         if let Ui::Tty(ui) = self {
             ui.users = users;

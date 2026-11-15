@@ -69,15 +69,17 @@ the Logs pane is only a small strip, the Devices pane is always big — it
 has no fullscreen mode.
 
 The **Users sub-panel is part of the Devices panel**, not a sibling panel.
-It is a sub-context of the selected *added* device, reached with `Right`
-or `Enter` from the focused Devices panel; `Left` or `Esc` returns to the
-device level. There is no lateral panel switch to reach it.
+It is a sub-context of the selected device — the *local* row or an *added*
+row — reached with `Right` or `Enter` from the focused Devices panel;
+`Left` or `Esc` returns to the device level. There is no lateral panel
+switch to reach it.
 
 `Right`/`Enter` enter the Users selection mode only when the selected row
-is an added device (a detected row has no users yet). Whatever the device's user
-list looks like — even a single user, or none — entering the mode from an
-added device always works. Entering the mode is what unlocks the associated
-user actions; it is never skipped because the list is short or empty.
+is the local device or an added device (a detected row has no users yet).
+Whatever the device's user list looks like — even a single user, or none —
+entering the mode from the local or an added row always works. Entering
+the mode is what unlocks the associated user actions; it is never skipped
+because the list is short or empty.
 
 ## Scenarios
 
@@ -89,7 +91,7 @@ the row list is active immediately (`Up`/`Down` select, wrapping):
 | Press | State |
 |-------|-------|
 | `Up` or `Right` | Devices panel **focused**, row list active (first row = the local device selected) |
-| `Right` or `Enter` | **Users sub-panel** of the selected added device (first user selected) — only when an added device row is selected |
+| `Right` or `Enter` | **Users sub-panel** of the selected device (first user selected) — only when the local or an added device row is selected |
 | `Left` or `Esc` | Back to the center, overview |
 | `Left`/`Esc` | From the Users sub-panel: back to the Devices panel |
 
@@ -134,7 +136,7 @@ arrows are consumed by the list, so leaving the pane is done with
 
 Character shortcuts act as commands, not navigation, and are listed per
 pane state (see `pane_keys` in `src/ui/types.rs`): `s` sync, `d` delete,
-`w` wipe, `c` setup-cd and `Enter`/`Right` into Users when an **added** row
-is selected in the Devices panel, `a`/`n` when a **detected** row is
-selected, and so on. `q` quit is only offered on the main menu (overview);
+`w` wipe, `c` setup-cd and `Enter`/`Right` into Users when the **local or
+an added** row is selected in the Devices panel, `a`/`n` when a
+**detected** row is selected, and so on. `q` quit is only offered on the main menu (overview);
 `?` help is the single key that works in every pane state.

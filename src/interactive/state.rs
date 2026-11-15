@@ -168,8 +168,9 @@ pub fn run(ctx: &Context, udp_port: u16, beacons: &Receiver<BeaconDevice>) -> us
             state.device_selected = Some(DeviceRow::Local);
         }
 
-        // The Users panel follows the added device selected in the Devices
-        // panel. It only exists while the Devices (or Users) pane is on screen.
+        // The Users panel follows the device selected in the Devices panel
+        // (local or added). It only exists while the Devices (or Users)
+        // pane is on screen.
         let users = if matches!(state.active_pane, ActivePane::Devices(_) | ActivePane::Users(_)) {
             state.users_view(ctx)
         } else {
@@ -800,7 +801,7 @@ impl InteractiveState {
                 self.move_users_selection(ctx, true);
             }
             Action::AddTempUser => {
-                if let Some(name) = self.selected_added_device() {
+                if let Some(name) = self.selected_device(ctx) {
                     self.temp_user_pending = Some(name);
                 }
             }
@@ -937,8 +938,8 @@ impl InteractiveState {
             None => 0,
         };
         self.device_selected = Some(rows[new_pos].clone());
-        // The Users panel follows the selected added device: moving the
-        // device selection drops the user selection.
+        // The Users panel follows the selected device: moving the device
+        // selection drops the user selection.
         self.users_selected = None;
     }
 
@@ -1122,23 +1123,28 @@ impl InteractiveState {
         }
     }
     
-    /// The name of the added device currently selected in the Devices
-    /// panel, when the selected row is an added device.
-    fn selected_added_device(&self) -> Option<String> {
+    /// The name of the device currently selected in the Devices panel,
+    /// when the selected row is the local device or an added device (the
+    /// two rows that have a Users sub-panel). The local device's name is
+    /// the hostname regroup runs under.
+    fn selected_device(&self, ctx: &Context) -> Option<String> {
         match &self.device_selected {
+            Some(DeviceRow::Local) => Some(ctx.local_name.to_string()),
             Some(DeviceRow::Added(name)) => Some(name.clone()),
             _ => None,
         }
     }
 
-    /// The users of the added device selected in the Devices panel, for
-    /// the Users panel: the users the device declared in its configuration
-    /// (users/, arrived through git sync), plus the temporary user if one
-    /// was added this run and the sync has not brought a user of the same
+    /// The users of the device selected in the Devices panel (local or
+    /// added), for the Users panel: the users the device declared in its
+    /// configuration (users/, written by the device itself — for the local
+    /// device `ensure_local_user_file` records the current user from
+    /// `discovery::local_user()`), plus the temporary user if one was
+    /// added this run and the sync has not brought a user of the same
     /// name yet. A confirmed user the local user has an outgoing
     /// connection to shows as "SSH key installed".
     fn users_view(&self, ctx: &Context) -> Vec<UiUser> {
-        let Some(name) = self.selected_added_device() else {
+        let Some(name) = self.selected_device(ctx) else {
             return Vec::new();
         };
         let root = root_config_dir(ctx.home);
@@ -1253,7 +1259,7 @@ impl InteractiveState {
     /// Remove the selected temporary user of the selected device.
     fn remove_temp_user(&mut self, ctx: &Context) {
         let (Some(device), Some(user)) =
-            (self.selected_added_device(), self.users_selected.clone())
+            (self.selected_device(ctx), self.users_selected.clone())
         else {
             return;
         };
@@ -1285,9 +1291,9 @@ impl InteractiveState {
     /// device action alone is not enough: this is a device+user action.
     fn install_key_to_selected(&mut self, ctx: &Context, ui: &mut ui::Ui) {
         let (Some(target_name), Some(target_user)) =
-            (self.selected_added_device(), self.users_selected.clone())
+            (self.selected_device(ctx), self.users_selected.clone())
         else {
-            ui::log("Select an added device, then one of its users (Right) first");
+            ui::log("Select a device, then one of its users (Right) first");
             return;
         };
         if self.is_temporary_user(ctx, &target_name, &target_user) {
@@ -1359,9 +1365,9 @@ impl InteractiveState {
     /// Users panel, on the added device selected in the Devices panel.
     fn remove_key_from_selected(&mut self, ctx: &Context, ui: &mut ui::Ui) {
         let (Some(target_name), Some(target_user)) =
-            (self.selected_added_device(), self.users_selected.clone())
+            (self.selected_device(ctx), self.users_selected.clone())
         else {
-            ui::log("Select an added device, then one of its users (Right) first");
+            ui::log("Select a device, then one of its users (Right) first");
             return;
         };
         if self.is_temporary_user(ctx, &target_name, &target_user) {
@@ -1432,7 +1438,7 @@ impl InteractiveState {
 
     /// Delete the currently selected added device in the Devices pane
     fn delete_selected_device(&mut self, ctx: &Context) {
-        let Some(name) = self.selected_added_device() else {
+        let Some(name) = self.selected_device(ctx) else {
             ui::log("No added device selected in the Devices pane");
             return;
         };
@@ -1512,6 +1518,45 @@ mod tests {
             new_count: 0,
             exit_label: "quit",
         }
+    }
+
+    #[test]
+    fn users_view_serves_the_local_device_row() {
+        let (dir, home) = test_home("local-users");
+        let root = root_config_dir(&home);
+        // The local device's own user file, as written by
+        // ensure_local_user_file at config load (current user from
+        // discovery::local_user()).
+        let current = crate::discovery::local_user();
+        ensure_local_user_file(&root.join(GIT_DIR), "testhost", &current).unwrap();
+
+        let key = SshPublicKey::from("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFake");
+        let ssh_config = dir.join("ssh_config");
+        let ctx = test_ctx(&home, &key, &ssh_config);
+        let mut state = test_state("laptop", "alice");
+        state.device_selected = Some(DeviceRow::Local);
+
+        let users = state.users_view(&ctx);
+        assert_eq!(users.len(), 1);
+        assert_eq!(users[0].name, current);
+        assert_eq!(users[0].status, UserStatus::Confirmed);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn users_view_is_empty_on_a_detected_row() {
+        let (dir, home) = test_home("detected-users");
+        let root = root_config_dir(&home);
+        ensure_local_user_file(&root.join(GIT_DIR), "testhost", "alice").unwrap();
+
+        let key = SshPublicKey::from("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFake");
+        let ssh_config = dir.join("ssh_config");
+        let ctx = test_ctx(&home, &key, &ssh_config);
+        let mut state = test_state("laptop", "alice");
+        state.device_selected = Some(DeviceRow::Detected(key.clone()));
+
+        assert!(state.users_view(&ctx).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

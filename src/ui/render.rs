@@ -464,9 +464,10 @@ pub fn log_style(msg: &str) -> Style {
     }
 }
 
-/// Users sub-panel of the Added pane: the users of the selected device,
-/// one row per user with the status column (temporary / confirmed / SSH key
-/// installed). Highlighted border when the panel is the active one.
+/// Users sub-panel of the Devices pane: the users of the selected device
+/// (local or added), one row per user with the status column (temporary /
+/// confirmed / SSH key installed). Highlighted border when the panel is
+/// the active one.
 pub fn render_users_panel(
     frame: &mut Frame,
     area: Rect,
@@ -531,7 +532,8 @@ pub fn render_all_panes(
     match active_pane {
         ActivePane::Devices(_) | ActivePane::Users(_) => {
             // Full-screen Devices pane with the Users sub-panel on the
-            // right: the users of the added device selected in the pane.
+            // right: the users of the device selected in the pane (local
+            // or added).
             let devices_width = (width * 3) / 5;
             let [devices_area, users_area] = Layout::horizontal([
                 Constraint::Length(devices_width),
