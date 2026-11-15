@@ -84,11 +84,10 @@ row — reached with `Right` or `Enter` from the focused Devices panel;
 switch to reach it.
 
 `Right`/`Enter` enter the Users selection mode only when the selected row
-is the local device or an added device (a detected row has no users yet).
-Whatever the device's user list looks like — even a single user, or none —
-entering the mode from the local or an added row always works. Entering
-the mode is what unlocks the associated user actions; it is never skipped
-because the list is short or empty.
+is the local device or an added device (a detected row has no users yet)
+**and that device has at least one user**: with no users the Users pane
+is not reachable, and the entry keys are not even offered. Entering the
+mode is what unlocks the associated user actions.
 
 The **Users sub-panel is grouped by super-state**, like the Devices pane.
 Each device has **one default user** — its main/preferred user, declared by
@@ -122,7 +121,7 @@ the row list is active immediately (`Up`/`Down` select, wrapping):
 | Press | State |
 |-------|-------|
 | `Up` or `Right` | Devices panel **focused**, row list active (first row = the local device selected) |
-| `Right` or `Enter` | **Users sub-panel** of the selected device (first user selected — the pinned current user on localhost) — only when the local or an added device row is selected |
+| `Right` or `Enter` | **Users sub-panel** of the selected device (first user selected — the pinned current user on localhost) — only when the local or an added device row is selected and the device has at least one user |
 | `Left` or `Esc` | Back to the center, overview |
 | `Left`/`Esc` | From the Users sub-panel: back to the Devices panel |
 
@@ -181,7 +180,8 @@ the selected context:
   add/ignore on a **detected** row. The localhost row gets no add-user
   key: a temporary user configures an outgoing connection, and
   connecting to the current device is nonsense. `Enter`/`Right` open the
-  Users sub-panel when the **local or an added** row is selected.
+  Users sub-panel when the **local or an added** row is selected and the
+  device has at least one user (with no users the pane is not reachable).
 - A **selected user** in the Users pane offers only user-specific actions,
   in two layers: the user layer (`d` set the default user, `x` remove the
   user) and, on top of it, the key layer (`i`/`r` install/remove an SSH

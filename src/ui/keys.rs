@@ -140,11 +140,13 @@ mod tests {
                 for selected_section in [None, Some(DeviceSection::Local), Some(DeviceSection::Added), Some(DeviceSection::Detected)] {
                     for local_in_config in [false, true] {
                         for user_external in [false, true] {
-                            contexts.push(Context::Pane {
-                                focus,
-                                depth,
-                                keys_ctx: PaneKeyCtx { selected_section, local_in_config, user_external },
-                            });
+                            for has_users in [false, true] {
+                                contexts.push(Context::Pane {
+                                    focus,
+                                    depth,
+                                    keys_ctx: PaneKeyCtx { selected_section, local_in_config, user_external, has_users },
+                                });
+                            }
                         }
                     }
                 }
@@ -171,7 +173,7 @@ mod tests {
             Question::Idle(_) => Context::Pane {
                 focus,
                 depth,
-                keys_ctx: PaneKeyCtx { selected_section: None, local_in_config: false, user_external: false },
+                keys_ctx: PaneKeyCtx { selected_section: None, local_in_config: false, user_external: false, has_users: false },
             },
             q if matches!(q, Question::Rename(..) | Question::AddTempUser(..)) => Context::TextInput(q.def()),
             q => Context::Modal(q.def()),
@@ -208,7 +210,7 @@ mod tests {
         let overview = Context::Pane {
             focus: NavFocus::Center,
             depth: None,
-            keys_ctx: PaneKeyCtx { selected_section: None, local_in_config: false, user_external: false },
+            keys_ctx: PaneKeyCtx { selected_section: None, local_in_config: false, user_external: false, has_users: false },
         };
         assert!(
             bindings(overview)
@@ -277,7 +279,7 @@ mod tests {
         let main_menu = Context::Pane {
             focus: NavFocus::Center,
             depth: None,
-            keys_ctx: PaneKeyCtx { selected_section: None, local_in_config: false, user_external: false },
+            keys_ctx: PaneKeyCtx { selected_section: None, local_in_config: false, user_external: false, has_users: false },
         };
         // The global actions (not specific to a device or a user) are
         // advertised and handled on the main menu (overview).
@@ -322,6 +324,7 @@ mod tests {
                 selected_section: Some(DeviceSection::Detected),
                 local_in_config: false,
                 user_external: false,
+                has_users: false,
             },
         };
         assert_eq!(resolve(detected, KeyCode::Char('a')), Some(KeyResolution::Action(Action::Add)));
@@ -331,7 +334,7 @@ mod tests {
     #[test]
     fn unadvertised_key_is_not_handled() {
         use crate::ui::types::DeviceSection;
-        let keys_ctx = |selected_section| PaneKeyCtx { selected_section, local_in_config: false, user_external: false };
+        let keys_ctx = |selected_section| PaneKeyCtx { selected_section, local_in_config: false, user_external: false, has_users: false };
         // 's' syncs from the main menu, not from any Devices pane row:
         // a selected device offers only device-specific actions.
         for section in [Some(DeviceSection::Added), Some(DeviceSection::Detected), Some(DeviceSection::Local), None] {
@@ -351,6 +354,7 @@ mod tests {
                 selected_section: Some(DeviceSection::Local),
                 local_in_config,
                 user_external: false,
+                has_users: true,
             },
         };
         // Not in the shared configuration: 'a' adds it, 'r' does nothing.
@@ -397,6 +401,7 @@ mod tests {
                 selected_section: Some(DeviceSection::Added),
                 local_in_config: true,
                 user_external: false,
+                has_users: true,
             },
         };
         assert_eq!(
@@ -423,6 +428,7 @@ mod tests {
                 selected_section: Some(DeviceSection::Local),
                 local_in_config: true,
                 user_external: false,
+                has_users: true,
             },
         };
         // No install/remove key (connecting to the current device is
@@ -454,6 +460,7 @@ mod tests {
                 selected_section: Some(DeviceSection::Added),
                 local_in_config: true,
                 user_external: false,
+                has_users: true,
             },
         };
         let expected = [
@@ -483,6 +490,7 @@ mod tests {
                 selected_section: Some(DeviceSection::Local),
                 local_in_config: true,
                 user_external: true,
+                has_users: true,
             },
         };
         // 'r' revokes the incoming connection (a local operation on this
@@ -515,7 +523,7 @@ mod tests {
             let Context::Pane { focus, depth, keys_ctx } = ctx else { continue };
             let nav = Navigation { focus, depth };
             for code in candidates {
-                let nav_changed = nav.handle_key(code, keys_ctx.selected_section) != nav;
+                let nav_changed = nav.handle_key(code, keys_ctx.selected_section, keys_ctx.has_users) != nav;
                 let list_nav = nav.list_nav_action(code).is_some();
                 if nav_changed || list_nav {
                     assert!(
@@ -527,6 +535,68 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn users_entry_keys_withheld_when_the_device_has_no_users() {
+        use crate::ui::types::DeviceSection;
+        // With no users on the selected device the Users pane is not
+        // reachable: Right/Enter are neither advertised nor handled on
+        // the local or an added row, and the navigation does not move.
+        for section in [Some(DeviceSection::Local), Some(DeviceSection::Added)] {
+            let no_users = Context::Pane {
+                focus: NavFocus::Devices,
+                depth: Some(NavDepth::Selected),
+                keys_ctx: PaneKeyCtx {
+                    selected_section: section,
+                    local_in_config: true,
+                    user_external: false,
+                    has_users: false,
+                },
+            };
+            let nav = Navigation { focus: NavFocus::Devices, depth: Some(NavDepth::Selected) };
+            for key in [KeyCode::Enter, KeyCode::Right] {
+                assert!(
+                    !bindings(no_users).iter().any(|b| b.key == key),
+                    "{key:?} advertised without users (section {section:?})"
+                );
+                assert_eq!(resolve(no_users, key), None, "{key:?} handled without users (section {section:?})");
+                assert_eq!(nav.handle_key(key, section, false), nav, "{key:?} enters Users without users");
+            }
+            // With users, the entry keys come back: advertised, handled,
+            // and moving the navigation into the Users pane.
+            let with_users = Context::Pane {
+                focus: NavFocus::Devices,
+                depth: Some(NavDepth::Selected),
+                keys_ctx: PaneKeyCtx {
+                    selected_section: section,
+                    local_in_config: true,
+                    user_external: false,
+                    has_users: true,
+                },
+            };
+            for key in [KeyCode::Enter, KeyCode::Right] {
+                assert!(bindings(with_users).iter().any(|b| b.key == key && b.effect == Effect::Internal));
+                assert_eq!(resolve(with_users, key), Some(KeyResolution::Internal));
+                assert_eq!(
+                    nav.handle_key(key, section, true),
+                    Navigation { focus: NavFocus::Users, depth: Some(NavDepth::Selected) }
+                );
+            }
+        }
+        // A detected row has no users entry either way.
+        let detected = Context::Pane {
+            focus: NavFocus::Devices,
+            depth: Some(NavDepth::Selected),
+            keys_ctx: PaneKeyCtx {
+                selected_section: Some(DeviceSection::Detected),
+                local_in_config: false,
+                user_external: false,
+                has_users: false,
+            },
+        };
+        assert_eq!(resolve(detected, KeyCode::Enter), None);
+        assert_eq!(resolve(detected, KeyCode::Right), None);
     }
 
     #[test]

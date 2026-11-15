@@ -227,10 +227,12 @@ impl Navigation {
     /// Handle a navigation key press, return the new navigation state.
     ///
     /// `selected_section` is the section of the selected row in the
-    /// Devices pane: from the Devices pane, the local row and an added
-    /// device row open the Users sub-panel (a detected row has no users
-    /// yet); on any other row Right/Enter do nothing.
-    pub fn handle_key(self, key: KeyCode, selected_section: Option<DeviceSection>) -> Self {
+    /// Devices pane, and `has_users` whether that device has at least one
+    /// user: from the Devices pane, the local row and an added device row
+    /// open the Users sub-panel (a detected row has no users yet) — but
+    /// only when the device has users; with none, the Users pane is not
+    /// reachable. On any other row Right/Enter do nothing.
+    pub fn handle_key(self, key: KeyCode, selected_section: Option<DeviceSection>, has_users: bool) -> Self {
         use KeyCode::*;
         use NavDepth::*;
         use NavFocus::*;
@@ -253,11 +255,12 @@ impl Navigation {
 
             // Right/Enter open the Users sub-panel when the local or an
             // added device row is selected (a detected row has no users
-            // yet). The Devices pane has no fullscreen mode anymore: the
-            // Logs pane is a small always-visible strip, so the Devices
-            // pane is always big.
+            // yet) and that device has at least one user — with no users
+            // the Users pane is not reachable. The Devices pane has no
+            // fullscreen mode anymore: the Logs pane is a small
+            // always-visible strip, so the Devices pane is always big.
             (Devices, Some(Selected), Right | Enter) => match selected_section {
-                Some(DeviceSection::Local | DeviceSection::Added) => {
+                Some(DeviceSection::Local | DeviceSection::Added) if has_users => {
                     Navigation { focus: Users, depth: Some(Selected) }
                 }
                 _ => self,
@@ -325,6 +328,11 @@ pub struct PaneKeyCtx {
     /// Whether the selected Users row is an external row (an incoming
     /// connection of the localhost device) — drives the revoke key.
     pub user_external: bool,
+    /// Whether the device selected in the Devices pane has at least one
+    /// user — drives the Right/Enter entry into the Users sub-panel: with
+    /// no users the pane is not reachable, so the entry keys are not
+    /// offered.
+    pub has_users: bool,
 }
 
 /// The key dictionary of a pane state: every key that works in
@@ -334,6 +342,23 @@ pub struct PaneKeyCtx {
 /// This is the single source of truth for the pane states: the hint
 /// lines and the key dispatch are both derived from these lists, so a
 /// key that is not listed here is not handled.
+///
+/// Pick the key table of a Devices-pane row with or without the Users
+/// entry keys (Right/Enter): the Users sub-panel is only reachable when
+/// the selected device has at least one user, so with no users the entry
+/// keys are left out (never advertised, never handled).
+const fn with_users_entry(
+    has_users: bool,
+    with: &'static [KeyBinding],
+    without: &'static [KeyBinding],
+) -> &'static [KeyBinding] {
+    if has_users {
+        with
+    } else {
+        without
+    }
+}
+
 pub fn pane_keys(focus: NavFocus, depth: Option<NavDepth>, ctx: PaneKeyCtx) -> &'static [KeyBinding] {
     use NavDepth::*;
     use NavFocus::*;
@@ -345,18 +370,32 @@ pub fn pane_keys(focus: NavFocus, depth: Option<NavDepth>, ctx: PaneKeyCtx) -> &
         // The Devices pane is always big (the Logs pane is a small
         // strip), so focusing it already activates the row list.
         (Devices, Some(Selected)) => match ctx.selected_section {
-            Some(DeviceSection::Added) => DEVICES_ADDED_KEYS,
+            Some(DeviceSection::Added) => {
+                with_users_entry(ctx.has_users, DEVICES_ADDED_KEYS, DEVICES_ADDED_NO_USERS_KEYS)
+            }
             Some(DeviceSection::Detected) => DEVICES_DETECTED_KEYS,
             // The localhost row offers add or remove from the shared
             // configuration, depending on its membership.
             Some(DeviceSection::Local) => {
                 if ctx.local_in_config {
-                    DEVICES_LOCAL_ADDED_KEYS
+                    with_users_entry(
+                        ctx.has_users,
+                        DEVICES_LOCAL_ADDED_KEYS,
+                        DEVICES_LOCAL_ADDED_NO_USERS_KEYS,
+                    )
                 } else {
-                    DEVICES_LOCAL_NOT_ADDED_KEYS
+                    with_users_entry(
+                        ctx.has_users,
+                        DEVICES_LOCAL_NOT_ADDED_KEYS,
+                        DEVICES_LOCAL_NOT_ADDED_NO_USERS_KEYS,
+                    )
                 }
             }
-            _ => DEVICES_LOCAL_NOT_ADDED_KEYS,
+            _ => with_users_entry(
+                ctx.has_users,
+                DEVICES_LOCAL_NOT_ADDED_KEYS,
+                DEVICES_LOCAL_NOT_ADDED_NO_USERS_KEYS,
+            ),
         },
         (Devices, Some(Fullscreen)) => &[],
         (Users, None) => &[],
@@ -419,6 +458,17 @@ static DEVICES_LOCAL_NOT_ADDED_KEYS: &[KeyBinding] = &[
     KeyBinding::new(Char('a'), "a", "add", Effect::Action(Action::AddLocalToConfig)),
 ];
 
+/// Same as [`DEVICES_LOCAL_NOT_ADDED_KEYS`] but without the Users entry
+/// keys: with no users on the local device the Users sub-panel is not
+/// reachable, so Right/Enter are not offered.
+static DEVICES_LOCAL_NOT_ADDED_NO_USERS_KEYS: &[KeyBinding] = &[
+    KeyBinding::internal(Esc, "Esc", "back"),
+    KeyBinding::internal(Left, "Left", "back"),
+    KeyBinding::internal(Up, "Up", "select"),
+    KeyBinding::internal(Down, "Down", "select"),
+    KeyBinding::new(Char('a'), "a", "add", Effect::Action(Action::AddLocalToConfig)),
+];
+
 /// Focused Devices pane, local row selected, local device in the shared
 /// configuration: it can be removed from it (key 'r' — plain "remove",
 /// not 'd' "delete": the local files stay recoverable in git history, and
@@ -431,6 +481,17 @@ static DEVICES_LOCAL_ADDED_KEYS: &[KeyBinding] = &[
     KeyBinding::internal(Down, "Down", "select"),
     KeyBinding::internal(Enter, "Enter", "users"),
     KeyBinding::internal(Right, "Right", "users"),
+    KeyBinding::new(Char('r'), "r", "remove", Effect::Action(Action::RemoveLocalFromConfig)),
+];
+
+/// Same as [`DEVICES_LOCAL_ADDED_KEYS`] but without the Users entry keys:
+/// with no users on the local device the Users sub-panel is not reachable,
+/// so Right/Enter are not offered.
+static DEVICES_LOCAL_ADDED_NO_USERS_KEYS: &[KeyBinding] = &[
+    KeyBinding::internal(Esc, "Esc", "back"),
+    KeyBinding::internal(Left, "Left", "back"),
+    KeyBinding::internal(Up, "Up", "select"),
+    KeyBinding::internal(Down, "Down", "select"),
     KeyBinding::new(Char('r'), "r", "remove", Effect::Action(Action::RemoveLocalFromConfig)),
 ];
 
@@ -447,6 +508,19 @@ static DEVICES_ADDED_KEYS: &[KeyBinding] = &[
     KeyBinding::internal(Down, "Down", "select"),
     KeyBinding::internal(Enter, "Enter", "users"),
     KeyBinding::internal(Right, "Right", "users"),
+    KeyBinding::new(Char('d'), "d", "delete", Effect::Action(Action::DeleteSelected)),
+    KeyBinding::new(Char('a'), "a", "add user", Effect::Action(Action::AddTempUser)),
+];
+
+/// Same as [`DEVICES_ADDED_KEYS`] but without the Users entry keys: with
+/// no users on the added device the Users sub-panel is not reachable, so
+/// Right/Enter are not offered (the device row keeps its own actions,
+/// including 'a' add user).
+static DEVICES_ADDED_NO_USERS_KEYS: &[KeyBinding] = &[
+    KeyBinding::internal(Esc, "Esc", "back"),
+    KeyBinding::internal(Left, "Left", "back"),
+    KeyBinding::internal(Up, "Up", "select"),
+    KeyBinding::internal(Down, "Down", "select"),
     KeyBinding::new(Char('d'), "d", "delete", Effect::Action(Action::DeleteSelected)),
     KeyBinding::new(Char('a'), "a", "add user", Effect::Action(Action::AddTempUser)),
 ];
@@ -930,64 +1004,76 @@ mod navigation_tests {
         let center = Navigation::overview();
         // Up focuses the Devices panel (it is above the center); the row
         // list is active right away — there is no fullscreen step.
-        let focused = center.handle_key(Up, None);
+        let focused = center.handle_key(Up, None, false);
         assert_eq!(focused, nav(NavFocus::Devices, Some(NavDepth::Selected)));
-        assert_eq!(focused.handle_key(Up, None), focused);
-        assert_eq!(focused.handle_key(Down, None), focused);
+        assert_eq!(focused.handle_key(Up, None, false), focused);
+        assert_eq!(focused.handle_key(Down, None, false), focused);
         assert_eq!(focused.list_nav_action(Up), Some(Action::DevicesSelectPrev));
         assert_eq!(focused.list_nav_action(Down), Some(Action::DevicesSelectNext));
         // Left/Esc go back to the overview (Up/Down are consumed by the list).
-        assert_eq!(focused.handle_key(Left, None), center);
-        assert_eq!(focused.handle_key(Esc, None), center);
+        assert_eq!(focused.handle_key(Left, None, false), center);
+        assert_eq!(focused.handle_key(Esc, None, false), center);
         // Right also focuses the Devices panel from the overview; Left does not.
-        assert_eq!(center.handle_key(Left, None), center);
-        assert_eq!(center.handle_key(Right, None), focused);
+        assert_eq!(center.handle_key(Left, None, false), center);
+        assert_eq!(center.handle_key(Right, None, false), focused);
     }
 
     #[test]
     fn users_entry_from_local_and_added_rows_only() {
         let focused = nav(NavFocus::Devices, Some(NavDepth::Selected));
         // The local row and an added device row: Right/Enter open the
-        // Users sub-panel.
+        // Users sub-panel when the device has users.
         for section in [Some(DeviceSection::Local), Some(DeviceSection::Added)] {
             for key in [Enter, Right] {
                 assert_eq!(
-                    focused.handle_key(key, section),
+                    focused.handle_key(key, section, true),
                     nav(NavFocus::Users, Some(NavDepth::Selected))
                 );
             }
         }
         // On a detected row (no users yet) or with no selection, Right/Enter do nothing.
         for section in [Some(DeviceSection::Detected), None] {
-            assert_eq!(focused.handle_key(Enter, section), focused);
-            assert_eq!(focused.handle_key(Right, section), focused);
+            assert_eq!(focused.handle_key(Enter, section, true), focused);
+            assert_eq!(focused.handle_key(Right, section, true), focused);
         }
         let users = nav(NavFocus::Users, Some(NavDepth::Selected));
-        assert_eq!(users.handle_key(Left, None), focused);
-        assert_eq!(users.handle_key(Esc, None), focused);
+        assert_eq!(users.handle_key(Left, None, true), focused);
+        assert_eq!(users.handle_key(Esc, None, true), focused);
         assert_eq!(users.list_nav_action(Down), Some(Action::UsersSelectNext));
     }
 
     #[test]
+    fn users_entry_is_blocked_when_the_device_has_no_users() {
+        let focused = nav(NavFocus::Devices, Some(NavDepth::Selected));
+        // With no users on the selected device, the Users pane is not
+        // reachable: Right/Enter do nothing on the local or an added row.
+        for section in [Some(DeviceSection::Local), Some(DeviceSection::Added)] {
+            for key in [Enter, Right] {
+                assert_eq!(focused.handle_key(key, section, false), focused);
+            }
+        }
+    }
+
+    #[test]
     fn logs_down_goes_deeper_up_rewinds() {
-        let selected = Navigation::overview().handle_key(Down, None);
+        let selected = Navigation::overview().handle_key(Down, None, false);
         assert_eq!(selected, nav(NavFocus::Logs, Some(NavDepth::Selected)));
-        let fullscreen = selected.handle_key(Down, None);
+        let fullscreen = selected.handle_key(Down, None, false);
         assert_eq!(fullscreen, nav(NavFocus::Logs, Some(NavDepth::Fullscreen)));
         // Fullscreen logs: Up/Down scroll the content, only Esc exits.
-        assert_eq!(fullscreen.handle_key(Up, None), fullscreen);
+        assert_eq!(fullscreen.handle_key(Up, None, false), fullscreen);
         assert_eq!(
-            fullscreen.handle_key(Esc, None),
+            fullscreen.handle_key(Esc, None, false),
             nav(NavFocus::Logs, Some(NavDepth::Selected))
         );
-        let back_to_center = selected.handle_key(Up, None);
+        let back_to_center = selected.handle_key(Up, None, false);
         assert_eq!(back_to_center, Navigation::overview());
     }
 
     #[test]
     fn right_does_not_zoom_the_logs_panel() {
         let selected = nav(NavFocus::Logs, Some(NavDepth::Selected));
-        assert_eq!(selected.handle_key(Right, None), selected);
+        assert_eq!(selected.handle_key(Right, None, false), selected);
     }
 
     #[test]
