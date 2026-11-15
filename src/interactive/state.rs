@@ -230,6 +230,17 @@ pub fn run(ctx: &Context, udp_port: u16, beacons: &Receiver<BeaconDevice>) -> us
         tui.set_navigation(state.navigation);
         tui.draw();
     }
+
+    // Closing marker of the TUI session, so the CLI-visible stream shows
+    // where the full-screen session ends (the opening `CLI -> TUI (start)`
+    // marker is logged in `Ui::start`). Logged after the last draw, so the
+    // event is still in the channel when `tui` drops: `TtyUi::drop`
+    // restores the terminal and then prints the remaining stream to stdout,
+    // which makes this marker the last line in the CLI as well as an entry
+    // in the Logs pane stream. Plain mode has no screen switch: no marker.
+    if matches!(tui, ui::Ui::Tty(_)) {
+        ui::log(&format!("TUI -> CLI ({})", state.exit_label));
+    }
     state.new_count
 }
 
@@ -291,6 +302,9 @@ pub struct InteractiveState {
     temp_user_pending: Option<String>,
     /// Devices accepted this run.
     new_count: usize,
+    /// Label of the closing `TUI -> CLI (...)` marker: "quit" normally,
+    /// "wipe" when the session ends by wiping the configuration.
+    exit_label: &'static str,
 }
 
 impl InteractiveState {
@@ -316,6 +330,7 @@ impl InteractiveState {
             users_selected: None,
             temp_user_pending: None,
             new_count: 0,
+            exit_label: "quit",
         };
         state.reload(ctx);
         state
@@ -810,6 +825,10 @@ impl InteractiveState {
             Action::WipeCancel => self.wipe_pending = false,
             Action::WipeConfirm => {
                 self.wipe_pending = false;
+                // The session ends right after the wipe, so the closing
+                // `TUI -> CLI (...)` marker is labelled "wipe" (and is
+                // the last marker before exit), not "quit".
+                self.exit_label = "wipe";
                 let devices: Vec<Device> = self.key_to_device.values().cloned().collect();
                 wipe_config(ctx.home, ctx.ssh_config, &devices);
                 // wipe itself leaves known_hosts alone (see its doc
@@ -1491,6 +1510,7 @@ mod tests {
             users_selected: Some(user.to_string()),
             temp_user_pending: None,
             new_count: 0,
+            exit_label: "quit",
         }
     }
 

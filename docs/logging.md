@@ -75,8 +75,18 @@ signing-key trust (pulls from the device), SSH key install/remove — because
 git pull/push and ssh may prompt for a password, which only works with the
 screen switched away. All other actions (device add/remove, wipe, setup-cd)
 run in place, unwrapped: their log lines land in the Logs pane like any
-other, with no markers — the TUI never left, so there is no transition to
-mark.
+other, with no pass markers of their own — the screen never switches during
+them, so there is no transition to mark.
+
+The full-screen session itself is delimited the same way: `CLI -> TUI
+(start)` is logged when the TUI takes the terminal (printed to the CLI
+before the alternate screen opens, so it stays in the scrollback, and
+recorded in the stream), and `TUI -> CLI (quit)` — or `TUI -> CLI (wipe)`
+when the session ends by wiping the configuration — is logged when the
+interactive loop exits. `TtyUi`'s `Drop` restores the terminal and then
+prints the remaining stream to stdout, so the closing marker is the last
+line in the CLI as well. In plain (CLI) mode there is no screen switch,
+so no markers are logged: the whole output is already the CLI stream.
 
 Mechanics:
 

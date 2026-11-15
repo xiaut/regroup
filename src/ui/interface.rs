@@ -22,11 +22,26 @@ pub enum Ui {
 impl Ui {
     /// Start the interface: full-screen when stdout is a terminal, plain
     /// otherwise. When `force_cli` is true, always use plain mode.
+    ///
+    /// In full-screen mode the session is opened with a `CLI -> TUI (start)`
+    /// marker in the log stream (the closing `TUI -> CLI (...)` marker is
+    /// logged at the end of `interactive::run`). Plain mode has no screen
+    /// switch, so it logs no marker.
     pub fn start(force_cli: bool) -> Ui {
         if !force_cli && io::stdout().is_terminal() {
-            let terminal = ratatui::init();
             let (tx, log_rx) = mpsc::channel();
             let _ = LOG_TX.set(tx);
+            // Opening marker of the TUI session, so the CLI-visible stream
+            // shows where the full-screen session begins. Printed while the
+            // normal screen is still active — before `ratatui::init()`
+            // switches to the alternate screen, so the line stays in the
+            // CLI scrollback — and recorded in the channel, so the Logs
+            // pane shows it too.
+            {
+                let _direct = crate::ui::DirectOutputGuard::new();
+                crate::ui::log("CLI -> TUI (start)");
+            }
+            let terminal = ratatui::init();
             Ui::Tty(Box::new(TtyUi {
                 terminal,
                 log_rx,
