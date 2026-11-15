@@ -175,17 +175,22 @@ the selected context:
 - A **selected device row** offers only device-specific actions:
   `a`/`r` add/remove on the **localhost** row (plain add/remove — the
   local data stays recoverable, unlike `d` delete), `d` delete plus `a`
-  add a temporary user on an **added** row (`a` is free there; adding a
-  user is device-specific, no user needs to be selected), and `a`/`n`
+  add a user on an **added** row (`a` is free there; adding a user is
+  device-specific, no user needs to be selected — the user is temporary
+  until confirmed), and `a`/`n`
   add/ignore on a **detected** row. The localhost row gets no add-user
   key: a temporary user configures an outgoing connection, and
   connecting to the current device is nonsense. `Enter`/`Right` open the
   Users sub-panel when the **local or an added** row is selected.
 - A **selected user** in the Users pane offers only user-specific actions,
-  in two layers: the user layer (`d` set the default user, `x` remove a
-  temporary user) and, on top of it for a confirmed user of an added
-  device, the key layer (`i`/`r` install/remove an SSH key — the outgoing
-  connection, recorded as a connection file). On the localhost device
+  in two layers: the user layer (`d` set the default user, `x` remove the
+  user) and, on top of it, the key layer (`i`/`r` install/remove an SSH
+  key — the outgoing connection, recorded as a connection file). The same
+  keys are offered on every user row of an added device: **temporary is
+  not a special kind of user** — a user added with `a` is temporary until
+  confirmed, and a successful key install confirms it (the target device
+  records its own user when the key lands; the next sync brings the
+  declared user file). On the localhost device
   the Users pane also shows an **`── external ──` group** (always present,
   even when empty, so it stays discoverable): one row per incoming
   connection targeting the current user, labelled by the source

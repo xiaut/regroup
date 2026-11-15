@@ -22,7 +22,7 @@ use super::render::{
 };
 use super::types::{
     bindings_hint_text, ActivePane, Action, DeviceSection, NavFocus, Navigation, PaneKeyCtx,
-    Question, UiDevice, UiEvent, UiUser, UserStatus,
+    Question, UiDevice, UiEvent, UiUser,
 };
 
 /// Calculate the height needed for the question block based on its content.
@@ -55,7 +55,6 @@ fn calculate_question_height(question: &Question, ctx: &QuestionCtx, width: u16)
                 focus: ctx.navigation.focus,
                 depth: ctx.navigation.depth,
                 keys_ctx: PaneKeyCtx {
-                    confirmed_user: ctx.confirmed_user,
                     selected_section: ctx.selected_section,
                     local_in_config: ctx.local_in_config,
                     user_external: ctx.selected_user_external,
@@ -89,7 +88,7 @@ fn calculate_question_height(question: &Question, ctx: &QuestionCtx, width: u16)
         Question::AddTempUser(def, device) => {
             // Input line handled like the rename question
             let question_line = format!(
-                "Temporary user on {device} (kept in tmp/) — {}",
+                "Add user on {device} (kept in tmp/ until a sync or a key install confirms it) — {}",
                 bindings_hint_text(def.bindings)
             );
             let input_line = format!("> {}", ctx.input);
@@ -302,10 +301,6 @@ impl TtyUi {
             return Some(Action::Quit);
         }
 
-        let confirmed_user = self
-            .users_selected
-            .and_then(|i| self.users.get(i))
-            .is_some_and(|u| u.status != UserStatus::Temporary);
         // Whether the selected Users row is an external row (an incoming
         // connection of the localhost device) drives the revoke key.
         let user_external = self
@@ -333,7 +328,6 @@ impl TtyUi {
                     focus: self.navigation.focus,
                     depth: self.navigation.depth,
                     keys_ctx: PaneKeyCtx {
-                        confirmed_user,
                         selected_section,
                         local_in_config,
                         user_external,
@@ -510,9 +504,6 @@ impl TtyUi {
         let mut cursor = None;
         terminal.draw(|frame| {
             // Calculate the height needed for the question block
-            let confirmed_user = users_selected
-                .and_then(|i| users.get(i))
-                .is_some_and(|u| u.status != UserStatus::Temporary);
             let selected_user_external = users_selected
                 .and_then(|i| users.get(i))
                 .is_some_and(|u| u.incoming.is_some());
@@ -531,7 +522,6 @@ impl TtyUi {
                 help: *show_help,
                 active_pane: *active_pane,
                 navigation: *navigation,
-                confirmed_user,
                 selected_user_external,
                 selected_section,
                 local_in_config,
@@ -616,7 +606,6 @@ mod tests {
                 focus: NavFocus::Center,
                 depth: None,
             },
-            confirmed_user: false,
             selected_user_external: false,
             selected_section: None,
             local_in_config: false,
@@ -640,10 +629,15 @@ mod tests {
     #[test]
     fn text_question_height_counts_a_wrapped_input_line() {
         let q = Question::add_temp_user("dev".to_string());
-        // At width 80 (content 78) the question fits on one line but a
-        // 100-char input wraps, so the block is taller than the minimum.
+        // At width 80 (content 78) the question line and a 100-char input
+        // each wrap, so the block is taller than the minimum.
         let input = "x".repeat(100);
         let h = calculate_question_height(&q, &ctx(&input), 80);
+        assert_eq!(h, 2 + 2 + 2);
+        // Wide enough for the question on one line: only a longer input
+        // wraps (130 chars + "> " > 118 content width).
+        let long_input = "x".repeat(130);
+        let h = calculate_question_height(&q, &ctx(&long_input), 120);
         assert_eq!(h, 2 + 1 + 2);
     }
 

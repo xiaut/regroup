@@ -255,8 +255,6 @@ pub struct QuestionCtx<'a> {
     pub active_pane: super::types::ActivePane,
     /// Current navigation state (focus + depth), drives the hint line.
     pub navigation: super::types::Navigation,
-    /// Whether the selected user is confirmed (drives Users-pane hints).
-    pub confirmed_user: bool,
     /// Whether the selected Users row is an external row (an incoming
     /// connection of the localhost device) — drives the revoke key.
     pub selected_user_external: bool,
@@ -716,7 +714,6 @@ pub fn render_question(
                     focus: ctx.navigation.focus,
                     depth: ctx.navigation.depth,
                     keys_ctx: PaneKeyCtx {
-                        confirmed_user: ctx.confirmed_user,
                         selected_section: ctx.selected_section,
                         local_in_config: ctx.local_in_config,
                         user_external: ctx.selected_user_external,
@@ -756,7 +753,7 @@ pub fn render_question(
                 def.title,
                 Color::Cyan,
                 format!(
-                    "Temporary user on {device} (kept in tmp/) — {}",
+                    "Add user on {device} (kept in tmp/ until a sync or a key install confirms it) — {}",
                     bindings_hint_text(def.bindings)
                 ),
                 Line::from(format!("> {}", ctx.input)),
@@ -844,7 +841,6 @@ mod tests {
                 focus: NavFocus::Center,
                 depth: None,
             },
-            confirmed_user: false,
             selected_user_external: false,
             selected_section: None,
             local_in_config: false,

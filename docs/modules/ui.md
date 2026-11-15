@@ -321,7 +321,7 @@ Only device-specific actions (the global ones stay on the main menu):
 | Key | Action |
 |-----|--------|
 | `d` | Delete selected device |
-| `a` | Add a temporary user for the device (`a` is free on this row; adding a user is device-specific — no user needs to be selected) |
+| `a` | Add a user for the device (`a` is free on this row; adding a user is device-specific — no user needs to be selected). The user is temporary until a sync or a successful key install confirms it |
 | `Right` or `Enter` | Open the Users sub-panel of the selected device |
 
 ### In Devices Panel (localhost row selected)
@@ -344,13 +344,15 @@ outgoing connection, and connecting to the current device is nonsense.
 ### In Users Panel (a user selected)
 
 Only user-specific actions, in two layers — the user layer and, on top of
-it for a confirmed user of an added device, the key layer:
+it, the key layer. The same keys are offered on every user row of an added
+device: temporary is not a special kind of user (a user added with `a` is
+temporary until a sync or a successful key install confirms it):
 
 | Key | Action |
 |-----|--------|
 | `d` | Set the selected user as the device's default user (device-owned data — the one exception to "on localhost you only edit your own data") |
-| `x` | Remove the selected temporary user |
-| `i` / `r` | Install / remove SSH key (confirmed user of an added device; recorded as an outgoing connection file) |
+| `x` | Remove the selected user (tmp/ entry, or declared user file committed so the removal propagates) |
+| `i` / `r` | Install / remove SSH key to `user@device` (added device; a successful install on a temporary user confirms it; recorded as an outgoing connection file) |
 | `r` | Revoke — **only on an `── external ──` row of the localhost device**: remove the incoming key from your `authorized_keys` and delete the connection file, locally |
 | `Left` or `Esc` | Back to the Devices panel |
 

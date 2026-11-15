@@ -837,8 +837,8 @@ impl InteractiveState {
             Action::CancelTempUser => {
                 self.temp_user_pending = None;
             }
-            Action::RemoveTempUser => {
-                self.remove_temp_user(ctx);
+            Action::RemoveUser => {
+                self.remove_user(ctx);
             }
             Action::RevokeIncomingKey => {
                 self.revoke_incoming(ctx);
@@ -1402,40 +1402,66 @@ impl InteractiveState {
             ));
         }
         ui::log(&format!(
-            "  - Temporary user {name} on {device} (kept in tmp/ until the device declares it) — press 's' to sync and get the device's declared users"
+            "  - User {name} added on {device} — temporary until confirmed (kept in tmp/; a git sync 's' or a successful key install 'i' confirms it)"
         ));
         self.temp_users.insert(device.clone(), name.clone());
         self.users_selected = Some(name);
     }
 
-    /// Remove the selected temporary user of the selected device.
-    fn remove_temp_user(&mut self, ctx: &Context) {
+    /// Remove the selected user of the selected device (key 'x' in the
+    /// Users pane of an added device). There is no special "remove
+    /// temporary user" action: temporary is just the not-yet-confirmed
+    /// state of a user. The user file is deleted from both proxy layers;
+    /// when it existed in the git layer (confirmed user), the deletion is
+    /// committed so it propagates on the next git sync.
+    fn remove_user(&mut self, ctx: &Context) {
         let (Some(device), Some(user)) =
             (self.selected_device(ctx), self.users_selected.clone())
         else {
             return;
         };
-        if !self.is_temporary_user(ctx, &device, &user) {
-            ui::log(&format!(
-                "  - {user} on {device} is not a temporary user — only tmp/ users can be removed here"
-            ));
+        if ctx.dry_run {
+            ui::log(&format!("  - (dry run - removing user {user} on {device} skipped)"));
             return;
         }
-        // Delete from both proxy layers (the tmp/ file is ours; a git/ copy
-        // would mean the device declared the same user, but then the user is
-        // not temporary and we returned above).
         let root = root_config_dir(ctx.home);
+        let rel = format!(
+            "{}/{}/{}/{}.json",
+            crate::config::DEVICES_DIR,
+            device,
+            crate::config::USERS_DIR,
+            crate::config::users::sanitize_user(&user)
+        );
+        let was_confirmed = crate::config::proxy::in_git(&root, &rel);
         if let Err(e) = crate::config::proxy::delete_user(&root, &device, &user) {
             die(&format!(
-                "cannot remove the temporary user file for {user} on {device} in {}: {e}",
+                "cannot remove the user file for {user} on {device} in {}: {e}",
                 root.join(crate::config::TMP_DIR).display()
             ));
+        }
+        if was_confirmed {
+            // Commit the git-layer deletion so it propagates on sync.
+            let config_dir = root.join(GIT_DIR);
+            let users_dir = config_dir
+                .join(crate::config::DEVICES_DIR)
+                .join(&device)
+                .join(crate::config::USERS_DIR);
+            if let Err(e) = crate::git::sync::git_add_and_commit_file(
+                &config_dir,
+                &users_dir,
+                &format!("Remove user {user} on {device}"),
+            ) {
+                ui::log(&format!("  - could not commit the removal of {user} on {device}: {e}"));
+            }
         }
         if self.temp_users.get(&device).is_some_and(|temp| temp == &user) {
             self.temp_users.remove(&device);
         }
         self.users_selected = None;
-        ui::log(&format!("  - Temporary user {user} on {device} removed"));
+        ui::log(&format!(
+            "  - User {user} on {device} removed{}",
+            if was_confirmed { " (declared user file deleted and committed)" } else { " (temporary tmp/ entry)" }
+        ));
     }
 
     /// Revoke the incoming connection of the selected external row
@@ -1547,7 +1573,7 @@ impl InteractiveState {
         }
         if self.is_temporary_user(ctx, &device, &user) {
             ui::log(&format!(
-                "  - {user} on {device} is temporary — sync git ('s') so the device declares its users first"
+                "  - {user} on {device} is not confirmed yet — sync git ('s') or install a key ('i') to confirm it first"
             ));
             return;
         }
@@ -1598,12 +1624,11 @@ impl InteractiveState {
             ui::log("Select a device, then one of its users (Right) first");
             return;
         };
-        if self.is_temporary_user(ctx, &target_name, &target_user) {
-            ui::log(&format!(
-                "  - {target_user} on {target_name} is temporary — sync git ('s') to get the device's declared users first"
-            ));
-            return;
-        }
+        // A temporary user is not special: installing a key on it is
+        // allowed — a successful install confirms it (the target device
+        // records its own user when the key lands, and the next git sync
+        // brings the declared user file here).
+        let was_temporary = self.is_temporary_user(ctx, &target_name, &target_user);
         let Some(target_device) = self
             .key_to_device
             .values()
@@ -1650,6 +1675,11 @@ impl InteractiveState {
         match result {
             Ok(crate::tui::key_actions::KeyActionResult::Success(msg)) => {
                 ui::log(&format!("Success: {}", msg));
+                if was_temporary {
+                    ui::log(&format!(
+                        "  - {target_user} on {target_name} is now confirmed: the device records its own user when the key is installed — a git sync ('s') brings the declared user file here"
+                    ));
+                }
             }
             Ok(crate::tui::key_actions::KeyActionResult::Error(msg)) => {
                 ui::log(&format!("Error: {}", msg));
@@ -1672,12 +1702,9 @@ impl InteractiveState {
             ui::log("Select a device, then one of its users (Right) first");
             return;
         };
-        if self.is_temporary_user(ctx, &target_name, &target_user) {
-            ui::log(&format!(
-                "  - {target_user} on {target_name} is temporary — no SSH key connection exists"
-            ));
-            return;
-        }
+        // No temporary-user special case here either: if a connection
+        // exists (a successful install may have created it while the
+        // user is still temporary in this view), it can be removed.
         let config_dir = root_config_dir(ctx.home).join(GIT_DIR);
         let current_user = crate::discovery::local_user();
 
@@ -2038,14 +2065,15 @@ mod tests {
 
         let key = SshPublicKey::from("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFake");
         let ssh_config = dir.join("ssh_config");
-        let ctx = test_ctx(&home, &key, &ssh_config);
+        let mut ctx = test_ctx(&home, &key, &ssh_config);
+        ctx.dry_run = false; // remove_user really deletes
         let mut state = test_state("laptop", "alice");
 
         assert!(
             state.is_temporary_user(&ctx, "laptop", "alice"),
             "a tmp/-only user must be recognized as temporary even when temp_users is empty"
         );
-        state.remove_temp_user(&ctx);
+        state.remove_user(&ctx);
         assert!(proxy::user_file(&root, "laptop", "alice").is_none(), "tmp/ user file must be deleted");
         assert!(!state.is_temporary_user(&ctx, "laptop", "alice"));
         assert_eq!(state.users_selected, None);
@@ -2053,34 +2081,38 @@ mod tests {
     }
 
     #[test]
-    fn confirmed_user_is_not_temporary_and_survives_removal() {
+    fn remove_user_deletes_a_confirmed_user_from_the_git_layer_too() {
         let (dir, home) = test_home("confirmed");
         let root = root_config_dir(&home);
         // Declared by the device in the git/ layer ...
         ensure_local_user_file(&root.join(GIT_DIR), "laptop", "carol").unwrap();
-        // ... plus a tmp/-only user, to make sure only the latter is removed.
+        // ... plus a tmp/-only user.
         proxy::write_tmp_user_file(&root, "laptop", "alice").unwrap();
 
         let key = SshPublicKey::from("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFake");
         let ssh_config = dir.join("ssh_config");
-        let ctx = test_ctx(&home, &key, &ssh_config);
+        let mut ctx = test_ctx(&home, &key, &ssh_config);
+        ctx.dry_run = false;
         let mut state = test_state("laptop", "carol");
 
+        // There is no special "remove temporary user" action: removing a
+        // confirmed user deletes its git/ file as well (the commit fails
+        // in this test env — no git repo — and is only logged).
         assert!(!state.is_temporary_user(&ctx, "laptop", "carol"));
-        state.remove_temp_user(&ctx);
-        assert!(proxy::user_file(&root, "laptop", "carol").is_some(), "git/ user file must survive");
-        assert!(state.users_selected.is_some(), "selection kept when nothing was removed");
+        state.remove_user(&ctx);
+        assert!(proxy::user_file(&root, "laptop", "carol").is_none(), "git/ user file must be deleted");
+        assert!(proxy::user_file(&root, "laptop", "alice").is_some(), "the other user must survive");
+        assert_eq!(state.users_selected, None);
 
         state.users_selected = Some("alice".to_string());
         assert!(state.is_temporary_user(&ctx, "laptop", "alice"));
-        state.remove_temp_user(&ctx);
+        state.remove_user(&ctx);
         assert!(proxy::user_file(&root, "laptop", "alice").is_none());
-        assert!(proxy::user_file(&root, "laptop", "carol").is_some());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn remove_temp_user_clears_only_the_matching_in_memory_entry() {
+    fn remove_user_clears_only_the_matching_in_memory_entry() {
         let (dir, home) = test_home("map");
         let root = root_config_dir(&home);
         // One temp user added this run (in-memory entry) and one left over
@@ -2090,11 +2122,12 @@ mod tests {
 
         let key = SshPublicKey::from("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFake");
         let ssh_config = dir.join("ssh_config");
-        let ctx = test_ctx(&home, &key, &ssh_config);
+        let mut ctx = test_ctx(&home, &key, &ssh_config);
+        ctx.dry_run = false;
         let mut state = test_state("laptop", "bob");
         state.temp_users.insert("laptop".to_string(), "alice".to_string());
 
-        state.remove_temp_user(&ctx);
+        state.remove_user(&ctx);
         assert!(proxy::user_file(&root, "laptop", "bob").is_none());
         assert!(
             state.temp_users.get("laptop").is_some_and(|u| u == "alice"),
