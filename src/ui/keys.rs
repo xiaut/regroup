@@ -158,7 +158,8 @@ mod tests {
     fn all_questions() -> Vec<Question> {
         vec![
             Question::idle(),
-            Question::add_device("dev".to_string(), "1.2.3.4".to_string()),
+            Question::add_device("dev".to_string(), "1.2.3.4".to_string(), "SHA256:test".to_string()),
+            Question::confirm_device_key("dev".to_string(), "1.2.3.4".to_string(), "SHA256:test".to_string()),
             Question::trust_key("dev".to_string()),
             Question::rename("dev".to_string(), "dev2".to_string()),
             Question::delete("dev".to_string()),
@@ -340,7 +341,9 @@ mod tests {
                 has_users: false,
             },
         };
-        assert_eq!(resolve(detected, KeyCode::Char('a')), Some(KeyResolution::Action(Action::Add)));
+        // 'a' on a detected row only arms the fingerprint confirmation;
+        // the device is added by the confirmation question's 'y' (Action::Add).
+        assert_eq!(resolve(detected, KeyCode::Char('a')), Some(KeyResolution::Action(Action::AskAdd)));
         assert_eq!(resolve(detected, KeyCode::Char('u')), None);
     }
 

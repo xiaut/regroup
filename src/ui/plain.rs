@@ -60,11 +60,23 @@ impl PlainUi {
                     .collect();
                 format!("[{}]:", hints.join(", "))
             }
-            Question::AddDevice(def, name, ip) => {
+            Question::AddDevice(def, name, ip, fingerprint) => {
                 let hints: Vec<String> = def.bindings.iter()
                     .map(|b| format!("{}", b.label))
                     .collect();
-                format!("Add {name} ({ip}) to config? [{}]:", hints.join("/"))
+                format!(
+                    "Add {name} ({ip}) to config? SSH key fingerprint: {fingerprint} — confirm to trust this key [{}]:",
+                    hints.join("/")
+                )
+            }
+            Question::ConfirmDeviceKey(def, name, ip, fingerprint) => {
+                let hints: Vec<String> = def.bindings.iter()
+                    .map(|b| format!("{}", b.label))
+                    .collect();
+                format!(
+                    "Trust {name} ({ip})? SSH key fingerprint: {fingerprint} [{}]:",
+                    hints.join("/")
+                )
             }
             Question::TrustKey(def, name) => {
                 let hints: Vec<String> = def.bindings.iter()
@@ -161,6 +173,9 @@ impl PlainUi {
                 Some(Action::TempUserName(line.to_string()))
             }
             Question::AddDevice(..) => Some(Action::SkipCurrent),
+            // Default answer is "ignore": the presented key is never
+            // accepted silently.
+            Question::ConfirmDeviceKey(..) => Some(Action::Ignore),
             Question::TrustKey(..) => Some(Action::RejectKey),
             Question::Delete(..) => Some(Action::DeleteCancel),
             Question::Wipe(..) => Some(Action::WipeCancel),

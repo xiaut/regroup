@@ -271,6 +271,16 @@ pub struct InteractiveState {
     pending_devices: VecDeque<BeaconDevice>,
     /// Pending devices by public key, to prevent duplicates.
     pending_keys: HashSet<SshPublicKey>,
+    /// SHA256 fingerprint of each pending device's SSH public key,
+    /// computed when its beacon was queued: shown for explicit
+    /// confirmation before the device is trusted and written to the
+    /// config (no silent acceptance of the presented key).
+    pending_fingerprints: HashMap<SshPublicKey, String>,
+    /// Detected device whose SSH key fingerprint confirmation is armed
+    /// (key 'a' on its detected row in the full-screen ui): it stays in
+    /// the pending queue until the confirm question's 'y' (Action::Add)
+    /// or 'n' (Action::Ignore).
+    confirm_add: Option<SshPublicKey>,
     /// Which pane is currently active in the UI.
     active_pane: ActivePane,
     /// Navigation state: focus + depth in the context hierarchy.
@@ -330,6 +340,8 @@ impl InteractiveState {
             rotation_pending: None,
             pending_devices: VecDeque::new(),
             pending_keys: HashSet::new(),
+            pending_fingerprints: HashMap::new(),
+            confirm_add: None,
             active_pane: ActivePane::main_menu(),
             navigation: Navigation::overview(),
             device_selected: None,
@@ -412,6 +424,12 @@ impl InteractiveState {
             Question::rename(device.name.clone(), suggested.clone())
         } else if let Some(device) = &self.rotation_pending {
             Question::trust_key(device.name.clone())
+        } else if let Some(device) = self.confirm_add_device() {
+            Question::confirm_device_key(
+                device.name.clone(),
+                device.ip.clone(),
+                self.fingerprint_of(&device.ssh_public_key),
+            )
         } else if let Some(device) = &self.temp_user_pending {
             Question::add_temp_user(device.clone())
         } else if let Some((device, user)) = &self.install_key_pending {
@@ -420,10 +438,32 @@ impl InteractiveState {
             && !ctx.dry_run
             && let Some(device) = self.pending_devices.front()
         {
-            Question::add_device(device.name.clone(), device.ip.clone())
+            Question::add_device(
+                device.name.clone(),
+                device.ip.clone(),
+                self.fingerprint_of(&device.ssh_public_key),
+            )
         } else {
             Question::idle()
         }
+    }
+
+    /// The pending device whose fingerprint confirmation is armed, when
+    /// it is still in the pending queue.
+    fn confirm_add_device(&self) -> Option<&BeaconDevice> {
+        let key = self.confirm_add.as_ref()?;
+        self.pending_devices
+            .iter()
+            .find(|d| &d.ssh_public_key == key)
+    }
+
+    /// The fingerprint shown for `key`'s confirmation: computed when the
+    /// beacon was queued, falling back to the key preview.
+    fn fingerprint_of(&self, key: &SshPublicKey) -> String {
+        self.pending_fingerprints
+            .get(key)
+            .cloned()
+            .unwrap_or_else(|| crate::interactive::utils::key_preview(key))
     }
 
     /// The rows of the Devices pane, in display order: the local device
@@ -692,13 +732,24 @@ impl InteractiveState {
             return false;
         }
         self.pending_keys.insert(device.ssh_public_key.clone());
+        // Compute the SSH public key fingerprint once, when the beacon is
+        // queued: it is shown to the user for explicit confirmation before
+        // the device is trusted and written to the config.
+        let fingerprint = public_key::compute_fingerprint_from_public_key(
+            device.ssh_public_key.as_str(),
+        )
+        .map(|f| f.to_string())
+        .unwrap_or_else(|| crate::interactive::utils::key_preview(&device.ssh_public_key));
+        self.pending_fingerprints
+            .insert(device.ssh_public_key.clone(), fingerprint.clone());
         if ctx.dry_run {
             self.new_count += 1;
             ui::log(&format!(
-                "[DRY RUN] New device: {} ({}) - key: {}",
+                "[DRY RUN] New device: {} ({}) - key: {} - fingerprint: {}",
                 device.name,
                 device.ip,
-                crate::interactive::utils::key_preview(&device.ssh_public_key)
+                crate::interactive::utils::key_preview(&device.ssh_public_key),
+                fingerprint
             ));
             return false;
         }
@@ -717,10 +768,11 @@ impl InteractiveState {
             Level::Info,
             "new device detected",
             Some(&format!(
-                "[!] New device: {} ({}) - key: {}",
+                "[!] New device: {} ({}) - key: {} - fingerprint: {}\n    Verify the fingerprint on the device itself, then 'a' and 'y' to trust it",
                 added_device.name.as_str(),
                 added_device.ip,
-                crate::interactive::utils::key_preview(&added_device.ssh_public_key)
+                crate::interactive::utils::key_preview(&added_device.ssh_public_key),
+                fingerprint
             )),
         );
         false
@@ -745,11 +797,16 @@ impl InteractiveState {
                 }
             }
             Action::Add => self.accept_selected(ctx),
+            Action::AskAdd => self.ask_add_selected(),
             Action::Ignore => self.ignore_selected(),
             Action::AddCurrent => self.accept_front(ctx),
             Action::SkipCurrent => {
                 if let Some(device) = self.pending_devices.pop_front() {
                     self.pending_keys.remove(&device.ssh_public_key);
+                    if self.confirm_add.as_ref() == Some(&device.ssh_public_key) {
+                        self.confirm_add = None;
+                    }
+                    self.pending_fingerprints.remove(&device.ssh_public_key);
                     // Device rejected, remember to not ask again
                     self.rejected_keys.insert(device.ssh_public_key);
                     ui::log(&format!("  - Skipped {}.", device.name));
@@ -1072,6 +1129,23 @@ impl InteractiveState {
         self.known_ip.remove(&key);
     }
 
+    /// Arm the SSH key fingerprint confirmation for the detected device
+    /// selected in the Devices panel (falls back to the front of the
+    /// pending queue): the device stays in the queue and the confirm
+    /// question shows its fingerprint — only its 'y' (Action::Add) writes
+    /// it to the config, 'n' (Action::Ignore) drops it.
+    fn ask_add_selected(&mut self) {
+        let Some(key) = (match &self.device_selected {
+            Some(DeviceRow::Detected(k)) => Some(k.clone()),
+            _ => self.pending_devices.front().map(|d| d.ssh_public_key.clone()),
+        }) else {
+            return;
+        };
+        if self.pending_devices.iter().any(|d| d.ssh_public_key == key) {
+            self.confirm_add = Some(key);
+        }
+    }
+
     /// Add the detected device selected in the Devices panel (falls back
     /// to the front of the pending queue). A name collision redirects to
     /// the rename question instead.
@@ -1108,6 +1182,10 @@ impl InteractiveState {
 
     /// Accept `device`: a name collision redirects to the rename question.
     fn accept_device(&mut self, ctx: &Context, device: BeaconDevice) {
+        // The device leaves the pending queue: drop its armed fingerprint
+        // confirmation and its stored fingerprint.
+        self.confirm_add = None;
+        self.pending_fingerprints.remove(&device.ssh_public_key);
         // If the name is already used by another device,
         // ask the user to pick a new one.
         if device_name_taken(&device.name, ctx.home, ctx.ssh_config) {
@@ -1144,6 +1222,10 @@ impl InteractiveState {
         };
         let device = self.pending_devices.remove(pos).unwrap();
         self.pending_keys.remove(&device.ssh_public_key);
+        if self.confirm_add.as_ref() == Some(&device.ssh_public_key) {
+            self.confirm_add = None;
+        }
+        self.pending_fingerprints.remove(&device.ssh_public_key);
         // Device rejected, remember to not ask again
         self.rejected_keys.insert(device.ssh_public_key);
         ui::log(&format!(
@@ -1987,6 +2069,8 @@ mod tests {
             rotation_pending: None,
             pending_devices: VecDeque::new(),
             pending_keys: HashSet::new(),
+            pending_fingerprints: HashMap::new(),
+            confirm_add: None,
             active_pane: ActivePane::main_menu(),
             navigation: Navigation::overview(),
             device_selected: Some(DeviceRow::Added(device.to_string())),
@@ -2458,6 +2542,81 @@ mod tests {
         state.device_selected = Some(DeviceRow::Local);
         assert_eq!(state.sync_scope(&ctx), SyncScope::All);
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn queued_peer(state: &mut InteractiveState, key: &SshPublicKey, fingerprint: &str) {
+        state.pending_devices.push_back(BeaconDevice {
+            name: "peer".to_string(),
+            signing_public_key: SigningPublicKeyB64::from("AAAA"),
+            ssh_public_key: key.clone(),
+            ip: "10.0.0.9".to_string(),
+            port: 22,
+        });
+        state.pending_keys.insert(key.clone());
+        state
+            .pending_fingerprints
+            .insert(key.clone(), fingerprint.to_string());
+    }
+
+    #[test]
+    fn detected_device_add_arms_a_fingerprint_confirmation() {
+        let (dir, home) = test_home("confirm-add");
+        let local_key = SshPublicKey::from("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeLocal");
+        let ssh_config = dir.join("ssh_config");
+        let ctx = test_ctx(&home, &local_key, &ssh_config);
+        let mut state = test_state("laptop", "alice");
+
+        let key = SshPublicKey::from("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakePeer");
+        queued_peer(&mut state, &key, "SHA256:peerfp");
+        state.device_selected = Some(DeviceRow::Detected(key.clone()));
+
+        // Full-screen ui, nothing armed: no question — 'a' alone no longer
+        // adds the device silently.
+        assert!(matches!(state.current_question(&ctx, false), Question::Idle(_)));
+
+        // Arming the add (key 'a' on the detected row) opens the
+        // confirmation question, carrying name, ip and fingerprint.
+        state.ask_add_selected();
+        match state.current_question(&ctx, false) {
+            Question::ConfirmDeviceKey(_, name, ip, fingerprint) => {
+                assert_eq!(name, "peer");
+                assert_eq!(ip, "10.0.0.9");
+                assert_eq!(fingerprint, "SHA256:peerfp");
+            }
+            other => panic!("expected ConfirmDeviceKey, got '{}'", other.def().title),
+        }
+
+        // Ignoring (the question's 'n') clears the confirmation, drops the
+        // device from the queue and rejects its key for the rest of the run.
+        state.ignore_selected();
+        assert!(matches!(state.current_question(&ctx, false), Question::Idle(_)));
+        assert!(state.pending_devices.is_empty());
+        assert!(state.rejected_keys.contains(&key));
+        assert!(state.confirm_add.is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn plain_mode_add_question_carries_the_fingerprint() {
+        let (dir, home) = test_home("plain-add-fp");
+        let local_key = SshPublicKey::from("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeLocal");
+        let ssh_config = dir.join("ssh_config");
+        let mut ctx = test_ctx(&home, &local_key, &ssh_config);
+        ctx.dry_run = false; // the plain-mode add question is skipped in dry run
+        let mut state = test_state("laptop", "alice");
+
+        let key = SshPublicKey::from("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakePeer");
+        queued_peer(&mut state, &key, "SHA256:peerfp");
+
+        match state.current_question(&ctx, true) {
+            Question::AddDevice(_, name, ip, fingerprint) => {
+                assert_eq!(name, "peer");
+                assert_eq!(ip, "10.0.0.9");
+                assert_eq!(fingerprint, "SHA256:peerfp");
+            }
+            other => panic!("expected AddDevice, got '{}'", other.def().title),
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
