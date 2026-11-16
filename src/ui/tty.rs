@@ -59,18 +59,13 @@ fn calculate_question_height(question: &Question, ctx: &QuestionCtx, width: u16)
                     local_in_config: ctx.local_in_config,
                     user_external: ctx.selected_user_external,
                     has_users: ctx.has_users,
+                    selected_new_key: ctx.selected_new_key,
                 },
             }))
         }
         Question::AddDevice(def, name, ip) => {
             (
                 format!("Add {name} ({ip}) to config?"),
-                modal_hint_text(def),
-            )
-        }
-        Question::TrustKey(def, name) => {
-            (
-                format!("Trust the new signing key for {name}? (expected after a reinstall — otherwise it may be spoofing)"),
                 modal_hint_text(def),
             )
         }
@@ -324,6 +319,13 @@ impl TtyUi {
         let local_in_config = selected_device
             .map(|d| d.in_shared_config)
             .unwrap_or(false);
+        // An added row presenting a new signing key offers the trust/reject
+        // keys (t/n) — the rotation decision is a row action, never a
+        // blocking question.
+        let selected_new_key = selected_device.is_some_and(|d| {
+            d.section == DeviceSection::Added
+                && d.signing_key != super::types::SigningKeyState::Pinned
+        });
         let ctx = if self.show_help {
             Context::Help
         } else {
@@ -341,6 +343,7 @@ impl TtyUi {
                         // The Users entry keys are only offered when the
                         // selected device has at least one user.
                         has_users: !self.users.is_empty(),
+                        selected_new_key,
                     },
                 }
             } else {
@@ -525,6 +528,10 @@ impl TtyUi {
             let local_in_config = selected_device
                 .map(|d| d.in_shared_config)
                 .unwrap_or(false);
+            let selected_new_key = selected_device.is_some_and(|d| {
+                d.section == DeviceSection::Added
+                    && d.signing_key != super::types::SigningKeyState::Pinned
+            });
             let question_ctx = QuestionCtx {
                 input,
                 pending: devices
@@ -538,6 +545,7 @@ impl TtyUi {
                 selected_section,
                 local_in_config,
                 has_users: !users.is_empty(),
+                selected_new_key,
                 key_flash: key_flash.as_ref(),
             };
             let question_height = calculate_question_height(question, &question_ctx, frame.area().width);
@@ -623,6 +631,7 @@ mod tests {
             selected_section: None,
             local_in_config: false,
             has_users: false,
+            selected_new_key: false,
             key_flash: None,
         }
     }

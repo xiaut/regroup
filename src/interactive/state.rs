@@ -2,7 +2,7 @@
 //!
 //! Listens for verified beacons (forwarded by the listener thread through a
 //! channel) and for user input (read by the ui module), and manages the
-//! pending-device queue, the signing-key rotation prompt and the rename
+//! pending-device queue, the new-signing-key super-state and the rename
 //! prompt. All decisions that affect what is written to disk live here.
 //!
 //! General messages go through `ui::log` (activity pane of the full-screen
@@ -29,7 +29,7 @@ use crate::ssh::config::update_block;
 use crate::ssh::keys::{SigningPublicKeyB64, SshPublicKey};
 use crate::ssh::public_key;
 use crate::ui::{self, Action, Level, Question};
-use crate::ui::types::{ActivePane, DeviceSection, Navigation, UiDevice, UiUser, UserStatus};
+use crate::ui::types::{ActivePane, DeviceSection, Navigation, SigningKeyState, UiDevice, UiUser, UserStatus};
 
 /// How long each loop iteration waits for user input before checking the
 /// beacon channel again.
@@ -138,7 +138,7 @@ pub fn run(ctx: &Context, udp_port: u16, beacons: &Receiver<BeaconDevice>) -> us
 
     loop {
         // Check for new beacons from the listener. A beacon that was fully
-        // handled (filtered out, known device, rotation prompt raised) skips
+        // handled (filtered out, known device, new-signing-key mark) skips
         // input processing for this iteration, like the `continue` it replaces.
         match beacons.try_recv() {
             Ok(device) => {
@@ -265,8 +265,12 @@ pub struct InteractiveState {
     pinned_signing_keys: HashMap<SshPublicKey, SigningPublicKeyB64>,
     /// Signing keys the user explicitly refused (rotation declined).
     rejected_signing_keys: HashSet<(SshPublicKey, SigningPublicKeyB64)>,
-    /// Device currently prompting for a new signing key (reinstall or spoofing).
-    rotation_pending: Option<BeaconDevice>,
+    /// Added devices presenting a new, not-yet-trusted signing key
+    /// (reinstall or spoofing), by SSH public key → the presented key.
+    /// Their rows fall under the `── new signing key ──` super-state group
+    /// of the Devices pane — shown passively, never as a blocking
+    /// question; the user trusts (`t`) or rejects (`n`) from the row.
+    new_signing_keys: HashMap<SshPublicKey, SigningPublicKeyB64>,
     /// Queue for pending devices to confirm.
     pending_devices: VecDeque<BeaconDevice>,
     /// Pending devices by public key, to prevent duplicates.
@@ -327,7 +331,7 @@ impl InteractiveState {
             key_to_device: HashMap::new(),
             pinned_signing_keys: HashMap::new(),
             rejected_signing_keys: HashSet::new(),
-            rotation_pending: None,
+            new_signing_keys: HashMap::new(),
             pending_devices: VecDeque::new(),
             pending_keys: HashSet::new(),
             active_pane: ActivePane::main_menu(),
@@ -378,6 +382,12 @@ impl InteractiveState {
             .iter()
             .map(|m| (m.ssh_public_key.clone(), m.signing_public_key.clone()))
             .collect();
+        // Devices that disappeared from the repository are gone: drop
+        // their new-signing-key super-state too.
+        self.new_signing_keys
+            .retain(|k, _| self.known_keys.contains(k));
+        self.rejected_signing_keys
+            .retain(|(k, _)| self.known_keys.contains(k));
         for (key, device) in old {
             if !self.key_to_device.contains_key(&key) {
                 let last_ip = self.known_ip.get(&key).cloned();
@@ -391,10 +401,29 @@ impl InteractiveState {
         }
     }
 
+    /// The super-state of an added device's signing key: `Rejected` when
+    /// the user refused the presented key, `New` when it presents a key
+    /// different from the pinned one, `Pinned` otherwise.
+    fn signing_key_state(&self, key: &SshPublicKey) -> SigningKeyState {
+        match self.new_signing_keys.get(key) {
+            Some(presented)
+                if self
+                    .rejected_signing_keys
+                    .contains(&(key.clone(), presented.clone())) =>
+            {
+                SigningKeyState::Rejected
+            }
+            Some(_) => SigningKeyState::New,
+            None => SigningKeyState::Pinned,
+        }
+    }
+
     /// The question to display, derived from the current state. Dry run
     /// never asks anything: pending devices are only logged. In plain mode
     /// the pending queue is asked one device at a time; the full-screen ui
-    /// adds devices from the Devices panel instead.
+    /// adds devices from the Devices panel instead. A new signing key is
+    /// never a question: it is the `── new signing key ──` super-state of
+    /// the Devices pane, acted on from the row (`t`/`n`).
     fn current_question(&self, ctx: &Context, plain: bool) -> Question {
         if self.wipe_pending {
             Question::wipe(self.key_to_device.len())
@@ -410,8 +439,6 @@ impl InteractiveState {
             Question::delete(name.clone())
         } else if let Some((device, suggested)) = &self.rename_state {
             Question::rename(device.name.clone(), suggested.clone())
-        } else if let Some(device) = &self.rotation_pending {
-            Question::trust_key(device.name.clone())
         } else if let Some(device) = &self.temp_user_pending {
             Question::add_temp_user(device.clone())
         } else if let Some((device, user)) = &self.install_key_pending {
@@ -475,9 +502,17 @@ impl InteractiveState {
             port: ctx.local_port,
             section: DeviceSection::Local,
             in_shared_config: local_in_config,
+            signing_key: SigningKeyState::Pinned,
         });
         let mut added: Vec<&Device> = self.key_to_device.values().collect();
-        added.sort_by(|a, b| a.name.as_str().cmp(b.name.as_str()));
+        // The new-signing-key super-state group comes first (rendered
+        // under its own `── new signing key ──` divider), then the plain
+        // added rows; name order within each group.
+        added.sort_by(|a, b| {
+            (self.signing_key_state(&b.ssh_public_key) != SigningKeyState::Pinned)
+                .cmp(&(self.signing_key_state(&a.ssh_public_key) != SigningKeyState::Pinned))
+                .then_with(|| a.name.as_str().cmp(b.name.as_str()))
+        });
         devices.extend(added.iter().map(|m| UiDevice {
             key: m.ssh_public_key.as_str().to_string(),
             name: m.name.as_str().to_string(),
@@ -485,6 +520,7 @@ impl InteractiveState {
             port: m.port,
             section: DeviceSection::Added,
             in_shared_config: true,
+            signing_key: self.signing_key_state(&m.ssh_public_key),
         }));
         let mut detected: Vec<&BeaconDevice> = self.pending_devices.iter().collect();
         detected.sort_by(|a, b| a.name.cmp(&b.name));
@@ -495,6 +531,7 @@ impl InteractiveState {
             port: d.port,
             section: DeviceSection::Detected,
             in_shared_config: false,
+            signing_key: SigningKeyState::Pinned,
         }));
         devices
     }
@@ -522,34 +559,41 @@ impl InteractiveState {
         if let Some(pinned) = self.pinned_signing_keys.get(&device.ssh_public_key)
             && pinned.as_str() != device.signing_public_key.as_str()
         {
-            // Either the device was reinstalled (regroup
-            // regenerated its signing keys) or this is spoofing.
-            let pair = (
-                device.ssh_public_key.clone(),
-                device.signing_public_key.clone(),
-            );
-            if !self.rejected_signing_keys.contains(&pair) && self.rotation_pending.is_none() {
-                if ctx.dry_run {
-                    ui::log(&format!(
-                        "[DRY RUN] {} announces with a NEW signing key — would ask to trust it",
-                        device.name
-                    ));
-                } else {
+            // Either the device was reinstalled (regroup regenerated its
+            // signing keys) or this is spoofing. The device falls under
+            // the `── new signing key ──` super-state group of the
+            // Devices pane — passively, never as a blocking question; its
+            // beacons are ignored until the user trusts (`t`) or rejects
+            // (`n`) the new key from its row.
+            if ctx.dry_run {
+                ui::log(&format!(
+                    "[DRY RUN] {} announces with a NEW signing key — would mark its row in the Devices pane",
+                    device.name
+                ));
+            } else {
+                let already_marked = self
+                    .new_signing_keys
+                    .get(&device.ssh_public_key)
+                    .is_some_and(|k| k.as_str() == device.signing_public_key.as_str());
+                if !already_marked {
                     ui::log_device(
                         &device.ssh_public_key,
                         &device.name,
                         Level::Warning,
                         "NEW signing key — reinstall or spoofing?",
                         Some(&format!(
-                            "[!] {} announces with a NEW signing key (expected: {}…, received: {}…)\n    This is expected after a reinstall (regroup regenerates its signing keys).\n    If you do not expect a reinstall, this may be spoofing.",
+                            "[!] {} announces with a NEW signing key (expected: {}…, received: {}…)\n    This is expected after a reinstall (regroup regenerates its signing keys).\n    If you do not expect a reinstall, this may be spoofing.\n    The row sits under '── new signing key ──' — trust it with 't' or reject it with 'n' from the Devices pane.",
                             device.name,
                             &pinned.as_str()[..8.min(pinned.as_str().len())],
                             &device.signing_public_key.as_str()
                                 [..8.min(device.signing_public_key.as_str().len())]
                         )),
                     );
-                    self.rotation_pending = Some(device);
                 }
+                self.new_signing_keys.insert(
+                    device.ssh_public_key.clone(),
+                    device.signing_public_key.clone(),
+                );
             }
             return true;
         }
@@ -756,45 +800,8 @@ impl InteractiveState {
                 }
                 self.after_selection_change();
             }
-            Action::TrustKey => {
-                if let Some(device) = self.rotation_pending.take() {
-                    self.pinned_signing_keys.insert(
-                        device.ssh_public_key.clone(),
-                        device.signing_public_key.clone(),
-                    );
-                    tui.with_clean_terminal("trust new signing key", || {
-                        trust_new_signing_key(ctx.home, &device);
-                    });
-                    ui::log_device(
-                        &device.ssh_public_key,
-                        device.name.as_str(),
-                        Level::Success,
-                        "new signing key trusted",
-                        Some(&format!(
-                            "  - New signing key for {} trusted — its next beacon will be processed normally.",
-                            device.name.as_str()
-                        )),
-                    );
-                }
-            }
-            Action::RejectKey => {
-                if let Some(device) = self.rotation_pending.take() {
-                    self.rejected_signing_keys.insert((
-                        device.ssh_public_key.clone(),
-                        device.signing_public_key.clone(),
-                    ));
-                    ui::log_device(
-                        &device.ssh_public_key,
-                        device.name.as_str(),
-                        Level::Warning,
-                        "new signing key rejected",
-                        Some(&format!(
-                            "  New signing key for {} rejected — its beacons are ignored.",
-                            device.name.as_str()
-                        )),
-                    );
-                }
-            }
+            Action::TrustKey => self.trust_selected_key(ctx, tui),
+            Action::RejectKey => self.reject_selected_key(ctx),
             Action::Rename(name) => self.rename(ctx, name),
             Action::SkipRename => {
                 if let Some((device, _)) = self.rename_state.take() {
@@ -1069,6 +1076,8 @@ impl InteractiveState {
         self.known_keys.remove(&key);
         self.key_to_device.remove(&key);
         self.pinned_signing_keys.remove(&key);
+        self.new_signing_keys.remove(&key);
+        self.rejected_signing_keys.retain(|(k, _)| k != &key);
         self.known_ip.remove(&key);
     }
 
@@ -1151,6 +1160,112 @@ impl InteractiveState {
             device.name
         ));
         self.after_selection_change();
+    }
+
+    /// The added device selected in the Devices pane, when its row carries
+    /// a new (untrusted) signing key — the `── new signing key ──`
+    /// super-state. Returns the device and the presented key.
+    fn selected_new_key_device(&self) -> Option<(Device, SigningPublicKeyB64)> {
+        let DeviceRow::Added(name) = self.device_selected.as_ref()? else {
+            return None;
+        };
+        let device = self
+            .key_to_device
+            .values()
+            .find(|m| m.name.as_str() == name)?
+            .clone();
+        let new_key = self.new_signing_keys.get(&device.ssh_public_key)?.clone();
+        Some((device, new_key))
+    }
+
+    /// In-memory effect of trusting the selected added row's new signing
+    /// key: pin the presented key and drop the row from the
+    /// `── new signing key ──` super-state group. Returns the device and
+    /// the beacon carrying the new key (for trust_new_signing_key).
+    fn take_trust_selected_key(&mut self) -> Option<(Device, BeaconDevice)> {
+        let (device, new_key) = self.selected_new_key_device()?;
+        let key = device.ssh_public_key.clone();
+        self.pinned_signing_keys
+            .insert(key.clone(), new_key.clone());
+        self.new_signing_keys.remove(&key);
+        self.rejected_signing_keys
+            .remove(&(key.clone(), new_key.clone()));
+        let beacon = BeaconDevice {
+            name: device.name.as_str().to_string(),
+            signing_public_key: new_key,
+            ssh_public_key: key,
+            ip: self
+                .known_ip
+                .get(&device.ssh_public_key)
+                .cloned()
+                .unwrap_or_default(),
+            port: device.port,
+        };
+        Some((device, beacon))
+    }
+
+    /// Trust the new signing key presented by the selected added device
+    /// (key 't' on its row): pin the presented key, drop the row from the
+    /// `── new signing key ──` super-state group, and pull the device's
+    /// authoritative device.json (trust_new_signing_key). The next beacon
+    /// signed with the new key is processed normally.
+    fn trust_selected_key(&mut self, ctx: &Context, tui: &mut ui::Ui) {
+        if ctx.dry_run {
+            if let Some((device, _)) = self.selected_new_key_device() {
+                ui::log(&format!(
+                    "  - (dry run - trusting the new signing key of {} skipped)",
+                    device.name
+                ));
+            }
+            return;
+        }
+        let Some((device, beacon)) = self.take_trust_selected_key() else {
+            return;
+        };
+        let key = device.ssh_public_key.clone();
+        tui.with_clean_terminal("trust new signing key", || {
+            trust_new_signing_key(ctx.home, &beacon);
+        });
+        ui::log_device(
+            &key,
+            device.name.as_str(),
+            Level::Success,
+            "new signing key trusted",
+            Some(&format!(
+                "  - New signing key for {} trusted — its next beacon will be processed normally.",
+                device.name.as_str()
+            )),
+        );
+    }
+
+    /// Reject the new signing key presented by the selected added device
+    /// (key 'n' on its row): the (device, key) pair is remembered as
+    /// rejected, the row shows the rejected sub-state of the
+    /// `── new signing key ──` group, and the device's beacons stay
+    /// ignored.
+    fn reject_selected_key(&mut self, ctx: &Context) {
+        let Some((device, new_key)) = self.selected_new_key_device() else {
+            return;
+        };
+        if ctx.dry_run {
+            ui::log(&format!(
+                "  - (dry run - rejecting the new signing key of {} skipped)",
+                device.name
+            ));
+            return;
+        }
+        let key = device.ssh_public_key.clone();
+        self.rejected_signing_keys.insert((key.clone(), new_key));
+        ui::log_device(
+            &key,
+            device.name.as_str(),
+            Level::Warning,
+            "new signing key rejected",
+            Some(&format!(
+                "  New signing key for {} rejected — its beacons are ignored.",
+                device.name.as_str()
+            )),
+        );
     }
 
     /// The user picked a new name for the pending rename. A name that is
@@ -1943,6 +2058,8 @@ impl InteractiveState {
         self.known_keys.remove(&key);
         self.key_to_device.remove(&key);
         self.pinned_signing_keys.remove(&key);
+        self.new_signing_keys.remove(&key);
+        self.rejected_signing_keys.retain(|(k, _)| k != &key);
         self.known_ip.remove(&key);
         self.temp_users.remove(name.as_str());
         self.device_selected = None;
@@ -1984,7 +2101,7 @@ mod tests {
             key_to_device: HashMap::new(),
             pinned_signing_keys: HashMap::new(),
             rejected_signing_keys: HashSet::new(),
-            rotation_pending: None,
+            new_signing_keys: HashMap::new(),
             pending_devices: VecDeque::new(),
             pending_keys: HashSet::new(),
             active_pane: ActivePane::main_menu(),
@@ -2458,6 +2575,155 @@ mod tests {
         state.device_selected = Some(DeviceRow::Local);
         assert_eq!(state.sync_scope(&ctx), SyncScope::All);
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn beacon(name: &str, ssh_key: &str, signing_key: &str) -> BeaconDevice {
+        BeaconDevice {
+            name: name.to_string(),
+            signing_public_key: SigningPublicKeyB64::from(signing_key),
+            ssh_public_key: SshPublicKey::from(ssh_key),
+            ip: "10.0.0.9".to_string(),
+            port: 22,
+        }
+    }
+
+    fn known_device(name: &str, ssh_key: &str, signing_key: &str) -> Device {
+        Device {
+            name: DeviceName::new(name.to_string()).unwrap(),
+            ssh_public_key: SshPublicKey::from(ssh_key),
+            signing_public_key: SigningPublicKeyB64::from(signing_key),
+            port: 22,
+            port_explicit: false,
+            default_user: None,
+        }
+    }
+
+    fn state_with_known(state: &mut InteractiveState, device: &Device) {
+        state.known_keys.insert(device.ssh_public_key.clone());
+        state
+            .key_to_device
+            .insert(device.ssh_public_key.clone(), device.clone());
+        state.pinned_signing_keys.insert(
+            device.ssh_public_key.clone(),
+            device.signing_public_key.clone(),
+        );
+    }
+
+    /// A known device announcing with a different signing key falls under
+    /// the new-signing-key super-state: its row is marked passively, no
+    /// question is ever raised, and its beacons are ignored.
+    #[test]
+    fn new_signing_key_is_a_passive_super_state_not_a_question() {
+        let (dir, home) = test_home("new-key-passive");
+        let ssh_config = dir.join("ssh_config");
+        let local_key = SshPublicKey::from("ssh-ed25519 AAAAlocal");
+        let mut ctx = test_ctx(&home, &local_key, &ssh_config);
+        ctx.dry_run = false; // handle_beacon only marks when not a dry run
+        let laptop = known_device("laptop", "ssh-ed25519 AAAAlaptop", "AAAApinned");
+        let zdev = known_device("zdev", "ssh-ed25519 AAAAzdev", "CCCCpinned");
+        let mut state = test_state("laptop", "alice");
+        state_with_known(&mut state, &laptop);
+        state_with_known(&mut state, &zdev);
+
+        // laptop announces with a NEW signing key.
+        assert!(state.handle_beacon(&ctx, beacon("laptop", "ssh-ed25519 AAAAlaptop", "BBBBnew")));
+        assert_eq!(
+            state
+                .new_signing_keys
+                .get(&laptop.ssh_public_key)
+                .map(|k| k.as_str()),
+            Some("BBBBnew")
+        );
+        // Never a blocking question, in the full-screen ui or plain mode.
+        assert!(matches!(state.current_question(&ctx, false), Question::Idle(_)));
+        assert!(matches!(state.current_question(&ctx, true), Question::Idle(_)));
+        // The row carries the New super-state and leads the added group,
+        // ahead of the plain added rows.
+        let devices = state.devices_view(&ctx);
+        let added: Vec<&UiDevice> = devices
+            .iter()
+            .filter(|d| d.section == DeviceSection::Added)
+            .collect();
+        assert_eq!(added.len(), 2);
+        assert_eq!(added[0].name, "laptop");
+        assert_eq!(added[0].signing_key, SigningKeyState::New);
+        assert_eq!(added[1].name, "zdev");
+        assert_eq!(added[1].signing_key, SigningKeyState::Pinned);
+        // A repeated beacon with the same key keeps the mark (no re-log)
+        // and the device is still not processed as a known device.
+        assert!(state.handle_beacon(&ctx, beacon("laptop", "ssh-ed25519 AAAAlaptop", "BBBBnew")));
+        assert_eq!(state.known_ip.get(&laptop.ssh_public_key), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Rejecting the new key records the rejected sub-state; trusting pins
+    /// the presented key and clears the super-state.
+    #[test]
+    fn reject_then_trust_the_new_signing_key() {
+        let (dir, home) = test_home("new-key-reject-trust");
+        let ssh_config = dir.join("ssh_config");
+        let local_key = SshPublicKey::from("ssh-ed25519 AAAAlocal");
+        let mut ctx = test_ctx(&home, &local_key, &ssh_config);
+        ctx.dry_run = false;
+        let laptop = known_device("laptop", "ssh-ed25519 AAAAlaptop", "AAAApinned");
+        // test_state selects the added row "laptop".
+        let mut state = test_state("laptop", "alice");
+        state_with_known(&mut state, &laptop);
+        state.handle_beacon(&ctx, beacon("laptop", "ssh-ed25519 AAAAlaptop", "BBBBnew"));
+        assert_eq!(
+            state.signing_key_state(&laptop.ssh_public_key),
+            SigningKeyState::New
+        );
+
+        // 'n' on the row: the rejected sub-state, still marked.
+        state.reject_selected_key(&ctx);
+        assert_eq!(
+            state.signing_key_state(&laptop.ssh_public_key),
+            SigningKeyState::Rejected
+        );
+        assert!(state.new_signing_keys.contains_key(&laptop.ssh_public_key));
+
+        // 't' on the row: the presented key is pinned, the super-state cleared.
+        let (device, beacon_dev) = state
+            .take_trust_selected_key()
+            .expect("a new-key row is selected");
+        assert_eq!(device.name.as_str(), "laptop");
+        assert_eq!(beacon_dev.signing_public_key.as_str(), "BBBBnew");
+        assert_eq!(
+            state.signing_key_state(&laptop.ssh_public_key),
+            SigningKeyState::Pinned
+        );
+        assert_eq!(
+            state
+                .pinned_signing_keys
+                .get(&laptop.ssh_public_key)
+                .map(|k| k.as_str()),
+            Some("BBBBnew")
+        );
+        assert!(state.new_signing_keys.is_empty());
+        assert!(state.rejected_signing_keys.is_empty());
+
+        // With no added new-key row selected, the actions are no-ops.
+        state.device_selected = Some(DeviceRow::Local);
+        assert!(state.selected_new_key_device().is_none());
+        assert!(state.take_trust_selected_key().is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Dry run never marks the super-state: it only logs.
+    #[test]
+    fn dry_run_does_not_mark_new_signing_keys() {
+        let (dir, home) = test_home("new-key-dry");
+        let ssh_config = dir.join("ssh_config");
+        let local_key = SshPublicKey::from("ssh-ed25519 AAAAlocal");
+        let ctx = test_ctx(&home, &local_key, &ssh_config); // dry_run: true
+        let laptop = known_device("laptop", "ssh-ed25519 AAAAlaptop", "AAAApinned");
+        let mut state = test_state("laptop", "alice");
+        state_with_known(&mut state, &laptop);
+        assert!(state.handle_beacon(&ctx, beacon("laptop", "ssh-ed25519 AAAAlaptop", "BBBBnew")));
+        assert!(state.new_signing_keys.is_empty());
+        assert!(matches!(state.current_question(&ctx, false), Question::Idle(_)));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

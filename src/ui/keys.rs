@@ -141,11 +141,13 @@ mod tests {
                     for local_in_config in [false, true] {
                         for user_external in [false, true] {
                             for has_users in [false, true] {
-                                contexts.push(Context::Pane {
-                                    focus,
-                                    depth,
-                                    keys_ctx: PaneKeyCtx { selected_section, local_in_config, user_external, has_users },
-                                });
+                                for selected_new_key in [false, true] {
+                                    contexts.push(Context::Pane {
+                                        focus,
+                                        depth,
+                                        keys_ctx: PaneKeyCtx { selected_section, local_in_config, user_external, has_users, selected_new_key },
+                                    });
+                                }
                             }
                         }
                     }
@@ -159,7 +161,6 @@ mod tests {
         vec![
             Question::idle(),
             Question::add_device("dev".to_string(), "1.2.3.4".to_string()),
-            Question::trust_key("dev".to_string()),
             Question::rename("dev".to_string(), "dev2".to_string()),
             Question::delete("dev".to_string()),
             Question::wipe(2),
@@ -174,7 +175,7 @@ mod tests {
             Question::Idle(_) => Context::Pane {
                 focus,
                 depth,
-                keys_ctx: PaneKeyCtx { selected_section: None, local_in_config: false, user_external: false, has_users: false },
+                keys_ctx: PaneKeyCtx { selected_section: None, local_in_config: false, user_external: false, has_users: false, selected_new_key: false },
             },
             q if matches!(q, Question::Rename(..) | Question::AddTempUser(..)) => Context::TextInput(q.def()),
             q => Context::Modal(q.def()),
@@ -211,7 +212,7 @@ mod tests {
         let overview = Context::Pane {
             focus: NavFocus::Center,
             depth: None,
-            keys_ctx: PaneKeyCtx { selected_section: None, local_in_config: false, user_external: false, has_users: false },
+            keys_ctx: PaneKeyCtx { selected_section: None, local_in_config: false, user_external: false, has_users: false, selected_new_key: false },
         };
         assert!(
             bindings(overview)
@@ -280,7 +281,7 @@ mod tests {
         let main_menu = Context::Pane {
             focus: NavFocus::Center,
             depth: None,
-            keys_ctx: PaneKeyCtx { selected_section: None, local_in_config: false, user_external: false, has_users: false },
+            keys_ctx: PaneKeyCtx { selected_section: None, local_in_config: false, user_external: false, has_users: false, selected_new_key: false },
         };
         // The global actions (not specific to a device or a user) are
         // advertised and handled on the main menu (overview). Sync is the
@@ -338,6 +339,7 @@ mod tests {
                 local_in_config: false,
                 user_external: false,
                 has_users: false,
+                selected_new_key: false,
             },
         };
         assert_eq!(resolve(detected, KeyCode::Char('a')), Some(KeyResolution::Action(Action::Add)));
@@ -347,7 +349,7 @@ mod tests {
     #[test]
     fn unadvertised_key_is_not_handled() {
         use crate::ui::types::DeviceSection;
-        let keys_ctx = |selected_section| PaneKeyCtx { selected_section, local_in_config: false, user_external: false, has_users: false };
+        let keys_ctx = |selected_section| PaneKeyCtx { selected_section, local_in_config: false, user_external: false, has_users: false, selected_new_key: false };
         // 's' syncs from the main menu and, context-scoped, from an added
         // device row — but not from a detected or local row: those offer
         // only their own specific actions.
@@ -374,6 +376,7 @@ mod tests {
                 local_in_config: true,
                 user_external: false,
                 has_users: true,
+                selected_new_key: false,
             },
         };
         assert_eq!(
@@ -390,6 +393,7 @@ mod tests {
                 local_in_config: true,
                 user_external: false,
                 has_users: false,
+                selected_new_key: false,
             },
         };
         assert_eq!(
@@ -428,6 +432,7 @@ mod tests {
                 local_in_config,
                 user_external: false,
                 has_users: true,
+                selected_new_key: false,
             },
         };
         // Not in the shared configuration: 'a' adds it, 'r' does nothing.
@@ -475,6 +480,7 @@ mod tests {
                 local_in_config: true,
                 user_external: false,
                 has_users: true,
+                selected_new_key: false,
             },
         };
         assert_eq!(
@@ -507,6 +513,7 @@ mod tests {
                 local_in_config: true,
                 user_external: false,
                 has_users: true,
+                selected_new_key: false,
             },
         };
         // No install/remove key (connecting to the current device is
@@ -540,6 +547,7 @@ mod tests {
                 local_in_config: true,
                 user_external: false,
                 has_users: true,
+                selected_new_key: false,
             },
         };
         let expected = [
@@ -571,6 +579,7 @@ mod tests {
                 local_in_config: true,
                 user_external: true,
                 has_users: true,
+                selected_new_key: false,
             },
         };
         // 'r' revokes the incoming connection (a local operation on this
@@ -632,6 +641,7 @@ mod tests {
                     local_in_config: true,
                     user_external: false,
                     has_users: false,
+                    selected_new_key: false,
                 },
             };
             let nav = Navigation { focus: NavFocus::Devices, depth: Some(NavDepth::Selected) };
@@ -653,6 +663,7 @@ mod tests {
                     local_in_config: true,
                     user_external: false,
                     has_users: true,
+                    selected_new_key: false,
                 },
             };
             for key in [KeyCode::Enter, KeyCode::Right] {
@@ -673,10 +684,96 @@ mod tests {
                 local_in_config: false,
                 user_external: false,
                 has_users: false,
+                selected_new_key: false,
             },
         };
         assert_eq!(resolve(detected, KeyCode::Enter), None);
         assert_eq!(resolve(detected, KeyCode::Right), None);
+    }
+
+    #[test]
+    fn added_row_with_new_signing_key_offers_trust_and_reject() {
+        use crate::ui::types::DeviceSection;
+        // An added row presenting a new (untrusted) signing key — the
+        // `── new signing key ──` super-state — offers the rotation
+        // decision as row actions: 't' trust, 'n' reject. Never a
+        // blocking question.
+        let new_key_ctx = |selected_new_key| Context::Pane {
+            focus: NavFocus::Devices,
+            depth: Some(NavDepth::Selected),
+            keys_ctx: PaneKeyCtx {
+                selected_section: Some(DeviceSection::Added),
+                local_in_config: true,
+                user_external: false,
+                has_users: true,
+                selected_new_key,
+            },
+        };
+        let with_key = new_key_ctx(true);
+        assert_eq!(
+            resolve(with_key, KeyCode::Char('t')),
+            Some(KeyResolution::Action(Action::TrustKey))
+        );
+        assert_eq!(
+            resolve(with_key, KeyCode::Char('n')),
+            Some(KeyResolution::Action(Action::RejectKey))
+        );
+        assert!(bindings(with_key).iter().any(|b| b.key == KeyCode::Char('t')));
+        assert!(bindings(with_key).iter().any(|b| b.key == KeyCode::Char('n')));
+        // The usual added-row actions stay available on that row too.
+        assert_eq!(
+            resolve(with_key, KeyCode::Char('d')),
+            Some(KeyResolution::Action(Action::DeleteSelected))
+        );
+        // Without the super-state (pinned key), 't'/'n' are not offered.
+        let pinned = new_key_ctx(false);
+        assert_eq!(resolve(pinned, KeyCode::Char('t')), None);
+        assert_eq!(resolve(pinned, KeyCode::Char('n')), None);
+        assert!(!bindings(pinned).iter().any(|b| b.key == KeyCode::Char('t')));
+        // 't' is never offered on the local or detected rows, whatever
+        // the flag; on the local row 'n' is not offered either (on a
+        // detected row 'n' keeps its own meaning: ignore).
+        for section in [DeviceSection::Local, DeviceSection::Detected] {
+            let ctx = Context::Pane {
+                focus: NavFocus::Devices,
+                depth: Some(NavDepth::Selected),
+                keys_ctx: PaneKeyCtx {
+                    selected_section: Some(section),
+                    local_in_config: true,
+                    user_external: false,
+                    has_users: true,
+                    selected_new_key: true,
+                },
+            };
+            assert_eq!(resolve(ctx, KeyCode::Char('t')), None, "t on {section:?} row");
+        }
+        let local = Context::Pane {
+            focus: NavFocus::Devices,
+            depth: Some(NavDepth::Selected),
+            keys_ctx: PaneKeyCtx {
+                selected_section: Some(DeviceSection::Local),
+                local_in_config: true,
+                user_external: false,
+                has_users: true,
+                selected_new_key: true,
+            },
+        };
+        assert_eq!(resolve(local, KeyCode::Char('n')), None);
+        let detected = Context::Pane {
+            focus: NavFocus::Devices,
+            depth: Some(NavDepth::Selected),
+            keys_ctx: PaneKeyCtx {
+                selected_section: Some(DeviceSection::Detected),
+                local_in_config: false,
+                user_external: false,
+                has_users: false,
+                selected_new_key: true,
+            },
+        };
+        assert_eq!(
+            resolve(detected, KeyCode::Char('n')),
+            Some(KeyResolution::Action(Action::Ignore))
+        );
     }
 
     #[test]
