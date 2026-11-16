@@ -9,7 +9,7 @@ The `interactive` module contains the main interactive loop and state management
 
 ## Overview
 
-This module is the heart of regroup's interactive mode. It listens for verified beacons, handles user input, and manages the pending device queue, signing key rotation prompts, and rename prompts.
+This module is the heart of regroup's interactive mode. It listens for verified beacons, handles user input, and manages the pending device queue, the new-signing-key super-state, and rename prompts.
 
 All decisions that affect what is written to disk live in this module; the writes themselves are performed by `ops`.
 
@@ -73,7 +73,7 @@ Each received beacon goes through `InteractiveState::handle_beacon()`:
 1. **Self-filtering**: Ignore beacons from this device (using SSH public key)
 2. **Pulse**: Animate the device's row (user sees the app receiving)
 3. **Signing key pinning**: For known devices, verify the beacon's signing key matches the pinned key
-   - If different: prompt user to trust new key (reinstall) or reject (spoofing)
+   - If different: mark the row under the `── new signing key ──` super-state of the Devices pane (reinstall or spoofing) — passively, never as a blocking question; the user trusts (`t`) or rejects (`n`) from the row, and the beacons stay ignored until then
 4. **Known device**: Check if IP changed
    - If changed: verify host key at new IP
    - If verified: update SSH config and known_hosts
@@ -93,9 +93,10 @@ pub struct InteractiveState {
     pub key_to_device: HashMap<SshPublicKey, Device>,
     pub pinned_signing_keys: HashMap<SshPublicKey, SigningPublicKeyB64>,
     
-    // Signing key rotation
+    // Signing key rotation: added devices presenting a new signing key,
+    // shown passively under the `── new signing key ──` super-state group
     pub rejected_signing_keys: HashSet<(SshPublicKey, SigningPublicKeyB64)>,
-    pub rotation_pending: Option<BeaconDevice>,
+    pub new_signing_keys: HashMap<SshPublicKey, SigningPublicKeyB64>,
     
     // Pending devices
     pub pending_devices: VecDeque<BeaconDevice>,
@@ -190,10 +191,13 @@ renders a divider row between sections.
 
 ### Trust Actions
 
+Row actions on an added device of the `── new signing key ──` group (keys
+`t`/`n`) — never a blocking question:
+
 | Action | Behavior |
 |--------|----------|
-| `TrustKey` | Trust the pending signing key rotation |
-| `RejectKey` | Reject the pending signing key rotation |
+| `TrustKey` | Trust the new signing key presented by the selected added row: pin it and pull the device's authoritative `device.json` |
+| `RejectKey` | Reject the new signing key presented by the selected added row: its beacons stay ignored |
 
 ### Rename Actions
 

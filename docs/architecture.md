@@ -86,7 +86,7 @@ A **regroup** process does three things simultaneously:
 #### Device Identity
 - **SSH host key** is the unique identifier for a device (never hostname or IP, which can change)
 - Each device has an Ed25519 **signing key** used to sign beacons
-- Signing keys are pinned at first acceptance; different keys trigger a rotation prompt
+- Signing keys are pinned at first acceptance; a different key puts the device under the `── new signing key ──` super-state of the Devices pane (passive — trust/reject from its row, never a blocking prompt)
 
 #### Beacon Protocol
 - UDP broadcast discovery on a single configurable port (`udp_port`, default:
@@ -120,7 +120,7 @@ Threads communicate via channels (MPSC for beacon notifications, UI events).
 
 ## Security Model
 
-1. **Signing key pinning**: A device's Ed25519 signing key is pinned when first accepted. Beacons with different keys are rejected (or trigger rotation prompt on reinstall).
+1. **Signing key pinning**: A device's Ed25519 signing key is pinned when first accepted. Beacons with different keys are ignored and the device is shown under the `── new signing key ──` super-state of the Devices pane, until the user trusts the new key (reinstall) or rejects it (spoofing) from its row.
 
 2. **Host key verification**: Before accepting a device, regroup verifies that the announced IP serves the expected SSH host key (fingerprint match). Mismatches abort acceptance (possible spoofing/MITM).
 

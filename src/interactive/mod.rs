@@ -2,7 +2,7 @@
 //!
 //! Listens for verified beacons (forwarded by the listener thread through a
 //! channel) and for user input (read by the ui module), and manages the
-//! pending-device queue, the signing-key rotation prompt and the rename
+//! pending-device queue, the new-signing-key super-state and the rename
 //! prompt. All decisions that affect what is written to disk live here.
 //!
 //! General messages go through `ui::log` (activity pane of the full-screen

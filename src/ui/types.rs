@@ -146,6 +146,34 @@ impl DeviceSection {
     }
 }
 
+/// Super-state of an added device's signing key, shown passively in the
+/// Devices pane — never as a blocking question. A device that is already
+/// added but presents a new signing key (reinstall or spoofing) sits in
+/// the `── new signing key ──` group, ahead of the plain added rows, until
+/// the user trusts (`t`) or rejects (`n`) the key from its row.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SigningKeyState {
+    /// Beacons verify against the pinned key (or no key is pinned yet:
+    /// the local and detected rows).
+    Pinned,
+    /// The added device presents a new, not-yet-trusted signing key.
+    New,
+    /// The user rejected the presented key; its beacons are ignored.
+    Rejected,
+}
+
+impl SigningKeyState {
+    /// Idle status text of an added row in this state, when it has no
+    /// animated message.
+    pub fn idle_status(&self) -> &'static str {
+        match self {
+            SigningKeyState::Pinned => "known",
+            SigningKeyState::New => "NEW signing key — reinstall or spoofing?",
+            SigningKeyState::Rejected => "signing key rejected",
+        }
+    }
+}
+
 /// New navigation model (docs/navigation.md).
 ///
 /// The user is virtually at the center of the screen.
@@ -333,6 +361,9 @@ pub struct PaneKeyCtx {
     /// no users the pane is not reachable, so the entry keys are not
     /// offered.
     pub has_users: bool,
+    /// Whether the selected added row presents a new (untrusted) signing
+    /// key — drives the trust/reject keys (`t`/`n`) on that row.
+    pub selected_new_key: bool,
 }
 
 /// The key dictionary of a pane state: every key that works in
@@ -371,7 +402,18 @@ pub fn pane_keys(focus: NavFocus, depth: Option<NavDepth>, ctx: PaneKeyCtx) -> &
         // strip), so focusing it already activates the row list.
         (Devices, Some(Selected)) => match ctx.selected_section {
             Some(DeviceSection::Added) => {
-                with_users_entry(ctx.has_users, DEVICES_ADDED_KEYS, DEVICES_ADDED_NO_USERS_KEYS)
+                // An added row presenting a new signing key additionally
+                // offers the rotation decision (trust/reject) — taken
+                // from the row, never via a blocking question.
+                if ctx.selected_new_key {
+                    with_users_entry(
+                        ctx.has_users,
+                        DEVICES_ADDED_NEW_KEY_KEYS,
+                        DEVICES_ADDED_NEW_KEY_NO_USERS_KEYS,
+                    )
+                } else {
+                    with_users_entry(ctx.has_users, DEVICES_ADDED_KEYS, DEVICES_ADDED_NO_USERS_KEYS)
+                }
             }
             Some(DeviceSection::Detected) => DEVICES_DETECTED_KEYS,
             // The localhost row offers add or remove from the shared
@@ -529,6 +571,42 @@ static DEVICES_ADDED_NO_USERS_KEYS: &[KeyBinding] = &[
     KeyBinding::new(Char('a'), "a", "add user", Effect::Action(Action::AddTempUser)),
 ];
 
+/// Focused Devices pane with an added device selected that presents a NEW
+/// signing key (the `── new signing key ──` super-state group): the usual
+/// added-row actions plus the rotation decision — `t` trust the new key
+/// (expected after a reinstall: pull the device's authoritative
+/// device.json), `n` reject it (possible spoofing: its beacons stay
+/// ignored). The decision is taken from the row, never via a blocking
+/// question, so the user is never interrupted by it.
+static DEVICES_ADDED_NEW_KEY_KEYS: &[KeyBinding] = &[
+    KeyBinding::internal(Esc, "Esc", "back"),
+    KeyBinding::internal(Left, "Left", "back"),
+    KeyBinding::internal(Up, "Up", "select"),
+    KeyBinding::internal(Down, "Down", "select"),
+    KeyBinding::internal(Enter, "Enter", "users"),
+    KeyBinding::internal(Right, "Right", "users"),
+    KeyBinding::new(Char('d'), "d", "delete", Effect::Action(Action::DeleteSelected)),
+    KeyBinding::new(Char('s'), "s", "sync device", Effect::Action(Action::Sync)),
+    KeyBinding::new(Char('a'), "a", "add user", Effect::Action(Action::AddTempUser)),
+    KeyBinding::new(Char('t'), "t", "trust new key", Effect::Action(Action::TrustKey)),
+    KeyBinding::new(Char('n'), "n", "reject key", Effect::Action(Action::RejectKey)),
+];
+
+/// Same as [`DEVICES_ADDED_NEW_KEY_KEYS`] but without the Users entry
+/// keys: with no users on the added device the Users sub-panel is not
+/// reachable, so Right/Enter are not offered.
+static DEVICES_ADDED_NEW_KEY_NO_USERS_KEYS: &[KeyBinding] = &[
+    KeyBinding::internal(Esc, "Esc", "back"),
+    KeyBinding::internal(Left, "Left", "back"),
+    KeyBinding::internal(Up, "Up", "select"),
+    KeyBinding::internal(Down, "Down", "select"),
+    KeyBinding::new(Char('d'), "d", "delete", Effect::Action(Action::DeleteSelected)),
+    KeyBinding::new(Char('s'), "s", "sync device", Effect::Action(Action::Sync)),
+    KeyBinding::new(Char('a'), "a", "add user", Effect::Action(Action::AddTempUser)),
+    KeyBinding::new(Char('t'), "t", "trust new key", Effect::Action(Action::TrustKey)),
+    KeyBinding::new(Char('n'), "n", "reject key", Effect::Action(Action::RejectKey)),
+];
+
 /// Focused Devices pane with a detected device selected: only
 /// add/ignore make sense on a pending device.
 static DEVICES_DETECTED_KEYS: &[KeyBinding] = &[
@@ -667,6 +745,10 @@ pub struct UiDevice {
     /// `── localhost (added|not added) ──` and the add/remove keys;
     /// always true for added rows, false for detected ones.
     pub in_shared_config: bool,
+    /// Super-state of an added device's signing key: `New`/`Rejected`
+    /// rows form their own `── new signing key ──` group, ahead of the
+    /// plain added rows. Always `Pinned` on the local and detected rows.
+    pub signing_key: SigningKeyState,
 }
 
 /// Status of a user on the selected device, shown in the Users panel.
@@ -732,7 +814,6 @@ pub enum Question {
     /// Add the front of the pending queue (plain mode only: the
     /// full-screen ui adds devices from the Devices panel instead).
     AddDevice(QuestionDef, String, String), // name, ip
-    TrustKey(QuestionDef, String), // name
     Rename(QuestionDef, String, String), // name, suggested
     Delete(QuestionDef, String), // name
     /// Wipe the whole configuration (key 'w'), with the number of device
@@ -759,7 +840,6 @@ impl Question {
         match self {
             Question::Idle(def) => def,
             Question::AddDevice(def, _, _) => def,
-            Question::TrustKey(def, _) => def,
             Question::Rename(def, _, _) => def,
             Question::Delete(def, _) => def,
             Question::Wipe(def, _) => def,
@@ -789,7 +869,14 @@ pub enum Action {
     AddCurrent,
     /// Skip the front of the pending queue (plain mode).
     SkipCurrent,
+    /// Trust the new signing key presented by the added device selected
+    /// in the Devices panel (key 't' on its `── new signing key ──` row):
+    /// pin the presented key and pull the device's authoritative
+    /// device.json. Never a blocking question — a row action.
     TrustKey,
+    /// Reject the new signing key presented by the added device selected
+    /// in the Devices panel (key 'n' on its row): its beacons stay
+    /// ignored and the row shows the rejected sub-state.
     RejectKey,
     Rename(String),
     SkipRename,
@@ -929,14 +1016,6 @@ pub static ADD_DEVICE_QUESTION: QuestionDef = QuestionDef {
     ],
 };
 
-pub static TRUST_KEY_QUESTION: QuestionDef = QuestionDef {
-    title: "Signing key changed",
-    bindings: &[
-        KeyBinding::new(KeyCode::Char('y'), "y", "trust", Effect::Action(Action::TrustKey)),
-        KeyBinding::new(KeyCode::Char('n'), "n", "reject", Effect::Action(Action::RejectKey)),
-    ],
-};
-
 pub static ADD_TEMP_USER_QUESTION: QuestionDef = QuestionDef {
     title: "Add user",
     bindings: &[
@@ -1002,10 +1081,6 @@ impl Question {
 
     pub fn add_device(name: String, ip: String) -> Self {
         Question::AddDevice(ADD_DEVICE_QUESTION, name, ip)
-    }
-
-    pub fn trust_key(name: String) -> Self {
-        Question::TrustKey(TRUST_KEY_QUESTION, name)
     }
 
     pub fn rename(name: String, suggested: String) -> Self {

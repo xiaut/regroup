@@ -66,12 +66,6 @@ impl PlainUi {
                     .collect();
                 format!("Add {name} ({ip}) to config? [{}]:", hints.join("/"))
             }
-            Question::TrustKey(def, name) => {
-                let hints: Vec<String> = def.bindings.iter()
-                    .map(|b| format!("{}", b.label))
-                    .collect();
-                format!("Trust the new signing key for {name}? [{}]:", hints.join("/"))
-            }
             Question::Rename(_, name, suggested) => {
                 format!("New name for {name} (empty = {suggested}):")
             }
@@ -161,7 +155,6 @@ impl PlainUi {
                 Some(Action::TempUserName(line.to_string()))
             }
             Question::AddDevice(..) => Some(Action::SkipCurrent),
-            Question::TrustKey(..) => Some(Action::RejectKey),
             Question::Delete(..) => Some(Action::DeleteCancel),
             Question::Wipe(..) => Some(Action::WipeCancel),
             Question::SetupCd(..) => Some(Action::SetupCdCancel),

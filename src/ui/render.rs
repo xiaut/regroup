@@ -17,8 +17,8 @@ use ratatui::widgets::{Block, BorderType, Cell, Paragraph, Row, Table, Wrap};
 use super::keys::{self, Context};
 use super::logging::{BLINK_MS, KEY_FLASH_MS, PULSE_MS};
 use super::types::{
-    bindings_hint_text, ActivePane, DeviceSection, Level, PaneKeyCtx, QuestionDef, UiDevice,
-    HELP_BINDINGS,
+    bindings_hint_text, ActivePane, DeviceSection, Level, PaneKeyCtx, QuestionDef, SigningKeyState,
+    UiDevice, HELP_BINDINGS,
 };
 
 /// Hint text for the Idle action bar, built from the pane's key list —
@@ -127,10 +127,11 @@ fn divider_row(label: &str, columns: usize) -> Row<'static> {
     Row::new(cells).style(Style::new().fg(Color::DarkGray))
 }
 
-/// The rows of the Devices pane: one row per device, each section
-/// opening with its divider row (localhost, then added, then
-/// detected). `selected` is an index into `devices`; dividers are
-/// not selectable.
+/// The rows of the Devices pane: one row per device, each group
+/// opening with its divider row. Groups: localhost, then the added
+/// devices presenting a NEW signing key (`── new signing key ──`
+/// super-state), then the plain added, then the detected. `selected`
+/// is an index into `devices`; dividers are not selectable.
 fn device_rows(
     devices: &[UiDevice],
     selected: Option<usize>,
@@ -138,29 +139,49 @@ fn device_rows(
     pulses: &HashMap<String, Instant>,
     base: Color,
 ) -> Vec<Row<'static>> {
+    // The super-state group of each row: within the added section, rows
+    // whose signing key is not pinned form their own group, rendered
+    // first (devices_view returns them first, so groups are contiguous).
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Group {
+        Local,
+        AddedNewKey,
+        Added,
+        Detected,
+    }
+    let group_of = |d: &UiDevice| match d.section {
+        DeviceSection::Local => Group::Local,
+        DeviceSection::Added if d.signing_key != SigningKeyState::Pinned => Group::AddedNewKey,
+        DeviceSection::Added => Group::Added,
+        DeviceSection::Detected => Group::Detected,
+    };
     let now = Instant::now();
     let pulse_duration = Duration::from_millis(PULSE_MS);
     let mut rows: Vec<Row<'static>> = Vec::new();
-    let mut last_section: Option<DeviceSection> = None;
+    let mut last_group: Option<Group> = None;
     for (i, d) in devices.iter().enumerate() {
-        // Every section opens with its divider row, in the same style:
-        // "── added ──", "── detected ──" — and the localhost divider
+        // Every group opens with its divider row, in the same style:
+        // "── added ──", "── detected ──" — the localhost divider
         // carries the super-state of the local device:
-        // "── localhost (added) ──" / "── localhost (not added) ──"
-        // (a section is non-empty here: we are about to render one of
+        // "── localhost (added) ──" / "── localhost (not added) ──" —
+        // and added rows with a new signing key get their own
+        // "── new signing key ──" group, ahead of the plain added rows
+        // (a group is non-empty here: we are about to render one of
         // its rows).
-        if last_section != Some(d.section) {
-            let label = if d.section == DeviceSection::Local {
-                format!(
+        let group = group_of(d);
+        if last_group != Some(group) {
+            let label = match group {
+                Group::Local => format!(
                     "localhost ({})",
                     if d.in_shared_config { "added" } else { "not added" }
-                )
-            } else {
-                d.section.label().to_string()
+                ),
+                Group::AddedNewKey => "new signing key".to_string(),
+                Group::Added => DeviceSection::Added.label().to_string(),
+                Group::Detected => DeviceSection::Detected.label().to_string(),
             };
             rows.push(divider_row(&label, 4));
         }
-        last_section = Some(d.section);
+        last_group = Some(group);
         let flash = flashes
             .get(&d.key)
             .filter(|f| now.duration_since(f.start) < super::logging::flash_duration(f.level));
@@ -172,10 +193,15 @@ fn device_rows(
             f.msg.clone()
         } else if pulse.is_some() {
             "beacon received".to_string()
+        } else if d.section == DeviceSection::Added {
+            // An added row's idle status carries its signing-key
+            // super-state (the local and detected rows keep their
+            // section's status).
+            d.signing_key.idle_status().to_string()
         } else {
             d.section.idle_status().to_string()
         };
-        let style = row_style(base, selected == Some(i), flash, pulse, now);
+        let style = row_style(base, selected == Some(i), flash, pulse, now, d.signing_key);
         rows.push(
             Row::new([
                 Cell::from(d.name.clone()),
@@ -267,19 +293,26 @@ pub struct QuestionCtx<'a> {
     /// Whether the device selected in the Devices pane has at least one
     /// user (drives the Right/Enter entry keys into the Users pane).
     pub has_users: bool,
+    /// Whether the selected added row presents a new (untrusted) signing
+    /// key (drives the trust/reject keys `t`/`n` on that row).
+    pub selected_new_key: bool,
     /// Last key press, highlighted in the hint line while recent.
     pub key_flash: Option<&'a KeyFlash>,
 }
 
 /// Style of a device row: the panel's base color, overridden by the
 /// selection, an urgent blink (warning, security), a beacon pulse, or the
-/// row's animated status, in that order of precedence.
+/// row's animated status, in that order of precedence. With no animation,
+/// an added row whose signing key is not pinned keeps a persistent
+/// warning/rejected color — the new-signing-key super-state stays visible
+/// passively, without any question block.
 pub fn row_style(
     base: Color,
     selected: bool,
     flash: Option<&RowFlash>,
     pulse: Option<Duration>,
     now: Instant,
+    signing_key: SigningKeyState,
 ) -> Style {
     if selected {
         return Style::new().add_modifier(Modifier::REVERSED);
@@ -302,7 +335,11 @@ pub fn row_style(
     }
     match flash {
         Some(f) => flash_style(f, blink(now.duration_since(f.start))),
-        None => Style::new().fg(base),
+        None => match signing_key {
+            SigningKeyState::New => Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+            SigningKeyState::Rejected => Style::new().fg(Color::Red).add_modifier(Modifier::BOLD),
+            SigningKeyState::Pinned => Style::new().fg(base),
+        },
     }
 }
 
@@ -721,6 +758,7 @@ pub fn render_question(
                         local_in_config: ctx.local_in_config,
                         user_external: ctx.selected_user_external,
                         has_users: ctx.has_users,
+                        selected_new_key: ctx.selected_new_key,
                     },
                 });
                 (
@@ -734,14 +772,6 @@ pub fn render_question(
                 def.title,
                 Color::Yellow,
                 format!("Add {name} ({ip}) to config?"),
-                hint_spans(&modal_hint_text(def), ctx.key_flash),
-            ),
-            super::types::Question::TrustKey(def, name) => (
-                def.title,
-                Color::Red,
-                format!(
-                    "Trust the new signing key for {name}? (expected after a reinstall — otherwise it may be spoofing)"
-                ),
                 hint_spans(&modal_hint_text(def), ctx.key_flash),
             ),
             super::types::Question::Rename(def, name, suggested) => (
@@ -855,6 +885,7 @@ mod tests {
             selected_section: None,
             local_in_config: false,
             has_users: false,
+            selected_new_key: false,
             key_flash: None,
         }
     }
@@ -1046,6 +1077,7 @@ mod tests {
             port: 22,
             section,
             in_shared_config,
+            signing_key: crate::ui::types::SigningKeyState::Pinned,
         }
     }
 
@@ -1125,6 +1157,78 @@ mod tests {
         assert!(!buf[(0, p_local as u16)]
             .modifier
             .contains(Modifier::REVERSED));
+    }
+
+    /// An added device presenting a new signing key forms its own
+    /// `── new signing key ──` super-state group, rendered ahead of the
+    /// plain `── added ──` rows; its idle status carries the super-state
+    /// and the row keeps a persistent warning color (no question block).
+    #[test]
+    fn devices_pane_groups_new_signing_key_rows_under_their_own_divider() {
+        use crate::ui::types::{DeviceSection, SigningKeyState};
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut new_key_row = ui_device("k-new", "laptop", DeviceSection::Added);
+        new_key_row.signing_key = SigningKeyState::New;
+        let devices = vec![
+            ui_device("k-local", "myhost", DeviceSection::Local),
+            new_key_row,
+            ui_device("k-a", "alpha", DeviceSection::Added),
+        ];
+        terminal
+            .draw(|frame| {
+                render_all_panes(
+                    frame,
+                    frame.area(),
+                    ActivePane::main_menu(),
+                    NavFocus::Center,
+                    &devices,
+                    Some(2), // "alpha" — the new-key row is not selected
+                    &[],
+                    0,
+                    &HashMap::new(),
+                    &HashMap::new(),
+                    &[],
+                    None,
+                );
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer();
+        let lines: Vec<String> = (0..buf.area.height)
+            .map(|y| {
+                (0..buf.area.width)
+                    .map(|x| buf[(x, y)].symbol().chars().next().unwrap_or(' '))
+                    .collect()
+            })
+            .collect();
+        let pos = |needle: &str| {
+            lines
+                .iter()
+                .position(|l| l.contains(needle))
+                .unwrap_or_else(|| panic!("{needle} not rendered"))
+        };
+        let p_local = pos("myhost");
+        let p_new_div = pos("── new signing key ──");
+        let p_laptop = pos("laptop");
+        let p_added_div = pos("── added ──");
+        let p_alpha = pos("alpha");
+        assert!(
+            p_local < p_new_div
+                && p_new_div < p_laptop
+                && p_laptop < p_added_div
+                && p_added_div < p_alpha,
+            "groups out of order: local={p_local} new_div={p_new_div} laptop={p_laptop} added_div={p_added_div} alpha={p_alpha}"
+        );
+        // The new-key row's idle status carries the super-state, and the
+        // row keeps a persistent warning color (yellow, bold).
+        assert!(lines[p_laptop].contains("NEW signing key"), "laptop row: {}", lines[p_laptop]);
+        assert!(
+            (0..buf.area.width).any(|x| {
+                let c = &buf[(x, p_laptop as u16)];
+                c.fg == Color::Yellow && c.modifier.contains(Modifier::BOLD)
+            }),
+            "new-key row must keep its persistent warning color"
+        );
     }
 
     #[test]

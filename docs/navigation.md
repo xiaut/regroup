@@ -51,9 +51,10 @@ The arrow pointing toward a panel walks into it; the opposite arrow (or
 ```
 Main screen (overview: Devices pane big, Logs strip at the bottom)
 ├── Devices panel (always big, full width)
-│   └── one list, each section under its divider:
+│   └── one list, each group under its divider:
 │       ── localhost (added|not added) ── → local device row (always one line)
-│       → ── added ── → added devices → ── detected ── → detected devices
+│       → ── new signing key ── → added devices presenting a new signing key
+│       → ── added ── → the other added devices → ── detected ── → detected devices
 │       (Up/Down select, wrapping)
 │       └── Users sub-panel   ← nested INSIDE the Devices panel
 │           └── ── default ── → the device's default user (at most one)
@@ -70,9 +71,13 @@ row, in the same style: `── localhost (added) ──` or
 runs on — always shown as one line, whether or not it is in the shared
 configuration; the divider carries that super-state, and the row offers
 `a`/`r` add/remove for it — plain add/remove, not `d` delete: the local
-data stays recoverable in git history), then
-`── added ──` with the added (known) devices, then `── detected ──` with
-the detected (pending) ones. The panel sits
+data stays recoverable in git history), then `── new signing key ──` with
+the added devices that present a new signing key (reinstall or spoofing),
+then `── added ──` with the other added (known) devices, then
+`── detected ──` with the detected (pending) ones. The `── new signing
+key ──` group is a passive super-state, never a blocking question: the
+row keeps a warning color and offers `t` trust new key / `n` reject key.
+The panel sits
 **above** the virtual center, so `Up` or `Right` focuses it from the overview. Because
 the Logs pane is only a small strip, the Devices pane is always big — it
 has no fullscreen mode.
@@ -178,7 +183,9 @@ the selected context:
   (scoped to this device: every user of it) plus `a`
   add a user on an **added** row (`a` is free there; adding a user is
   device-specific, no user needs to be selected — the user is temporary
-  until confirmed), and `a`/`n`
+  until confirmed), `t`/`n` trust/reject the new signing key on an
+  **added** row of the `── new signing key ──` group (the rotation
+  decision is a row action, never a blocking question), and `a`/`n`
   add/ignore on a **detected** row. Adding a **detected** device chains:
   the add-user prompt opens by itself, then the "install key?" question
   (one remote call — `receive-add-local` XOR `receive-install-key` —

@@ -101,7 +101,6 @@ Current question being asked of the user:
 pub enum Question {
     Idle,
     AddDevice { name: String, ip: String },
-    TrustKey { name: String },
     Rename { name: String, suggested: String },
     Delete { name: String },
     Wipe { count: usize },
@@ -109,6 +108,9 @@ pub enum Question {
     // SSH key management questions
     AddTempUser { device: String }, // Users panel, input handled like Rename
 }
+// A new signing key is never a Question: it is the `── new signing key ──`
+// super-state of the Devices pane, acted on from the row (see Action).
+
 ```
 
 ### `Action`
@@ -123,8 +125,8 @@ pub enum Action {
     Ignore,         // Ignore selected device
     AddCurrent,     // Add front of pending queue (plain mode)
     SkipCurrent,    // Skip front of pending queue (plain mode)
-    TrustKey,
-    RejectKey,
+    TrustKey,       // Trust the new signing key of the selected `── new signing key ──` row ('t')
+    RejectKey,      // Reject it ('n') — row actions, never a blocking question
     Rename(String),
     SkipRename,
     DeleteMode,
@@ -397,12 +399,15 @@ the idle question's binding table:
 | `Enter` | Confirm deletion |
 | `Esc` | Cancel |
 
-### In Trust Key Prompt
+### On a `── new signing key ──` device row (Devices panel)
+
+A new signing key is a passive super-state of the Devices pane, never a
+blocking question prompt; the decision is taken from the row:
 
 | Key | Action |
 |-----|--------|
-| `y` | Trust new signing key |
-| `n` | Reject new signing key |
+| `t` | Trust the new signing key (pin it, pull the device's device.json) |
+| `n` | Reject the new signing key (its beacons stay ignored) |
 
 ### In Rename Prompt
 

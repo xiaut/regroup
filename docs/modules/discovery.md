@@ -83,9 +83,11 @@ Beacons are verified in `discovery::beacon::verify_beacon()`:
 For known devices (already in the configuration):
 
 1. The beacon's signing public key must match the pinned key in `device.json`
-2. If the signing key differs:
-   - Prompt the user to trust the new key (expected on reinstall)
-   - OR reject as potential spoofing/MITM
+2. If the signing key differs, the device falls under the `── new signing
+   key ──` super-state of the Devices pane (expected on reinstall, or
+   potential spoofing/MITM) — shown passively, never as a blocking
+   question; its beacons are ignored until the user trusts (`t`) or
+   rejects (`n`) the new key from its row
 3. The user's decision is stored in the interactive state
 
 ## Local Identity
