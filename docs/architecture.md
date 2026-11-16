@@ -122,11 +122,13 @@ Threads communicate via channels (MPSC for beacon notifications, UI events).
 
 1. **Signing key pinning**: A device's Ed25519 signing key is pinned when first accepted. Beacons with different keys are rejected (or trigger rotation prompt on reinstall).
 
-2. **Host key verification**: Before accepting a device, regroup verifies that the announced IP serves the expected SSH host key (fingerprint match). Mismatches abort acceptance (possible spoofing/MITM).
+2. **Explicit fingerprint confirmation on add**: Before a newly detected device is trusted and written to the config, its SSH public key fingerprint (SHA256) is displayed and must be explicitly confirmed by the user — in the full-screen ui, key `a` on the detected row only arms the confirmation question; in plain mode the add prompt itself shows the fingerprint. No silent acceptance of the presented key.
 
-3. **Write ownership**: A device only writes inside `devices/<its own name>/`. Other devices' files are never modified directly — changes propagate via git sync.
+3. **Host key verification**: Before accepting a device, regroup verifies that the announced IP serves the expected SSH host key (fingerprint match). Mismatches abort acceptance (possible spoofing/MITM).
 
-4. **SSH config**: Only regroup-managed `Host` blocks are rewritten; existing blocks are never touched. Changes are idempotent.
+4. **Write ownership**: A device only writes inside `devices/<its own name>/`. Other devices' files are never modified directly — changes propagate via git sync.
+
+5. **SSH config**: Only regroup-managed `Host` blocks are rewritten; existing blocks are never touched. Changes are idempotent.
 
 ## Storage Layout
 

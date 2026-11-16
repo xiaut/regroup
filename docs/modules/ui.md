@@ -100,7 +100,8 @@ Current question being asked of the user:
 ```rust
 pub enum Question {
     Idle,
-    AddDevice { name: String, ip: String },
+    AddDevice { name: String, ip: String, fingerprint: String },
+    ConfirmDeviceKey { name: String, ip: String, fingerprint: String },
     TrustKey { name: String },
     Rename { name: String, suggested: String },
     Delete { name: String },
@@ -119,7 +120,8 @@ User decisions translated from key presses:
 pub enum Action {
     Quit,
     Sync,
-    Add,            // Add selected device
+    AskAdd,         // Arm the key-fingerprint confirmation of the selected detected device
+    Add,            // Add the detected device after its fingerprint was confirmed
     Ignore,         // Ignore selected device
     AddCurrent,     // Add front of pending queue (plain mode)
     SkipCurrent,    // Skip front of pending queue (plain mode)
@@ -343,7 +345,7 @@ outgoing connection, and connecting to the current device is nonsense.
 
 | Key | Action |
 |-----|--------|
-| `a` | Add selected device |
+| `a` | Arm the confirmation of the device's SSH key fingerprint — a modal shows the fingerprint; the device is added only after `y` confirms it (no silent acceptance) |
 | `n` | Ignore selected device |
 
 ### In Users Panel (a user selected)

@@ -730,10 +730,16 @@ pub fn render_question(
                     hint_spans(&hint, ctx.key_flash),
                 )
             }
-            super::types::Question::AddDevice(def, name, ip) => (
+            super::types::Question::AddDevice(def, name, ip, fingerprint) => (
                 def.title,
                 Color::Yellow,
-                format!("Add {name} ({ip}) to config?"),
+                format!("Add {name} ({ip}) to config? SSH key fingerprint: {fingerprint} — confirm to trust this key"),
+                hint_spans(&modal_hint_text(def), ctx.key_flash),
+            ),
+            super::types::Question::ConfirmDeviceKey(def, name, ip, fingerprint) => (
+                def.title,
+                Color::Yellow,
+                format!("Trust {name} ({ip})? SSH key fingerprint: {fingerprint} — confirm to add the device"),
                 hint_spans(&modal_hint_text(def), ctx.key_flash),
             ),
             super::types::Question::TrustKey(def, name) => (

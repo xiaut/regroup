@@ -156,8 +156,11 @@ Determines what question to display based on the current state:
 - Delete selection → Delete confirmation
 - Rename state → Rename prompt
 - Rotation pending → Trust key prompt
+- Fingerprint confirmation armed → Confirm device key prompt (shows the
+  device's SSH public key fingerprint)
 - Install/remove key mode → Key management questions
-- Plain mode with pending devices → Add device prompt
+- Plain mode with pending devices → Add device prompt (shows the key
+  fingerprint)
 - Default → Idle
 
 ### `devices_view(ctx)`
@@ -182,7 +185,8 @@ renders a divider row between sections.
 |--------|----------|
 | `Quit` | Return true to exit loop |
 | `Sync` | Run `ops::sync::sync_git()` with the scope derived from the current pane and selections (main menu: `All`; Devices pane, added row: `Device`; Users pane: `User`), then reload state |
-| `Add` | Accept the detected device selected in the Devices panel |
+| `AskAdd` | Arm the SSH key fingerprint confirmation for the detected device selected in the Devices panel (key `a` on a detected row) |
+| `Add` | Accept the detected device whose fingerprint was confirmed (only reachable from the confirm question's `y`) |
 | `Ignore` | Reject the detected device selected in the Devices panel |
 | `DevicesSelectPrev/Next` | Move the selection in the Devices panel (local → added → detected rows) |
 | `AddCurrent` | Accept front of pending queue (plain mode) |
@@ -237,16 +241,23 @@ renders a divider row between sections.
 
 ### Adding Devices
 
-1. User selects a detected row in the Devices panel (key `a`) or accepts
-   the front of the queue (plain mode)
-2. Check if name is already taken
+1. When a new device's beacon is queued, its SSH public key fingerprint
+   (SHA256, computed with `ssh-keygen -lf`) is computed once and shown in
+   the detection log
+2. Full-screen ui: the user selects the detected row and presses `a`
+   (`AskAdd`) — this arms a confirmation question showing the device's
+   name, IP and SSH key fingerprint; only its `y` (`Add`) proceeds.
+   Plain mode: the add prompt itself shows the fingerprint and `y`
+   confirms it. No silent acceptance of the presented key.
+3. Check if name is already taken
    - If yes: prompt for new name (rename_state)
    - If no: proceed to add
-3. Add device to configuration via `ops::devices::add_device_to_config()`
-4. Pin the signing key
-5. Add to known_keys and key_to_device maps — the device's row moves from
+4. Add device to configuration via `ops::devices::add_device_to_config()`
+   (which re-verifies the host key at the announced IP before writing)
+5. Pin the signing key
+6. Add to known_keys and key_to_device maps — the device's row moves from
    the detected section to the added section of the Devices panel
-6. Record IP in known_ip
+7. Record IP in known_ip
 
 ### Ignoring Devices
 

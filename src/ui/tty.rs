@@ -62,9 +62,15 @@ fn calculate_question_height(question: &Question, ctx: &QuestionCtx, width: u16)
                 },
             }))
         }
-        Question::AddDevice(def, name, ip) => {
+        Question::AddDevice(def, name, ip, fingerprint) => {
             (
-                format!("Add {name} ({ip}) to config?"),
+                format!("Add {name} ({ip}) to config? SSH key fingerprint: {fingerprint} — confirm to trust this key"),
+                modal_hint_text(def),
+            )
+        }
+        Question::ConfirmDeviceKey(def, name, ip, fingerprint) => {
+            (
+                format!("Trust {name} ({ip})? SSH key fingerprint: {fingerprint} — confirm to add the device"),
                 modal_hint_text(def),
             )
         }

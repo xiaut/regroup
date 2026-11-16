@@ -530,13 +530,15 @@ static DEVICES_ADDED_NO_USERS_KEYS: &[KeyBinding] = &[
 ];
 
 /// Focused Devices pane with a detected device selected: only
-/// add/ignore make sense on a pending device.
+/// add/ignore make sense on a pending device. 'a' does not add directly:
+/// it arms the fingerprint confirmation question (the device's SSH key
+/// fingerprint is shown and must be confirmed before it is trusted).
 static DEVICES_DETECTED_KEYS: &[KeyBinding] = &[
     KeyBinding::internal(Esc, "Esc", "back"),
     KeyBinding::internal(Left, "Left", "back"),
     KeyBinding::internal(Up, "Up", "select"),
     KeyBinding::internal(Down, "Down", "select"),
-    KeyBinding::new(Char('a'), "a", "add", Effect::Action(Action::Add)),
+    KeyBinding::new(Char('a'), "a", "add", Effect::Action(Action::AskAdd)),
     KeyBinding::new(Char('n'), "n", "ignore", Effect::Action(Action::Ignore)),
 ];
 
@@ -731,7 +733,15 @@ pub enum Question {
     Idle(QuestionDef),
     /// Add the front of the pending queue (plain mode only: the
     /// full-screen ui adds devices from the Devices panel instead).
-    AddDevice(QuestionDef, String, String), // name, ip
+    /// Carries the device's SSH public key fingerprint: it is shown with
+    /// the question and must be explicitly confirmed before the device
+    /// is trusted and written to the config.
+    AddDevice(QuestionDef, String, String, String), // name, ip, fingerprint
+    /// Confirm the SSH public key fingerprint of the detected device
+    /// selected in the Devices panel (full-screen ui, armed by key 'a' on
+    /// the detected row): 'y' adds the device, 'n' ignores it — no silent
+    /// acceptance of the presented key.
+    ConfirmDeviceKey(QuestionDef, String, String, String), // name, ip, fingerprint
     TrustKey(QuestionDef, String), // name
     Rename(QuestionDef, String, String), // name, suggested
     Delete(QuestionDef, String), // name
@@ -758,7 +768,8 @@ impl Question {
     pub fn def(&self) -> &QuestionDef {
         match self {
             Question::Idle(def) => def,
-            Question::AddDevice(def, _, _) => def,
+            Question::AddDevice(def, _, _, _) => def,
+            Question::ConfirmDeviceKey(def, _, _, _) => def,
             Question::TrustKey(def, _) => def,
             Question::Rename(def, _, _) => def,
             Question::Delete(def, _) => def,
@@ -781,8 +792,16 @@ pub enum Action {
     /// the selected device. The handler derives the scope from the current
     /// pane and selections.
     Sync,
-    /// Add the detected device selected in the Devices panel.
+    /// Add the detected device selected in the Devices panel — only
+    /// reachable from the fingerprint confirmation question: the device
+    /// is written to the config only after its SSH key fingerprint was
+    /// shown and confirmed.
     Add,
+    /// Arm the fingerprint confirmation for the detected device selected
+    /// in the Devices panel (key 'a' on a detected row): the confirm
+    /// question shows the device's SSH key fingerprint; the device stays
+    /// in the pending queue until confirmed.
+    AskAdd,
     /// Ignore the detected device selected in the Devices panel (for this run).
     Ignore,
     /// Add the front of the pending queue (plain mode).
@@ -937,6 +956,19 @@ pub static TRUST_KEY_QUESTION: QuestionDef = QuestionDef {
     ],
 };
 
+/// Fingerprint confirmation of a detected device (full-screen ui, armed
+/// by key 'a' on its detected row): the announced SSH public key
+/// fingerprint is shown and must be explicitly confirmed — 'y' trusts
+/// the key and adds the device, 'n' ignores it. No silent acceptance of
+/// the presented key.
+pub static CONFIRM_DEVICE_KEY_QUESTION: QuestionDef = QuestionDef {
+    title: "Confirm device key",
+    bindings: &[
+        KeyBinding::new(KeyCode::Char('y'), "y", "trust key & add", Effect::Action(Action::Add)),
+        KeyBinding::new(KeyCode::Char('n'), "n", "ignore", Effect::Action(Action::Ignore)),
+    ],
+};
+
 pub static ADD_TEMP_USER_QUESTION: QuestionDef = QuestionDef {
     title: "Add user",
     bindings: &[
@@ -1000,8 +1032,12 @@ impl Question {
         Question::Idle(IDLE_QUESTION)
     }
 
-    pub fn add_device(name: String, ip: String) -> Self {
-        Question::AddDevice(ADD_DEVICE_QUESTION, name, ip)
+    pub fn add_device(name: String, ip: String, fingerprint: String) -> Self {
+        Question::AddDevice(ADD_DEVICE_QUESTION, name, ip, fingerprint)
+    }
+
+    pub fn confirm_device_key(name: String, ip: String, fingerprint: String) -> Self {
+        Question::ConfirmDeviceKey(CONFIRM_DEVICE_KEY_QUESTION, name, ip, fingerprint)
     }
 
     pub fn trust_key(name: String) -> Self {
